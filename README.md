@@ -1,0 +1,149 @@
+# 🛡️ AegisNet
+
+**Network visibility + ML-based intrusion detection + firewall control — in one lightweight dashboard.**
+
+AegisNet maps a network in real time (devices, links, open ports), profiles traffic,
+scores every flow with a machine-learning model, raises alerts, and lets you block a
+host in the firewall **with one click — or automatically** for critical alerts.
+Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
+
+<!-- TODO before publishing: record a 15-30s GIF of the dashboard (e.g. with ScreenToGif) and reference it here as docs/demo.gif -->
+
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](#)
+[![FastAPI](https://img.shields.io/badge/FastAPI-✓-009485)](#)
+[![scikit-learn](https://img.shields.io/badge/ML-scikit--learn-f89939)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![Tests: manual](https://img.shields.io/badge/mode-demo%20%2F%20live-8b5cf6)](#)
+
+---
+
+## ✨ Features
+
+| | |
+|---|---|
+| 🗺️ **Topology map** | Live network graph: devices, roles (router, server, IoT, attacker…), links, blocked status |
+| 📡 **Traffic capture** | Flow aggregation from a real sniffer (scapy) or a built-in simulator |
+| 🧠 **ML IDS** | RandomForest classifying flows into *benign / port_scan / brute_force / ddos / data_exfiltration* |
+| 🚨 **Threat feed** | Severity-ranked alerts with confidence, detection engine (`ml` vs `rules`), timestamps |
+| 🧱 **Firewall control** | Read + write rules: `mock` (default), `nftables` (Linux), OPNsense/pfSense API |
+| 🤖 **Auto-response** | Optional auto-block of high/critical sources (manual SOAR-style containment) |
+| ⚡ **Zero config** | `pip install` → `python app.py` → open `http://localhost:8000`. Demo mode needs no privileges |
+
+## 🚀 Quickstart
+
+```bash
+git clone https://github.com/YOUR_USER/aegisnet.git
+cd aegisnet
+pip install -r requirements.txt
+
+# train the model (10 lines of output, ~1 second on synthetic data)
+python ml-training/train_model.py
+
+# run (demo mode, simulated network, safe everywhere)
+python app.py
+```
+
+Open **http://localhost:8000** — within seconds you will see devices joining the map,
+an attacker appear, attack scenarios detected by the ML engine, and auto-blocks fired.
+
+**Shortcuts:** select a node on the map and press `B` to block it · use the feed/rule buttons to block/unblock.
+
+## 🧪 Modes & configuration
+
+| Env var | Values | Default | Meaning |
+|---|---|---|---|
+| `AEGIS_MODE` | `demo` / `live` | `demo` | simulated network vs real ARP discovery + sniffing |
+| `AEGIS_FW` | `mock` / `nftables` / `pfsense` | `mock` | firewall provider |
+| `AEGIS_AUTO_BLOCK` | `0` / `1` | `1` (demo), `0` (live) | auto-block high/critical sources |
+| `AEGIS_PORT` | int | `8000` | dashboard port |
+
+**Live mode** (real traffic, opt-in — needs admin/root and `pip install scapy`):
+
+```bash
+pip install scapy
+AEGIS_MODE=live python app.py
+```
+
+Live mode performs an ARP sweep (device + MAC discovery) and aggregates sniffed
+packets into the *same* flow features the model was trained on — so detections
+and manual blocking behave exactly as in the demo.
+
+## 🔬 Training on a real dataset
+
+The bundled trainer generates a labelled synthetic-flow dataset (fast, reproducible).
+For realistic metrics, train on a public benchmark such as
+[CICIDS2017](https://www.unb.ca/cic/datasets/ids-2017.html):
+
+```bash
+python ml-training/train_model.py --csv path/CICIDS2017.csv --label-col Label
+```
+
+Metrics (`models/metrics.json`) are displayed as a badge on the dashboard.
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart LR
+    subgraph sources
+        D[demo simulator] --> FP[flow profiles<br/>pkts · bytes · dur · syn_ratio · port_count …]
+        L[scapy live capture]
+    end
+    FP --> ML[ML detector<br/>RandomForest]
+    ML -->|verdicts| AS[alert engine]
+    AS -->|critical| FW[firewall providers<br/>mock / nftables / OPNsense]
+    AS --> WS[FastAPI · REST + WebSocket]
+    WS --> UI[dashboard<br/>vis-network map + feeds]
+    FW --> UI
+```
+
+```
+aegisnet/
+├── app.py                 # FastAPI entrypoint + engine loop
+├── aegis/
+│   ├── state.py           # thread-safe hosts / edges / alerts / rules
+│   ├── simulator.py       # demo mode: devices + attack "stories"
+│   ├── live.py            # live mode: ARP discovery + flow sniffer (scapy)
+│   ├── ml.py              # feature extraction + inference (+ rule fallback)
+│   └── firewall.py        # mock / nftables / OPNsense providers
+├── ml-training/           # dataset generation + training + metrics
+├── models/                # aegis_model.pkl + metrics.json (generated)
+├── dashboard/             # static UI (vis-network), no build step
+└── docs/                  # architecture + lab guide
+```
+
+## 🔬 Method notes
+
+* **Flows, not packets** — the model consumes 8 aggregated features per flow
+  (packets, bytes, duration, SYN ratio, distinct destination ports, mean packet
+  size, packet rate, bytes/packet). Aggregate features make detection fast and
+  dataset-portable (same shape as NIDS classics like CICIDS2017).
+* **Defence in depth** — when the ML model file is absent, a deterministic
+  heuristic engine takes over, so the platform is still useful (and the
+  dashboard badge shows which engine fired each alert).
+* **Synthetic metrics caveat** — the bundled model reports great accuracy by
+  design (the synthetic classes are separable). Use `--csv` with real data for
+  honest benchmark numbers; the README badge will reflect it.
+
+## ⚠️ Ethics & scope
+
+AegisNet is an **educational project**: discovery, capture, and blocking must
+only ever run against **networks you own or are authorised to test** (your lab,
+your homelab, a CTF, a written pentest engagement). Sniffing other people's
+traffic without consent is illegal in most jurisdictions. The default mode is a
+fully simulated network for exactly that reason.
+
+## 🗺️ Roadmap
+
+- [ ] Zeek/Argus feed instead of hand-rolled flow aggregation
+- [ ] Host-shield agents (report process/service inventory)
+- [ ] Alert → playbook chain (block + re-scan + report generation)
+- [ ] Optional React frontend (the static dashboard is already functional)
+- [ ] CI (GitHub Actions: linters + smoke test)
+
+## 👤 Author
+
+Built as a cybersecurity master's portfolio project.
+LinkedIn: *[your link here]* · Email: *[you@host]*
+
+> 💡 Post on LinkedIn with a 15-30s GIF of the live block: *“Detección de red con
+> ML + respuesta de firewall en un solo panel. Proyecto open source”*.

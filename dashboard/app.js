@@ -1,0 +1,152 @@
+/* AegisNet dashboard — topology map + live threat feed (no build step). */
+"use strict";
+
+const ROLE_STYLE = {
+  router:      { color: "#a371f7", label: "Router",     shape: "hexagon" },
+  server:      { color: "#58a6ff", label: "Server",     shape: "dot" },
+  workstation: { color: "#3fb950", label: "Workstation",shape: "dot" },
+  iot:         { color: "#d29922", label: "IoT",        shape: "dot" },
+  printer:     { color: "#8b949e", label: "Printer",    shape: "dot" },
+  attacker:    { color: "#f85149", label: "Attacker",   shape: "star"  },
+};
+
+const SEV_ICONS = { critical: "\u{1F6A8}", high: "\u26A0\uFE0F", medium: "\u26D3\uFE0F", info: "\u2705" };
+
+// ---- topology map -----------------------------------------------------------
+const nodes = new vis.DataSet([]);
+const edges = new vis.DataSet([]);
+const network = new vis.Network(
+  document.getElementById("map"),
+  { nodes, edges },
+  {
+    autoResize: true,
+    physics: { solver: "forceAtlas2Based", forceAtlas2Based: { gravitationalConstant: -45 } },
+    interaction: { hover: true, tooltipDelay: 120 },
+    nodes: { font: { color: "#c9d1d9", size: 12 }, borderWidth: 2 },
+    edges: { color: { color: "#30363d" }, arrows: "to", smooth: false },
+  }
+);
+
+function renderTopology(data) {
+  const seen = new Set();
+  for (const h of data.nodes) {
+    const style = ROLE_STYLE[h.role] || ROLE_STYLE.workstation;
+    const isBlocked = h.blocked;
+    if (nodes.get(h.ip)) {
+      nodes.update({ id: h.ip, color: isBlocked ? "#30363d" : style.color,
+                     font: { color: isBlocked ? "#4d5259" : "#c9d1d9" } });
+    } else {
+      nodes.add({
+        id: h.ip, label: `${h.hostname}\n${h.ip}`,
+        color: isBlocked ? "#30363d" : style.color,
+        title: `${isBlocked ? "\u{1F6AB} BLOCKED" : style.label}\nMAC: ${h.mac || "n/a"}\nports: ${h.open_ports.length ? h.open_ports.join(", ") : "—"}\nselect + press B to block`,
+        shape: style.shape, size: h.role === "router" ? 18 : 12,
+      });
+    }
+    seen.add(h.ip);
+  }
+  // prune disappeared hosts (demo reveals progressively, live churns)
+  for (const n of nodes.get()) if (!seen.has(n.id)) nodes.remove(n.id);
+
+  const edgeIds = new Set(data.edges.map(e => `${e.from}|${e.to}`));
+  for (const e of data.edges) {
+    const id = `${e.from}|${e.to}`;
+    if (!edges.get(id)) edges.add({ id, from: e.from, to: e.to, dashes: true });
+  }
+  for (const e of edges.get()) if (!edgeIds.has(e.id)) edges.remove(e.id);
+}
+
+// ---- side panel --------------------------------------------------------------
+function fmtAlert(a) {
+  const div = document.createElement("div");
+  const icon = SEV_ICONS[a.severity] || "\u2139\uFE0F";
+  div.className = "alert " + (a.severity || "info");
+  div.innerHTML = `
+    <div class="top"><b>${icon} ${a.attack}</b><span>${(a.severity || "").toUpperCase()}</span></div>
+    <div class="meta">${a.time} · ${a.src} → ${a.dst} · engine: ${a.engine} · conf: ${a.confidence}</div>
+    ${a.severity !== "info" && a.src ? `<button class="act" data-ip="${a.src}">Block ${a.src}</button>` : ""}`;
+  return div;
+}
+
+function fmtRule(r) {
+  const div = document.createElement("div");
+  div.className = "rule";
+  const allow = r.action === "ALLOW";
+  div.innerHTML = `
+    <div class="top"><span class="ip">${r.ip}</span><span>${allow ? "\u2611 ALLOW" : "\u26D4 " + r.action}</span></div>
+    <div class="meta">${r.time} · ${r.reason}</div>
+    ${allow ? "" : `<button class="act unblock" data-unblock="${r.ip}">Remove rule</button>`}`;
+  return div;
+}
+
+function renderFeeds(data) {
+  const alerts = document.getElementById("alerts");
+  alerts.replaceChildren(...data.alerts.map(fmtAlert));
+  const rules = document.getElementById("rules");
+  rules.replaceChildren(...data.rules.map(fmtRule));
+}
+
+// ---- actions -------------------------------------------------------------------
+document.getElementById("alerts").addEventListener("click", onAction);
+document.getElementById("rules").addEventListener("click", onAction);
+
+function onAction(ev) {
+  const block = ev.target.closest("[data-ip]");
+  const unblock = ev.target.closest("[data-unblock]");
+  if (block) post("/api/firewall/block", { ip: block.dataset.ip, reason: "operator blocked from UI" });
+  if (unblock) post("/api/firewall/unblock", { ip: unblock.dataset.unblock });
+}
+
+async function post(url, body) {
+  await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  refresh();
+}
+
+// key: B blocks the currently selected node
+let selected = null;
+network.on("selectNode", p => { selected = p.nodes[0]; });
+window.addEventListener("keydown", ev => {
+  if (ev.key.toLowerCase() === "b" && selected) {
+    post("/api/firewall/block", { ip: selected, reason: "operator blocked selected node" });
+  }
+});
+
+// ---- stats / badges -------------------------------------------------------------
+function renderStats(data) {
+  const s = data.stats;
+  document.getElementById("s-devices").textContent = data.nodes.length;
+  document.getElementById("s-flows").textContent = s.flows_per_sec;
+  document.getElementById("s-alerts").textContent = s.attacks_total;
+  document.getElementById("s-blocked").textContent = s.blocks_total;
+  document.getElementById("mode-badge").textContent = "\u25CF " + (data.mode || "demo");
+  const m = data.model_metrics;
+  document.getElementById("model-badge").textContent =
+    m ? `ML rf · acc ${Math.round(m.accuracy * 100)}% · ${m.dataset}` : "heuristic mode";
+}
+
+// ---- data loop: WebSocket w/ polling fallback -----------------------------------
+async function refresh() {
+  const res = await fetch("/api/state");
+  apply(await res.json());
+}
+
+function apply(data) {
+  renderTopology(data);
+  renderFeeds(data);
+  renderStats(data);
+}
+
+(async () => {
+  refresh().catch(() => {});
+  if (typeof WebSocket === "undefined") {
+    setInterval(refresh, 2000);
+  } else {
+    const connect = () => {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${proto}://${location.host}/ws`);
+      ws.onmessage = ev => apply(JSON.parse(ev.data));
+      ws.onclose = () => { setInterval(refresh, 2000); setTimeout(connect, 4000); };
+    };
+    connect();
+  }
+})();

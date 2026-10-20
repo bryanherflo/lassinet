@@ -1,0 +1,28 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+env/
+
+# --- Model artifacts (metrics are kept, model is reproducible via train script) ---
+models/*.pkl
+ml-training/data/*.csv
+
+# --- Node / frontend ---
+node_modules/
+dist/
+.vite/
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Environment / secrets ---
+.env
+.env.*
+!/.env.example
