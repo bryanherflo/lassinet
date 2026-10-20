@@ -9,6 +9,7 @@ from typing import Any
 class State:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self.mode = "demo"
         self.hosts: dict[str, dict[str, Any]] = {}          # ip -> {ip, mac, hostname, role, first_seen, last_seen, open_ports, blocked}
         self.edges: set[tuple[str, str]] = set()            # (ip_a, ip_b)
         self.alerts: deque[dict[str, Any]] = deque(maxlen=200)
@@ -87,8 +88,3 @@ class State:
                 "model_metrics": self.model_metrics,
                 "mode": self.mode,
             }
-
-    def set_mode(self, mode: str) -> None:
-        self.mode = mode
-
-    mode: str = "demo"

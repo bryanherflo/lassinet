@@ -13,7 +13,8 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 [![FastAPI](https://img.shields.io/badge/FastAPI-✓-009485)](#)
 [![scikit-learn](https://img.shields.io/badge/ML-scikit--learn-f89939)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Tests: manual](https://img.shields.io/badge/mode-demo%20%2F%20live-8b5cf6)](#)
+[![CI](https://img.shields.io/badge/CI-tests%20✓-3fb950)](.github/workflows/ci.yml)
+[![mode](https://img.shields.io/badge/mode-demo%20%2F%20live-8b5cf6)](#)
 
 ---
 
@@ -32,7 +33,7 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 ## 🚀 Quickstart
 
 ```bash
-git clone https://github.com/YOUR_USER/aegisnet.git
+git clone https://github.com/bryanherflo/aegisnet.git
 cd aegisnet
 pip install -r requirements.txt
 
@@ -41,6 +42,13 @@ python ml-training/train_model.py
 
 # run (demo mode, simulated network, safe everywhere)
 python app.py
+```
+
+**Run the test suite** (15 unit + API smoke tests, no network needed):
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests/ -q
 ```
 
 Open **http://localhost:8000** — within seconds you will see devices joining the map,
@@ -134,16 +142,16 @@ fully simulated network for exactly that reason.
 
 ## 🗺️ Roadmap
 
+- [x] Unit + API tests (`pytest`, 15 tests) with GitHub Actions CI
 - [ ] Zeek/Argus feed instead of hand-rolled flow aggregation
 - [ ] Host-shield agents (report process/service inventory)
 - [ ] Alert → playbook chain (block + re-scan + report generation)
 - [ ] Optional React frontend (the static dashboard is already functional)
-- [ ] CI (GitHub Actions: linters + smoke test)
 
 ## 👤 Author
 
-Built as a cybersecurity master's portfolio project.
-LinkedIn: *[your link here]* · Email: *[you@host]*
+**Bryan Hernandez** — built as a cybersecurity master's portfolio project.
+GitHub: [github.com/bryanherflo](https://github.com/bryanherflo) · LinkedIn: *[add your profile link]*
 
 > 💡 Post on LinkedIn with a 15-30s GIF of the live block: *“Detección de red con
 > ML + respuesta de firewall en un solo panel. Proyecto open source”*.

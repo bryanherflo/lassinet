@@ -41,7 +41,7 @@ MODE = os.getenv("AEGIS_MODE", "demo").lower()
 AUTO_BLOCK = os.getenv("AEGIS_AUTO_BLOCK", "1" if MODE == "demo" else "0") == "1"
 
 state = State()
-state.set_mode("demo (simulated)" if MODE == "demo" else "live (scapy)")
+state.mode = "demo (simulated)" if MODE == "demo" else "live (scapy)"
 sim = Simulator()
 fw = Firewall()
 detector = Detector()
@@ -137,8 +137,7 @@ def live_source() -> None:
 async def lifespan(app: FastAPI):
     source = demo_loop if MODE == "demo" else live_source
     start_engine(source)
-    log.info("AegisNet running in %s mode — dashboard at http://localhost:%s",
-             MODE, app.state.port)
+    log.info("AegisNet running in %s mode", MODE)
     yield
 
 
@@ -171,17 +170,19 @@ def unblock(req: BlockRequest) -> dict:
     return {"ok": True}
 
 
+@app.get("/health")
+def health() -> dict:
+    """Liveness probe: engine is producing flows and the model is loaded."""
+    return {"ok": True, "mode": state.mode, "model": detector.model is not None,
+            "flows_total": state.stats["flows_total"]}
+
+
 @app.websocket("/ws")
 async def ws(sock: WebSocket) -> None:
-    await ws_accept_loop(sock, app)
-
-
-async def ws_accept_loop(sock: WebSocket, app: FastAPI) -> None:
     await sock.accept()
     clients.add(sock)
     try:
         while True:
-            # push a fresh snapshot every TICK (shared with the engine walls)
             await asyncio.sleep(TICK)
             await sock.send_json(state.snapshot())
     except WebSocketDisconnect:

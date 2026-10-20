@@ -12,7 +12,7 @@ from typing import Any
 log = logging.getLogger("aegis.live")
 
 try:
-    from scapy.all import ARP, Ether, conf, sniff  # type: ignore
+    from scapy.all import ARP, Ether, srp, sniff  # type: ignore
     HAS_SCAPY = True
 except ImportError:
     HAS_SCAPY = False
@@ -22,7 +22,6 @@ def arp_discovery(cidr: str = "10.0.0.0/24", timeout: int = 2) -> list[dict[str,
     """Send ARP requests to the broadcast address and collect neighbours."""
     if not HAS_SCAPY:
         raise RuntimeError("scapy is not installed — run `pip install scapy`")
-    from scapy.all import srp
     answered, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=cidr), timeout=timeout, verbose=0)
     hosts = []
     for _, received in answered:
@@ -45,7 +44,7 @@ class LiveCapture:
         self.started = time.time()
 
     def _on_packet(self, pkt: Any) -> None:
-        from scapy.layers.inet import IP, TCP, UDP
+        from scapy.layers.inet import IP, TCP
         if IP not in pkt:
             return
         ip = pkt[IP]
