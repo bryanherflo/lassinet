@@ -114,14 +114,21 @@ const AMBIENT_MAX = 14; // simultaneous background "normal traffic" dots
 const SPAWN_MS = 120;   // one background dot every ~120 ms while traffic flows
 
 // caches refreshed on every snapshot so the animation follows the live map
-let fxRouter = null, fxExt = null, fxLinks = new Set(), fxHostIds = new Set(), trafficSamples = [];
+let fxRouter = null, fxExt = null, fxLinks = new Set(), fxHostIds = new Set(), fxRoles = new Map(),
+    trafficSamples = [];
 const ambientDots = [];          // { born, until, segments } — normal traffic riding the wires
 let lastSpawn = 0;
+
+const FLOW_COLORS = {            // traffic dots are tinted by the emitting device's role
+  router: "#a371f7", server: "#58a6ff", external: "#58a6ff",
+  workstation: "#3fb950", iot: "#d29922", printer: "#8b949e", attacker: "#f85149",
+};
 
 function fxSync(data) {
   fxRouter = (data.nodes.find(h => h.role === "router") || {}).ip || null;
   fxExt = (data.nodes.find(h => h.role === "external") || {}).ip || null;
   fxHostIds = new Set(data.nodes.map(h => h.ip));
+  fxRoles = new Map(data.nodes.map(h => [h.ip, h.role]));
   fxLinks = new Set(data.edges.filter(e => e.kind === "link").map(e => e.from + "|" + e.to));
   trafficSamples = Array.isArray(data.traffic) ? data.traffic : [];
 }
@@ -140,12 +147,27 @@ function spawnAmbient(now) {
   const raw = src === fxRouter ? [link(src, dst)] : [link(src, fxRouter), link(fxRouter, dst)];
   const segments = raw.filter(Boolean);
   if (!segments.length) return;
-  ambientDots.push({ born: now, until: now + 800 + Math.random() * 900, segments, kind: "ambient" });
+  const bytes = Math.max(0, +s.bytes || 0);
+  const radius = 2.0 + Math.min(1.3, Math.log10(1 + bytes / 800));   // big transfers = bigger dots
+  ambientDots.push({ born: now, until: now + 800 + Math.random() * 900, segments,
+                     kind: "ambient", radius });
 }
 
 function nodeDOMPos(ip) {
   const p = network.getPositions([ip])[ip];          // canvas coords
   return p ? network.canvasToDOM(p) : null;          // DOM coords (zoom/pan aware)
+}
+
+function drawGlowDot(x, y, r, col, a, glow) {
+  fctx.globalAlpha = a;
+  fctx.beginPath();
+  fctx.arc(x, y, r, 0, Math.PI * 2);
+  fctx.fillStyle = col;
+  fctx.shadowColor = col;
+  fctx.shadowBlur = glow;
+  fctx.fill();
+  fctx.shadowBlur = 0;
+  fctx.globalAlpha = 1;
 }
 
 function drawRider(p, now) {
@@ -159,32 +181,46 @@ function drawRider(p, now) {
     legs.push(L); total += L;
   }
   if (total <= 0) return;
-  const isAttack = p.kind !== "ambient";
-  // fade in on spawn, fade out as it expires
-  const alpha = Math.min(1, (now - p.born) / 400, Math.max(0, (p.until - now) / 800)) * (isAttack ? 1 : 0.9);
-  const n = isAttack ? BALLS : 1;
-  const d0 = (now / 1000) * SPEED;
-  for (let i = 0; i < n; i++) {
-    let d = isAttack ? (d0 + (i * total) / n) % total
-                     : total * ((now - p.born) / (p.until - p.born));
-    let a, b, legLen = 0;
+  const xyAt = d => {
+    let rest = Math.max(0, Math.min(d, total));
     for (let k = 0; k < legs.length; k++) {
-      if (d < legs[k]) { a = idx[k]; b = idx[k + 1]; legLen = legs[k]; break; }
-      d -= legs[k];
+      if (rest <= legs[k]) {
+        const t = legs[k] > 0 ? rest / legs[k] : 0;
+        return [idx[k].x + (idx[k + 1].x - idx[k].x) * t,
+                idx[k].y + (idx[k + 1].y - idx[k].y) * t];
+      }
+      rest -= legs[k];
     }
-    if (a === undefined) { a = idx[idx.length - 2]; b = idx[idx.length - 1]; legLen = legs[legs.length - 1]; }
-    const t = legLen > 0 ? d / legLen : 0;
-    const x = a.x + (b.x - a.x) * t;
-    const y = a.y + (b.y - a.y) * t;
-    fctx.globalAlpha = alpha;
-    fctx.beginPath();
-    fctx.arc(x, y, isAttack ? BALL_R : 2.6, 0, Math.PI * 2);
-    fctx.fillStyle = isAttack ? RED : "#8b949e";
-    fctx.shadowColor = fctx.fillStyle;
-    fctx.shadowBlur = isAttack ? 12 : 5;
-    fctx.fill();
-    fctx.shadowBlur = 0;
-    fctx.globalAlpha = 1;
+    const last = idx[idx.length - 1];
+    return [last.x, last.y];
+  };
+
+  // fade in on spawn, fade out as the packet expires
+  const fade = Math.min(1, (now - p.born) / 400, Math.max(0, (p.until - now) / 800));
+
+  if (p.kind === "ambient") {
+    const col = FLOW_COLORS[fxRoles.get(p.segments[0][0])] || "#8b949e";
+    const R = p.radius || 2.6;
+    const ph = Math.min(1, (now - p.born) / (p.until - p.born));
+    // two fading echoes behind the head = a soft motion trail
+    for (let g = 2; g >= 0; g--) {
+      const [x, y] = xyAt(Math.max(0, ph - g * 0.07) * total);
+      drawGlowDot(x, y, Math.max(0.6, g === 0 ? R : R * (0.62 - g * 0.1)),
+                  col, fade * (g === 0 ? 0.95 : 0.35 / g), g === 0 ? 6 : 0);
+    }
+    return;
+  }
+
+  // attacks: bigger red packets with a brighter comet-like trail
+  const d0 = (now / 1000) * SPEED;
+  for (let i = 0; i < BALLS; i++) {
+    const d = (d0 + (i * total) / BALLS) % total;
+    for (let g = 2; g >= 0; g--) {
+      const dd = ((d - g * 16) % total + total) % total;
+      const [x, y] = xyAt(dd);
+      drawGlowDot(x, y, g === 0 ? BALL_R : Math.max(0.8, BALL_R * (0.6 - g * 0.08)),
+                  RED, fade * (g === 0 ? 1 : 0.3 / g), g === 0 ? 12 : 0);
+    }
   }
 }
 

@@ -225,10 +225,12 @@ def test_audit_log_records_alerts_and_blocks(tmp_path, monkeypatch):
 def test_traffic_samples_feed_snapshot():
     from lassi.state import State
     st = State()
-    st.add_flow(is_attack=True, src="10.0.0.9", dst="10.0.0.2")
+    st.add_flow(is_attack=True, src="10.0.0.9", dst="10.0.0.2", bytes=5000)
     st.add_flow(is_attack=False, src="10.0.0.1", dst="10.0.0.2")
     traffic = st.snapshot()["traffic"]
-    assert {"src": "10.0.0.9", "dst": "10.0.0.2", "attack": True} in traffic
+    sample = next((t for t in traffic if t["src"] == "10.0.0.9"), {})
+    assert sample["dst"] == "10.0.0.2" and sample["attack"] is True and sample["bytes"] == 5000
+    assert any(t["src"] == "10.0.0.1" and t["bytes"] == 0 for t in traffic)
     assert st.stats["attacks_total"] == 1
     # flows without src/dst (old callers) must still work and log no samples
     st2 = State()

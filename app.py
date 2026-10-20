@@ -98,7 +98,8 @@ def process_flows(flows: list[dict]) -> None:
     verified = detector.predict(flows)
     for flow, verdict in zip(flows, verified):
         state.add_flow(is_attack=verdict["attack"] != "benign",
-                       src=flow["src"], dst=flow["dst"])
+                       src=flow["src"], dst=flow["dst"],
+                       bytes=flow.get("bytes") or 0)
         if verdict["severity"] in ("medium", "high", "critical"):
             if state.hosts.get(flow["src"], {}).get("blocked"):
                 continue   # the firewall already shut this source out — no alert spam

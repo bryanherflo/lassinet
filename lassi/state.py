@@ -94,12 +94,14 @@ class State:
             self.links.add(tuple(sorted((router_ip, "0.0.0.0"))))
 
     # ---- flows / alerts ----------------------------------------------------
-    def add_flow(self, is_attack: bool | None = None, src: str = "", dst: str = "") -> None:
+    def add_flow(self, is_attack: bool | None = None, src: str = "", dst: str = "",
+                 bytes: int = 0) -> None:
         with self._lock:
             self.stats["flows_total"] += 1
             self._flow_window += 1
             if src and dst and src != dst:
-                self.traffic.append({"src": src, "dst": dst, "attack": bool(is_attack)})
+                self.traffic.append({"src": src, "dst": dst, "attack": bool(is_attack),
+                                     "bytes": int(bytes or 0)})
             if is_attack:
                 self.stats["attacks_total"] += 1
 
