@@ -163,6 +163,16 @@ class BlockRequest(BaseModel):
     reason: str = "manual"
 
 
+@app.middleware("http")
+async def no_cache_dashboard(request, call_next):
+    """Static dashboard assets must always revalidate — stale CSS/JS was
+    observed serving an older (broken) layout to real browsers."""
+    response = await call_next(request)
+    if request.url.path in ("/", "/style.css", "/app.js", "/index.html"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
 @app.get("/api/state")
 def get_state() -> JSONResponse:
     return JSONResponse(state.snapshot())
