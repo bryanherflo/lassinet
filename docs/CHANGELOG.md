@@ -2,6 +2,15 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.2] — 2026-10-20 · "you can see the attack travel"
+
+### Added
+- **Attack-path highlight on the map**: when an alert fires, the tree wires
+  the attack crosses (attacker → router → victim) turn red with a flow arrow
+  pointing at the victim and the attack kind as a label on the wire. No extra
+  cables — the existing infrastructure links are temporarily repainted and
+  fade back automatically after 6 s.
+
 ## [0.4.1] — 2026-10-20 · "multi-network laptop"
 
 ### Fixed
