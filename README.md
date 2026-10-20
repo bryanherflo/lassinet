@@ -12,7 +12,7 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![CI](https://github.com/bryanherflo/aegisnet/actions/workflows/ci.yml/badge.svg)](https://github.com/bryanherflo/aegisnet/actions/workflows/ci.yml)
+[![CI](https://github.com/bryanherflo/lassinet/actions/workflows/ci.yml/badge.svg)](https://github.com/bryanherflo/lassinet/actions/workflows/ci.yml)
 [![mode](https://img.shields.io/badge/mode-demo%20%2F%20live-8b5cf6)](#)
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](#)
@@ -36,8 +36,8 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 ## 🚀 Quickstart
 
 ```bash
-git clone https://github.com/bryanherflo/aegisnet.git
-cd aegisnet
+git clone https://github.com/bryanherflo/lassinet.git
+cd lassinet
 pip install -r requirements.txt
 
 # run (demo mode, simulated network, safe everywhere)
@@ -128,18 +128,18 @@ flowchart LR
 ```
 
 ```
-aegisnet/
+lassinet/
 ├── app.py                 # FastAPI entrypoint + engine loop
-├── aegis/
+├── lassi/
 │   ├── state.py           # thread-safe hosts / edges / alerts / rules
 │   ├── simulator.py       # demo mode: devices + attack "stories"
 │   ├── live.py            # live mode: ARP discovery + flow sniffer (scapy)
 │   ├── ml.py              # feature extraction + inference (+ rule fallback)
-│   └── firewall.py        # mock / nftables / OPNsense providers
+│   ├── firewall.py        # mock / nftables / OPNsense providers
 ├── ml-training/           # dataset generation + training + metrics
-│       └── load_cicids.py # real-data path: CICIDS2017 → 8 LassiNet features
-│   ├── models/            # lassi_model.pkl + metrics.json (generated)
-├── dashboard/             # static UI (vis-network), no build step
+│   └── load_cicids.py     # real-data path: CICIDS2017 → 8 LassiNet features
+├── models/                # lassi_model.pkl (live) / demo_model.pkl (demo) + metrics (generated)
+├── dashboard/             # static UI (bundled vis-network), no build step
 └── docs/                  # architecture + lab guide
 ```
 
