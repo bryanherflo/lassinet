@@ -11,6 +11,12 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
   The rename wins over the discovery/simulator hostname on every engine tick.
   Endpoint: `POST /api/devices/rename` `{ip, name}` (max 32 chars, empty
   rejected).
+- **Device icons + type lanes on the map**: nodes now show a per-role icon
+  (🖥️ server, 💻 workstation, 📡 IoT, 🖨️ printer, ☁️ Internet; router keeps its
+  hexagon, attacker its star) baked as an inline SVG inside the role-coloured
+  circle. Each family of devices is enclosed by a subtle dashed "lane" in the
+  role colour, drawn on the overlay canvas (no vis churn). Legend updated to
+  match the icons.
 
 ## [0.4.3] — 2026-10-20 · "a living network"
 

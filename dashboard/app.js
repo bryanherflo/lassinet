@@ -3,13 +3,23 @@
 
 const ROLE_STYLE = {
   router:      { color: "#a371f7", label: "Router",        shape: "hexagon" },
-  server:      { color: "#58a6ff", label: "Server",        shape: "dot" },
-  workstation: { color: "#3fb950", label: "Workstation",   shape: "dot" },
-  iot:         { color: "#d29922", label: "IoT",           shape: "dot" },
-  printer:     { color: "#8b949e", label: "Printer",       shape: "dot" },
-  attacker:    { color: "#f85149", label: "Attacker",      shape: "star"  },
-  external:    { color: "#58a6ff", label: "Internet",      shape: "ellipse" },
+  server:      { color: "#58a6ff", label: "Server",        shape: "circularImage", icon: "\u{1F5A5}\uFE0F" },      // desktop computer
+  workstation: { color: "#3fb950", label: "Workstation",   shape: "circularImage", icon: "\u{1F4BB}" },            // laptop
+  iot:         { color: "#d29922", label: "IoT",           shape: "circularImage", icon: "\u{1F4E1}" },            // satellite dish
+  printer:     { color: "#8b949e", label: "Printer",       shape: "circularImage", icon: "\u{1F5A8}\uFE0F" },      // printer
+  attacker:    { color: "#f85149", label: "Attacker",      shape: "star" },
+  external:    { color: "#58a6ff", label: "Internet",      shape: "circularImage", icon: "\u2601\uFE0F" },         // cloud
 };
+
+// emoji baked into an inline SVG so every node carries a proper device icon
+function iconURI(ch, fill = "#161b22") {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">'
+    + `<circle cx="24" cy="24" r="23" fill="${fill}"/>`
+    + `<text x="24" y="31" font-size="23" text-anchor="middle"`
+    + ` font-family="'Segoe UI Emoji','Apple Color Emoji',sans-serif">${ch}</text></svg>`;
+  return "data:image/svg+xml," + encodeURIComponent(svg);
+}
 
 const SEV_ICONS = { critical: "\u{1F6A8}", high: "\u26A0\uFE0F", medium: "\u26D3\uFE0F", info: "\u2705" };
 
@@ -224,11 +234,42 @@ function drawRider(p, now) {
   }
 }
 
+// ---- dashed type-lanes: each family of devices gets a tinted dashed fence ------
+const GROUP_ROLES = new Set(["server", "workstation", "iot", "printer", "attacker"]);
+
+function drawGroupBoxes() {
+  if (!fxRoles.size) return;
+  const pos = network.getPositions();
+  const groups = new Map();
+  for (const [ip, role] of fxRoles) {
+    if (!GROUP_ROLES.has(role) || !pos[ip]) continue;
+    const d = network.canvasToDOM(pos[ip]);
+    if (!groups.has(role)) groups.set(role, []);
+    groups.get(role).push(d);
+  }
+  for (const [role, pts] of groups) {
+    const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+    const x0 = Math.min(...xs) - 48, x1 = Math.max(...xs) + 48;
+    const y0 = Math.min(...ys) - 32, y1 = Math.max(...ys) + 44;   // covers the label lines
+    const col = (ROLE_STYLE[role] || ROLE_STYLE.workstation).color;
+    fctx.beginPath();
+    fctx.roundRect(x0, y0, x1 - x0, y1 - y0, 14);
+    fctx.fillStyle = col + "0d";                                  // whisper-quiet tint inside
+    fctx.fill();
+    fctx.strokeStyle = col + "40";
+    fctx.lineWidth = 1;
+    fctx.setLineDash([5, 5]);
+    fctx.stroke();
+    fctx.setLineDash([]);
+  }
+}
+
 function drawAttackFx(now) {
   while (attackPaths.length && attackPaths[0].until < now) attackPaths.shift();
   while (ambientDots.length && ambientDots[0].until < now) ambientDots.shift();
   spawnAmbient(now);
   fctx.clearRect(0, 0, fx.width, fx.height);
+  drawGroupBoxes();
   for (const p of attackPaths) drawRider({ ...p, kind: "attack" }, now);
   for (const p of ambientDots) drawRider(p, now);
 }
@@ -278,7 +319,8 @@ function renderTopology(data) {
         id: h.ip, label: `${h.hostname}\n${h.ip}`,
         title: `${isBlocked ? "\u{1F6AB} BLOCKED" : style.label}\nMAC: ${h.mac || "n/a"}\nports: ${h.open_ports.length ? h.open_ports.join(", ") : "—"}\ndouble-click to rename · select + press B to block`,
         shape: style.shape,
-        size: h.role === "router" ? 20 : h.role === "external" ? 16 : 13,
+        size: h.role === "router" ? 20 : h.role === "external" ? 18 : 15,
+        ...(style.shape === "circularImage" ? { image: iconURI(style.icon) } : {}),
         ...(h.role === "external" ? { shapeProperties: { borderDashes: [4, 4] } } : {}),
         x: pos[h.ip].x, y: pos[h.ip].y,
         ...base,

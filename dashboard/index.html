@@ -9,7 +9,7 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.4">
+<link rel="stylesheet" href="style.css?v=3.7">
 <script src="vendor/vis-network.min.js"></script>
 <script>
   /* bundled copy first (works offline); CDN fallback keeps partial downloads alive */
@@ -28,10 +28,12 @@
 
 <div id="legend">
   <span class="li"><i style="background:#a371f7"></i>Router</span>
-  <span class="li"><i style="background:#58a6ff"></i>Server / Internet</span>
-  <span class="li"><i style="background:#3fb950"></i>Workstation</span>
-  <span class="li"><i style="background:#d29922"></i>IoT</span>
-  <span class="li"><i style="background:#f85149"></i>Attacker</span>
+  <span class="li"><i style="background:none;font-size:11px;line-height:1">☁️</i>Internet</span>
+  <span class="li"><i style="background:none;font-size:11px;line-height:1">🖥️</i>Server</span>
+  <span class="li"><i style="background:none;font-size:11px;line-height:1">💻</i>Workstation</span>
+  <span class="li"><i style="background:none;font-size:11px;line-height:1">📡</i>IoT</span>
+  <span class="li"><i style="background:none;font-size:11px;line-height:1">🖨️</i>Printer</span>
+  <span class="li"><i style="background:none;font-size:11px;line-height:1;color:#f85149">★</i>Attacker</span>
   <span class="li"><i style="border:2px solid #f85149;background:transparent;"></i>Blocked</span>
 </div>
 
@@ -55,6 +57,6 @@
   </aside>
 </main>
 
-<script src="app.js?v=3.6"></script>
+<script src="app.js?v=3.7"></script>
 </body>
 </html>
