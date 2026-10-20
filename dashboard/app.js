@@ -1,4 +1,4 @@
-/* AegisNet dashboard — topology map + live threat feed (no build step). */
+/* LassiNet dashboard — topology map + live threat feed (no build step). */
 "use strict";
 
 const ROLE_STYLE = {

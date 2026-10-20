@@ -1,6 +1,6 @@
-# Lab guide — testing AegisNet against a real (isolated) network
+# Lab guide — testing LassiNet against a real (isolated) network
 
-AegisNet ships with a simulator so nothing here is *required*, but building
+LassiNet ships with a simulator so nothing here is *required*, but building
 this lab is a worthwhile extension exercise.
 
 ## Option A — two-VM lab (VirtualBox / VMware / Proxmox)
@@ -8,7 +8,7 @@ this lab is a worthwhile extension exercise.
 1. **pfSense VM** — WAN: NAT/dummy · LAN: 192.168.56.0/24, enable the OPNsense API plugin.
 2. **Kali/attacker VM** — e.g. `nmap` port scan, `hydra`/ssh brute force, `hping3` flood.
 3. **Victim VM** — a simple web server (`python -m http.server`).
-4. Run AegisNet on the host or inside one VM with `AEGIS_MODE=live`.
+4. Run LassiNet on the host or inside one VM with `LASSI_MODE=live`.
 
 Reproduce attack signatures the model was trained for:
 
@@ -38,7 +38,7 @@ docker run --rm -it --network lab b3ardino/attacker nmap -T5 -Pn -p- 172.17.0.2
 ## Wiring real firewall enforcement
 
 * **pfSense/OPNsense** — generate an API key in the web UI, then set
-  `AEGIS_FW=pfsense OPNSENSE_URL=... OPNSENSE_KEY=...` and complete the REST call
+  `LASSI_FW=pfsense OPNSENSE_URL=... OPNSENSE_KEY=...` and complete the REST call
   in `aegis/firewall.py::_opnsense_rule` (documented placeholder).
-* **Linux nftables** — `AEGIS_FW=nftables` and ensure a table `inet aegisnet`
-  exists: `sudo nft add table inet aegisnet`.
+* **Linux nftables** — `LASSI_FW=nftables` and ensure a table `inet lassinet`
+  exists: `sudo nft add table inet lassinet`.

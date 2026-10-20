@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Train the AegisNet IDS model on REAL CIC-IDS-2017 data.
+"""Train the LassiNet IDS model on REAL CIC-IDS-2017 data.
 
 Downloads three public CIC-IDS-2017 day-files (Sharafaldin et al., ICISSP 2018 —
 cite the paper if you report results obtained with this script):
@@ -8,7 +8,7 @@ cite the paper if you report results obtained with this script):
   * Friday-WorkingHours-Afternoon-DDos      -> benign + DDoS
   * Friday-WorkingHours-Afternoon-PortScan  -> benign + PortScan
 
-Each CICFlowMeter row is mapped onto AegisNet's 8 flow features
+Each CICFlowMeter row is mapped onto LassiNet's 8 flow features
 (aegis.ml.FEATURES) and labels are mapped to the app's attack ids:
 
     BENIGN -> 0 · PortScan -> 1 · SSH/FTP-Patator -> 2 · DDoS -> 3
@@ -33,7 +33,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from aegis.ml import FEATURES  # noqa: E402
+from lassi.ml import FEATURES  # noqa: E402
 
 DATA_DIR = ROOT / "ml-training" / "data"
 MODELS_DIR = ROOT / "models"
@@ -191,7 +191,7 @@ def main() -> None:
 
     MODELS_DIR.mkdir(exist_ok=True)
     import joblib
-    joblib.dump({"model": model, "features": FEATURES}, MODELS_DIR / "aegis_model.pkl")
+    joblib.dump({"model": model, "features": FEATURES}, MODELS_DIR / "lassi_model.pkl")
     metrics = {
         "accuracy": round(rep["accuracy"], 4),
         "macro_f1": round(rep["macro avg"]["f1-score"], 4),
@@ -202,7 +202,7 @@ def main() -> None:
         "trained_at": time.strftime("%Y-%m-%d %H:%M"),
     }
     (MODELS_DIR / "metrics.json").write_text(json.dumps(metrics, indent=2))
-    print(f"saved -> {MODELS_DIR / 'aegis_model.pkl'} · metrics.json")
+    print(f"saved -> {MODELS_DIR / 'lassi_model.pkl'} · metrics.json")
 
 
 if __name__ == "__main__":

@@ -1,9 +1,9 @@
-"""Train the AegisNet demo-mode IDS model (synthetic flows).
+"""Train the LassiNet demo-mode IDS model (synthetic flows).
 
 Generates a labelled synthetic dataset, trains, evaluates and saves
 `models/demo_model.pkl` + `models/demo_metrics.json`. Serves demo mode AND CI
 (fast, deterministic). For real data run `ml-training/load_cicids.py`
-(CICIDS2017 → `models/aegis_model.pkl` + `models/metrics.json` for live mode).
+(CICIDS2017 → `models/lassi_model.pkl` + `models/metrics.json` for live mode).
 
 Quickstart:
     python ml-training/train_model.py
@@ -23,7 +23,7 @@ from sklearn.ensemble import RandomForestClassifier  # noqa: E402
 from sklearn.metrics import classification_report, confusion_matrix  # noqa: E402
 from sklearn.model_selection import train_test_split  # noqa: E402
 
-from aegis.ml import FEATURES  # noqa: E402
+from lassi.ml import FEATURES  # noqa: E402
 
 MODELS_DIR = ROOT / "models"
 MODEL_PATH = MODELS_DIR / "demo_model.pkl"

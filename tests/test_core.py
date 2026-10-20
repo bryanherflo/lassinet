@@ -1,4 +1,4 @@
-"""Unit tests for AegisNet core logic (state, simulator, ML).
+"""Unit tests for LassiNet core logic (state, simulator, ML).
 
 Run with:  pytest -q
 """
@@ -12,9 +12,9 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from aegis.ml import Detector, extract_features  # noqa: E402
-from aegis.simulator import Simulator  # noqa: E402
-from aegis.state import State  # noqa: E402
+from lassi.ml import Detector, extract_features  # noqa: E402
+from lassi.simulator import Simulator  # noqa: E402
+from lassi.state import State  # noqa: E402
 
 
 # ---- state --------------------------------------------------------------------
@@ -77,7 +77,7 @@ def test_infrastructure_links_are_tagged() -> None:
 
 
 def test_is_external_is_network_agnostic() -> None:
-    from aegis.state import is_external
+    from lassi.state import is_external
 
     assert is_external("8.8.8.8")                  # public
     assert is_external("185.199.108.153")          # public
@@ -91,7 +91,7 @@ def test_is_external_is_network_agnostic() -> None:
 
 
 def test_default_gateway_never_crashes() -> None:
-    from aegis.live import default_gateway, HAS_SCAPY
+    from lassi.live import default_gateway, HAS_SCAPY
 
     gw = default_gateway()
     if not HAS_SCAPY:
@@ -119,7 +119,7 @@ def test_egress_registers_internet_node_and_uplink() -> None:
 def test_sim_subnet_adapts_to_any_network(monkeypatch) -> None:
     import ipaddress
 
-    monkeypatch.setenv("AEGIS_DEMO_NET", "192.168.77.0/24")
+    monkeypatch.setenv("LASSI_DEMO_NET", "192.168.77.0/24")
     sim = Simulator()
     devices = sim.devices()
     assert all(dev["ip"].startswith("192.168.77.") for dev in devices)
@@ -135,16 +135,16 @@ def test_sim_subnet_adapts_to_any_network(monkeypatch) -> None:
 
 
 def test_sim_falls_back_on_garbage_net(monkeypatch) -> None:
-    monkeypatch.setenv("AEGIS_DEMO_NET", "not-a-subnet")
+    monkeypatch.setenv("LASSI_DEMO_NET", "not-a-subnet")
     sim = Simulator()
     assert next(d for d in sim.devices() if d["role"] == "router")["ip"].startswith("10.0.0.")
 
 
 def test_nft_rule_picks_ip_family(monkeypatch) -> None:
     captured: list[str] = []
-    monkeypatch.setattr("aegis.firewall.Firewall._nft",
+    monkeypatch.setattr("lassi.firewall.Firewall._nft",
                         staticmethod(lambda cmd: captured.append(cmd)))
-    from aegis.firewall import Firewall
+    from lassi.firewall import Firewall
 
     fw = Firewall(provider="nftables")
     fw.block("10.0.0.9")
@@ -191,7 +191,7 @@ def test_heuristic_detects_port_scan_without_model() -> None:
 
 
 def test_model_is_loadable_and_classifies() -> None:
-    for candidate in ROOT / "models" / "demo_model.pkl", ROOT / "models" / "aegis_model.pkl":
+    for candidate in ROOT / "models" / "demo_model.pkl", ROOT / "models" / "lassi_model.pkl":
         if candidate.exists():
             model_file = candidate
             break

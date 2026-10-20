@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to AegisNet are documented here (Keep-a-Changelog format).
+All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
 ## [0.4.1] — 2026-10-20 · "multi-network laptop"
 
@@ -10,7 +10,7 @@ All notable changes to AegisNet are documented here (Keep-a-Changelog format).
   default route — the *wrong* network. `discover()` now resolves the gateway
   of the subnetwork it actually sweeps (on-link networks fall back to the
   local interface address, which is de-facto their hub).
-- **`AEGIS_IFACE`** (new env var): pin the sniffing interface for
+- **`LASSI_IFACE`** (new env var): pin the sniffing interface for
   multi-network laptops instead of relying on the OS default.
 
 ### Changed
@@ -37,7 +37,7 @@ All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 ## [0.3.3] — 2026-10-20 · "any-network demo"
 
 ### Added
-- **`AEGIS_DEMO_NET`**: the simulated demo network now derives every device
+- **`LASSI_DEMO_NET`**: the simulated demo network now derives every device
   address from a configurable base subnet (any CIDR). The attack stories run
   identically on `192.168.x`, `172.16.x`, `10.x`… Invalid values fall back to
   the documented default.
@@ -50,7 +50,7 @@ All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 - **Network auto-detection for live mode**: `arp_discovery()` now defaults to
   the /24 the machine itself lives on (derived from its default route), then
   falls back through common home/lab subnets until neighbours answer — no
-  hardcoded addressing. Override with `AEGIS_SUBNET`; oversized CIDRs are
+  hardcoded addressing. Override with `LASSI_SUBNET`; oversized CIDRs are
   capped to a /24 sweep so an ARP run can never flood a big network.
 - Live mode builds the real topology: the machine's **default gateway becomes
   the router hub**, every discovered host links to it, and the monitoring host
@@ -118,7 +118,7 @@ All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 
 ### Fixed
 - **Auto-response now reaches the real firewall** — the engine's auto-block
-  updated only the in-memory rule table; with `AEGIS_FW=nftables|pfsense` the
+  updated only the in-memory rule table; with `LASSI_FW=nftables|pfsense` the
   external command was never issued. `state` stays the single source of truth
   for the UI, and the provider (`Firewall.block/unblock`) is always called
   alongside it (manual endpoints and engine auto-blocks). `aegis/firewall.py`
@@ -148,12 +148,12 @@ All notable changes to AegisNet are documented here (Keep-a-Changelog format).
   - *zero-pandas by design*: stdlib `csv` + numpy streaming parser (the project
     keeps 4 core dependencies) with Infinity/overflow sanitisation (CIC's
     literal "Infinity" artifacts broke `fit` with float32);
-  - writes `models/aegis_model.pkl` + `models/metrics.json` with `dataset:
+  - writes `models/lassi_model.pkl` + `models/metrics.json` with `dataset:
     "CICIDS2017 (3-day subset)"`.
 - **One model per operating mode** — demo and real traffic have different
   statistics, so demo mode now serves `models/demo_model.pkl` (synthetic,
   produced by `train_model.py`, also used by CI) while live mode serves
-  `models/aegis_model.pkl` (CICIDS2017). `app.py` picks per `AEGIS_MODE` and
+  `models/lassi_model.pkl` (CICIDS2017). `app.py` picks per `LASSI_MODE` and
   loads the matching metrics for the dashboard badge.
 - **CI badge now real** — README pulls the live status from
   `.github/workflows/ci.yml` instead of a hand-painted shield.
@@ -169,7 +169,7 @@ All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 - **`app.py`** — WebSocket handler cleaned (no dangling `app` parameter, no
   unused `clients` broadcast bookkeeping); startup log no longer dereferences
   `app.state.port` (which broke TestClient-based tests).
-- **`aegis/live.py`** — scapy imports unified at module level (removed duplicated
+- **`lassi/live.py`** — scapy imports unified at module level (removed duplicated
   per-function `srp` import and unused `UDP` import); `arp_discovery` body fixed
   (leftover placeholder code removed).
 

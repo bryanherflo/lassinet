@@ -34,7 +34,7 @@ ATTACK_TYPES = {
     4: "data_exfiltration",
 }
 
-MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "aegis_model.pkl"
+MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "lassi_model.pkl"
 
 
 def extract_features(flow: dict[str, Any]) -> list[float]:

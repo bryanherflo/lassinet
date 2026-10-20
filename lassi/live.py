@@ -94,7 +94,7 @@ def discover(cidr: str | None = None, timeout: int = 2) -> tuple[list[dict[str, 
 
     Network auto-detection (works on *any* LAN, home or lab):
     1. explicit `cidr` argument wins,
-    2. else `AEGIS_SUBNET` env var,
+    2. else `LASSI_SUBNET` env var,
     3. else the /24 the machine itself lives in (derived from its default
        route), whatever addressing it uses,
     4. else common defaults are swept until one returns neighbours.
@@ -103,7 +103,7 @@ def discover(cidr: str | None = None, timeout: int = 2) -> tuple[list[dict[str, 
     if cidr:
         candidates: list[str] = [cidr]
     else:
-        env = os.environ.get("AEGIS_SUBNET")
+        env = os.environ.get("LASSI_SUBNET")
         candidates = [env] if env else _candidate_subnets()
 
     hosts: list[dict[str, Any]] = []

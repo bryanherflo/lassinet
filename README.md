@@ -1,14 +1,14 @@
-# 🛡️ AegisNet
+# 🐕 LassiNet
 
 **Network visibility + ML-based intrusion detection + firewall control — in one lightweight dashboard.**
 
-AegisNet maps a network in real time (devices, links, open ports), profiles traffic,
+LassiNet maps a network in real time (devices, links, open ports), profiles traffic,
 scores every flow with a machine-learning model, raises alerts, and lets you block a
 host in the firewall **with one click — or automatically** for critical alerts.
 Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 
-<!-- AegisNet dashboard demo (uncomment when docs/demo.gif exists):
-![AegisNet dashboard demo](docs/demo.gif)
+<!-- LassiNet dashboard demo (uncomment when docs/demo.gif exists):
+![LassiNet dashboard demo](docs/demo.gif)
 -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
@@ -64,12 +64,12 @@ an attacker appear, attack scenarios detected by the ML engine, and auto-blocks 
 
 | Env var | Values | Default | Meaning |
 |---|---|---|---|
-| `AEGIS_MODE` | `demo` / `live` | `demo` | simulated network vs real ARP discovery + sniffing |
-| `AEGIS_FW` | `mock` / `nftables` / `pfsense` | `mock` | firewall provider |
-| `AEGIS_AUTO_BLOCK` | `0` / `1` | `1` (demo), `0` (live) | auto-block high/critical sources |
-| `AEGIS_PORT` | int | `8000` | dashboard port |
-| `AEGIS_SUBNET` | CIDR | *auto-detect* | network to ARP-sweep in live mode; by default the scanner discovers the subnet the machine itself lives on (`10.x`, `172.16.x`, `192.168.x`… anything), then falls back to common home/lab defaults |
-| `AEGIS_DEMO_NET` | CIDR | `10.0.0.0/24` | base subnet for the simulated demo network — change it and every demo device/attack story moves to that addressing |
+| `LASSI_MODE` | `demo` / `live` | `demo` | simulated network vs real ARP discovery + sniffing |
+| `LASSI_FW` | `mock` / `nftables` / `pfsense` | `mock` | firewall provider |
+| `LASSI_AUTO_BLOCK` | `0` / `1` | `1` (demo), `0` (live) | auto-block high/critical sources |
+| `LASSI_PORT` | int | `8000` | dashboard port |
+| `LASSI_SUBNET` | CIDR | *auto-detect* | network to ARP-sweep in live mode; by default the scanner discovers the subnet the machine itself lives on (`10.x`, `172.16.x`, `192.168.x`… anything), then falls back to common home/lab defaults |
+| `LASSI_DEMO_NET` | CIDR | `10.0.0.0/24` | base subnet for the simulated demo network — change it and every demo device/attack story moves to that addressing |
 
 **Live mode** (real traffic, opt-in — needs admin/root, `pip install scapy`,
 and ideally the real-data model `python ml-training/load_cicids.py`,
@@ -77,7 +77,7 @@ otherwise the rule-based engine is used):
 
 ```bash
 pip install scapy
-AEGIS_MODE=live python app.py
+LASSI_MODE=live python app.py
 ```
 
 Live mode performs an **auto-detected ARP sweep** — it starts on the subnet the
@@ -97,7 +97,7 @@ python ml-training/load_cicids.py               # downloads ~290 MB (cached), tr
 ```
 
 This fetches three day-files (Tuesday: SSH/FTP brute force, Friday: DDoS +
-PortScan + benign), projects each CICFlowMeter row onto AegisNet's 8 flow
+PortScan + benign), projects each CICFlowMeter row onto LassiNet's 8 flow
 features, and saves the model + `models/metrics.json`, which the dashboard
 shows as a badge.
 
@@ -137,8 +137,8 @@ aegisnet/
 │   ├── ml.py              # feature extraction + inference (+ rule fallback)
 │   └── firewall.py        # mock / nftables / OPNsense providers
 ├── ml-training/           # dataset generation + training + metrics
-│       └── load_cicids.py # real-data path: CICIDS2017 → 8 AegisNet features
-│   ├── models/            # aegis_model.pkl + metrics.json (generated)
+│       └── load_cicids.py # real-data path: CICIDS2017 → 8 LassiNet features
+│   ├── models/            # lassi_model.pkl + metrics.json (generated)
 ├── dashboard/             # static UI (vis-network), no build step
 └── docs/                  # architecture + lab guide
 ```
@@ -151,7 +151,7 @@ aegisnet/
   dataset-portable (same shape as NIDS classics like CICIDS2017).
 * **One model per mode** — the demo simulator and real traffic have different
   statistics, so each mode is served by a model trained on its own
-  distribution (`models/demo_model.pkl` synthetic ↔ `models/aegis_model.pkl`
+  distribution (`models/demo_model.pkl` synthetic ↔ `models/lassi_model.pkl`
   CICIDS2017); the dashboard badge shows the metrics of whichever is active.
 * **Defence in depth** — when no model file is present, a deterministic
   heuristic engine takes over, so the platform is still useful (and the
@@ -173,7 +173,7 @@ aegisnet/
 
 ## ⚠️ Ethics & scope
 
-AegisNet is an **educational project**: discovery, capture, and blocking must
+LassiNet is an **educational project**: discovery, capture, and blocking must
 only ever run against **networks you own or are authorised to test** (your lab,
 your homelab, a CTF, a written pentest engagement). Sniffing other people's
 traffic without consent is illegal in most jurisdictions. The default mode is a

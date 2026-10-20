@@ -9,12 +9,12 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import app as aegis_app  # noqa: E402
+import app as lassi_app  # noqa: E402
 
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
-    with TestClient(aegis_app.app) as c:
+    with TestClient(lassi_app.app) as c:
         yield c
 
 
@@ -26,7 +26,7 @@ def test_health(client: TestClient) -> None:
 
 def test_dashboard_served(client: TestClient) -> None:
     assert client.get("/").status_code == 200
-    assert "AegisNet" in client.get("/").text
+    assert "LassiNet" in client.get("/").text
 
 
 def test_state_shape(client: TestClient) -> None:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""AegisNet — network visibility dashboard + ML IDS + firewall control.
+"""LassiNet — network visibility dashboard + ML IDS + firewall control.
 
 Quickstart:
     pip install -r requirements.txt
@@ -7,10 +7,10 @@ Quickstart:
     -> open http://localhost:8000
 
 Modes (env vars):
-    AEGIS_MODE=demo        simulated devices + attack stories (default, no privileges)
-    AEGIS_MODE=live        ARP discovery + sc sniffing (needs `pip install scapy`, admin)
-    AEGIS_AUTO_BLOCK=1     auto-block critical alerts in the firewall (default off in live, on in demo)
-    AEGIS_FW=mock|nftables|pfsense    firewall provider (default: mock)
+    LASSI_MODE=demo        simulated devices + attack stories (default, no privileges)
+    LASSI_MODE=live        ARP discovery + sc sniffing (needs `pip install scapy`, admin)
+    LASSI_AUTO_BLOCK=1     auto-block critical alerts in the firewall (default off in live, on in demo)
+    LASSI_FW=mock|nftables|pfsense    firewall provider (default: mock)
 """
 
 import asyncio
@@ -27,18 +27,18 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from aegis.firewall import Firewall
-from aegis.ml import Detector
-from aegis.state import State, is_external
-from aegis.simulator import Simulator
+from lassi.firewall import Firewall
+from lassi.ml import Detector
+from lassi.state import State, is_external
+from lassi.simulator import Simulator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("aegis")
 
 TICK = 2.0  # seconds between engine cycles
 
-MODE = os.getenv("AEGIS_MODE", "demo").lower()
-AUTO_BLOCK = os.getenv("AEGIS_AUTO_BLOCK", "1" if MODE == "demo" else "0") == "1"
+MODE = os.getenv("LASSI_MODE", "demo").lower()
+AUTO_BLOCK = os.getenv("LASSI_AUTO_BLOCK", "1" if MODE == "demo" else "0") == "1"
 
 state = State()
 state.mode = "demo (simulated)" if MODE == "demo" else "live (scapy)"
@@ -48,7 +48,7 @@ fw = Firewall()
 # one model per operating mode — each trained on the distribution it serves:
 #   demo -> synthetic (train_model.py)        live -> CICIDS2017 (load_cicids.py)
 MODELS_DIR = Path(__file__).resolve().parent / "models"
-detector = Detector(model_path=MODELS_DIR / ("demo_model.pkl" if MODE == "demo" else "aegis_model.pkl"))
+detector = Detector(model_path=MODELS_DIR / ("demo_model.pkl" if MODE == "demo" else "lassi_model.pkl"))
 
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
@@ -154,12 +154,12 @@ _capture = None
 
 
 def live_source() -> None:
-    from aegis.live import LiveCapture, discover, local_ip  # lazy import
+    from lassi.live import LiveCapture, discover, local_ip  # lazy import
 
     global _capture
     if _capture is None:
-        # interface override for multi-network laptops (AEGIS_IFACE), else default
-        _capture = LiveCapture(interface=os.getenv("AEGIS_IFACE"))
+        # interface override for multi-network laptops (LASSI_IFACE), else default
+        _capture = LiveCapture(interface=os.getenv("LASSI_IFACE"))
         _capture.start_background()
     hosts, gateway_ip = discover()
     me = local_ip()
@@ -197,18 +197,18 @@ async def lifespan(app: FastAPI):
         source = demo_loop
     else:
         try:
-            import aegis.live  # noqa: F401  (presence check; needs scapy + admin)
+            import lassi.live  # noqa: F401  (presence check; needs scapy + admin)
             source = live_source
         except ImportError:
-            log.error("AEGIS_MODE=live requires scapy (`pip install scapy`) — "
+            log.error("LASSI_MODE=live requires scapy (`pip install scapy`) — "
                       "falling back to demo mode")
             source = demo_loop
     start_engine(source)
-    log.info("AegisNet running in %s mode", MODE)
+    log.info("LassiNet running in %s mode", MODE)
     yield
 
 
-app = FastAPI(title="AegisNet", lifespan=lifespan)
+app = FastAPI(title="LassiNet", lifespan=lifespan)
 
 
 class BlockRequest(BaseModel):
@@ -273,9 +273,9 @@ if __name__ == "__main__":
 
     import uvicorn
 
-    ap = argparse.ArgumentParser(description="Run AegisNet")
+    ap = argparse.ArgumentParser(description="Run LassiNet")
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=int(os.getenv("AEGIS_PORT", "8000")))
+    ap.add_argument("--port", type=int, default=int(os.getenv("LASSI_PORT", "8000")))
     args = ap.parse_args()
     app.state.port = args.port
     uvicorn.run(app, host=args.host, port=args.port, log_level="info",

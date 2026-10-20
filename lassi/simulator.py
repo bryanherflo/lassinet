@@ -1,10 +1,10 @@
 """Demo simulator — generates realistic devices and network flows, including
 attack scenarios (port scans, SSH brute force, DDoS, exfiltration).
 
-This makes AegisNet instantly usable on any laptop with zero configuration;
-switch AEGIS_MODE=live for real capture.
+This makes LassiNet instantly usable on any laptop with zero configuration;
+switch LASSI_MODE=live for real capture.
 
-The demo addressing adapts to any base subnet via `AEGIS_DEMO_NET` (any CIDR:
+The demo addressing adapts to any base subnet via `LASSI_DEMO_NET` (any CIDR:
 `192.168.5.0/24`, `172.16.30.0/24`, `10.100.0.0/16`…). Host addresses are the
 base subnet plus fixed host-offsets, so the same story plays out identically
 on any network. Egress targets are public IPs and therefore LAN-independent,
@@ -40,7 +40,7 @@ LABELS = {"port_scan": 1, "brute_force": 2, "ddos": 3, "data_exfiltration": 4}
 
 def _parse_net(net: str | None) -> ipaddress.IPv4Network:
     try:
-        return ipaddress.ip_network(net or os.environ.get("AEGIS_DEMO_NET", DEFAULT_NET), strict=False)
+        return ipaddress.ip_network(net or os.environ.get("LASSI_DEMO_NET", DEFAULT_NET), strict=False)
     except ValueError:
         return ipaddress.ip_network(DEFAULT_NET)
 
