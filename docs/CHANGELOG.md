@@ -36,7 +36,9 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 - Traffic animation upgraded: packet dots are tinted by the emitting device's
   role (green workstations, blue servers, amber IoT, purple router), leave a
   comet-like fading trail behind them, and scale with the flow's byte count
-  (traffic samples now carry `bytes` from the engine).
+  (traffic samples now carry `bytes` from the engine). The dots are rendered
+  exclusively from the engine's flow stream — simulated flows in demo mode,
+  physically sniffed packets in live mode — via the same detection pipeline.
 
 ## [0.4.2] — 2026-10-20 · "you can see the attack travel"
 

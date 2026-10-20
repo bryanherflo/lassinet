@@ -25,12 +25,13 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 
 | | |
 |---|---|
-| 🗺️ **Topology map** | Live network graph: devices, roles (router, server, IoT, attacker…), links, blocked status |
+| 🗺️ **Topology map** | Live network graph: devices, roles (router, server, IoT, attacker…), links, blocked status. Traffic animates as role-tinted packet dots with comet trails; attack paths glow red from attacker to victim |
 | 📡 **Traffic capture** | Flow aggregation from a real sniffer (scapy) or a built-in simulator |
 | 🧠 **ML IDS** | RandomForest classifying flows into *benign / port_scan / brute_force / ddos / data_exfiltration* |
 | 🚨 **Threat feed** | Severity-ranked alerts with confidence, detection engine (`ml` vs `rules`), timestamps |
 | 🧱 **Firewall control** | Read + write rules: `mock` (default), `nftables` (Linux), OPNsense/pfSense API |
 | 🤖 **Auto-response** | Optional auto-block of high/critical sources (manual SOAR-style containment) |
+| 📜 **System log + audit trail** | Colour-coded event stream in the UI **and** a local JSONL log (`logs/events.jsonl`, tail it over HTTP via `GET /api/logs?limit=N`) |
 | ⚡ **Zero config** | `pip install` → `python app.py` → open `http://localhost:8000`. Demo mode needs no privileges. The map library is bundled locally — no CDN, no build step, works offline |
 
 ## 🚀 Quickstart
@@ -57,6 +58,15 @@ python -m pytest tests/ -q
 
 Open **http://localhost:8000** — within seconds you will see devices joining the map,
 an attacker appear, attack scenarios detected by the ML engine, and auto-blocks fired.
+
+**About the packet dots on the map** (and honesty about what they show): the travelling
+dots are *not* decoration — they are rendered **only** from the engine's real flow
+stream. Every dot corresponds to an actual flow (source, destination, byte size, verdict)
+that passed through the detection pipeline. In **demo mode that network is simulated**
+(the badge says *"demo (simulated)"*: the simulator generates the flows, but they still go
+through the same ML detection → alert → firewall path as real packets). In **live mode**
+(`LASSI_MODE=live`) the same pipeline feeds the dots from **physically sniffed packets**,
+so the traffic you see is the traffic on your wire.
 
 **Shortcuts:** select a node on the map and press `B` to block it · use the feed/rule buttons to block/unblock.
 
