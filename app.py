@@ -44,9 +44,13 @@ state = State()
 state.mode = "demo (simulated)" if MODE == "demo" else "live (scapy)"
 sim = Simulator()
 fw = Firewall()
-detector = Detector()
 
-_metrics_file = Path(__file__).resolve().parent / "models" / "metrics.json"
+# one model per operating mode — each trained on the distribution it serves:
+#   demo -> synthetic (train_model.py)        live -> CICIDS2017 (load_cicids.py)
+MODELS_DIR = Path(__file__).resolve().parent / "models"
+detector = Detector(model_path=MODELS_DIR / ("demo_model.pkl" if MODE == "demo" else "aegis_model.pkl"))
+
+_metrics_file = MODELS_DIR / ("demo_metrics.json" if MODE == "demo" else "metrics.json")
 if _metrics_file.exists():
     try:
         import json

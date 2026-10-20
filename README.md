@@ -79,15 +79,28 @@ and manual blocking behave exactly as in the demo.
 
 ## 🔬 Training on a real dataset
 
-The bundled trainer generates a labelled synthetic-flow dataset (fast, reproducible).
-For realistic metrics, train on a public benchmark such as
-[CICIDS2017](https://www.unb.ca/cic/datasets/ids-2017.html):
+The bundled trainer generates a labelled synthetic-flow dataset (fast, reproducible —
+used by CI). For realistic research-grade metrics, train on the public
+[CICIDS2017](https://www.unb.ca/cic/datasets/ids-2017.html) benchmark:
 
 ```bash
-python ml-training/train_model.py --csv path/CICIDS2017.csv --label-col Label
+python ml-training/load_cicids.py               # downloads ~290 MB (cached), trains 4 classes
 ```
 
+This fetches three day-files (Tuesday: SSH/FTP brute force, Friday: DDoS +
+PortScan + benign), projects each CICFlowMeter row onto AegisNet's 8 flow
+features, and saves the model + `models/metrics.json`, which the dashboard
+shows as a badge.
+
 Metrics (`models/metrics.json`) are displayed as a badge on the dashboard.
+
+## 📚 Cite
+
+If you use results obtained with `load_cicids.py`, cite the dataset authors:
+
+> Sharafaldin, A., Habibi Lashkari, A., Ghorbani, A. — *“Toward Generating a New
+> Intrusion Detection Dataset and Intrusion Traffic Characterization”*,
+> ICISSP 2018.
 
 ## 🏗️ Architecture
 
@@ -115,7 +128,8 @@ aegisnet/
 │   ├── ml.py              # feature extraction + inference (+ rule fallback)
 │   └── firewall.py        # mock / nftables / OPNsense providers
 ├── ml-training/           # dataset generation + training + metrics
-├── models/                # aegis_model.pkl + metrics.json (generated)
+│       └── load_cicids.py # real-data path: CICIDS2017 → 8 AegisNet features
+│   ├── models/            # aegis_model.pkl + metrics.json (generated)
 ├── dashboard/             # static UI (vis-network), no build step
 └── docs/                  # architecture + lab guide
 ```
@@ -126,12 +140,27 @@ aegisnet/
   (packets, bytes, duration, SYN ratio, distinct destination ports, mean packet
   size, packet rate, bytes/packet). Aggregate features make detection fast and
   dataset-portable (same shape as NIDS classics like CICIDS2017).
-* **Defence in depth** — when the ML model file is absent, a deterministic
+* **One model per mode** — the demo simulator and real traffic have different
+  statistics, so each mode is served by a model trained on its own
+  distribution (`models/demo_model.pkl` synthetic ↔ `models/aegis_model.pkl`
+  CICIDS2017); the dashboard badge shows the metrics of whichever is active.
+* **Defence in depth** — when no model file is present, a deterministic
   heuristic engine takes over, so the platform is still useful (and the
   dashboard badge shows which engine fired each alert).
-* **Synthetic metrics caveat** — the bundled model reports great accuracy by
-  design (the synthetic classes are separable). Use `--csv` with real data for
-  honest benchmark numbers; the README badge will reflect it.
+* **Real-data results** (`ml-training/load_cicids.py`, 3-day CICIDS2017 subset,
+  ≈958k labelled flows, 250k stratified subsample, RandomForest):
+
+  | class | precision | recall | F1 |
+  |---|---|---|---|
+  | benign | 0.99 | 0.99 | 0.99 |
+  | port scan | 0.99 | 1.00 | 1.00 |
+  | SSH/FTP brute force | 1.00 | 0.77 | 0.87 |
+  | DDoS | 0.95 | 0.99 | 0.97 |
+
+  overall accuracy **0.99** · macro-F1 **0.96** · hyper-parameters chosen with
+  `ml-training/compare_configs.py` (weighting trade-off documented in-code).
+  Known limitation: per-flow CIC CSVs carry no per-source grouping, so the
+  `dst_port_count` signal is neutral on real data.
 
 ## ⚠️ Ethics & scope
 

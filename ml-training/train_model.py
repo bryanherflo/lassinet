@@ -1,16 +1,14 @@
-#!/usr/bin/env python
-"""Train the AegisNet IDS model.
+"""Train the AegisNet demo-mode IDS model (synthetic flows).
 
-Zero-download quickstart:
+Generates a labelled synthetic dataset, trains, evaluates and saves
+`models/demo_model.pkl` + `models/demo_metrics.json`. Serves demo mode AND CI
+(fast, deterministic). For real data run `ml-training/load_cicids.py`
+(CICIDS2017 → `models/aegis_model.pkl` + `models/metrics.json` for live mode).
+
+Quickstart:
     python ml-training/train_model.py
-    -> generates a labelled synthetic flow dataset modeled after CICIDS-style
-       features, trains a RandomForest, evaluates and saves models/aegis_model.pkl
-
-Optional — train on a real dataset (recommended for the README):
-    python ml-training/train_model.py --csv path/CICIDS2017.csv --label-col Label
 """
 
-import argparse
 import json
 import sys
 import time
@@ -28,6 +26,8 @@ from sklearn.model_selection import train_test_split  # noqa: E402
 from aegis.ml import FEATURES  # noqa: E402
 
 MODELS_DIR = ROOT / "models"
+MODEL_PATH = MODELS_DIR / "demo_model.pkl"
+METRICS_PATH = MODELS_DIR / "demo_metrics.json"
 
 
 # --- synthetic data: mirrors aegis.simulator.attack_story distributions -----
@@ -62,23 +62,11 @@ def synth_dataset(n: int = 20_000, rng: np.random.RandomState | None = None):
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Train AegisNet IDS model")
-    ap.add_argument("--csv", help="CSV dataset (e.g. CICIDS2017) instead of synthetic data")
-    ap.add_argument("--label-col", default="Label")
-    ap.add_argument("--feature-cols", default="", help="comma-separated feature columns (default: AegisNet FEATURES order)")
-    args = ap.parse_args()
-
-    if args.csv:
-        import pandas as pd
-        df = pd.read_csv(args.csv)
-        cols = args.feature_cols.split(",") if args.feature_cols else FEATURES
-        X, y = df[list(cols)].values, df[args.label_col].values
-    else:
-        X, y = synth_dataset()
+    X, y = synth_dataset()
 
     X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.25, stratify=y, random_state=42)
-    model = RandomForestClassifier(n_estimators=200, max_depth=12, class_weight="balanced",
-                                   n_jobs=-1, random_state=42)
+    model = RandomForestClassifier(n_estimators=200, max_depth=12,
+                                   class_weight=None, n_jobs=-1, random_state=42)
     t0 = time.time()
     model.fit(X_tr, y_tr)
     train_time = round(time.time() - t0, 2)
@@ -89,18 +77,18 @@ def main() -> None:
     macro_f1 = round(report["macro avg"]["f1-score"], 4)
 
     MODELS_DIR.mkdir(exist_ok=True)
-    joblib.dump({"model": model, "features": FEATURES}, MODELS_DIR / "aegis_model.pkl")
+    joblib.dump({"model": model, "features": FEATURES}, MODEL_PATH)
     metrics = {
         "accuracy": acc, "macro_f1": macro_f1, "train_time_s": train_time,
         "n_samples": int(len(y)), "classes": sorted(set(int(v) for v in y)),
-        "dataset": "synthetic" if not args.csv else Path(args.csv).name,
+        "dataset": "synthetic (demo)",
         "trained_at": time.strftime("%Y-%m-%d %H:%M"),
     }
-    (MODELS_DIR / "metrics.json").write_text(json.dumps(metrics, indent=2))
+    METRICS_PATH.write_text(json.dumps(metrics, indent=2))
 
     print(f"accuracy={acc}  macro_f1={macro_f1}  trained in {train_time}s")
     print(confusion_matrix(y_te, y_pred))
-    print(f"Model saved -> {MODELS_DIR / 'aegis_model.pkl'}")
+    print(f"Model saved -> {MODEL_PATH}")
 
 
 if __name__ == "__main__":

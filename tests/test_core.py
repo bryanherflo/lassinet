@@ -98,8 +98,11 @@ def test_heuristic_detects_port_scan_without_model() -> None:
 
 
 def test_model_is_loadable_and_classifies() -> None:
-    model_file = ROOT / "models" / "aegis_model.pkl"
-    if not model_file.exists():
+    for candidate in ROOT / "models" / "demo_model.pkl", ROOT / "models" / "aegis_model.pkl":
+        if candidate.exists():
+            model_file = candidate
+            break
+    else:
         pytest.skip("train first: python ml-training/train_model.py")
     det = Detector(model_path=model_file)
     assert det.model is not None

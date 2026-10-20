@@ -1,0 +1,15 @@
+{
+  "accuracy": 1.0,
+  "macro_f1": 1.0,
+  "train_time_s": 0.32,
+  "n_samples": 20000,
+  "classes": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "dataset": "synthetic (demo)",
+  "trained_at": "2026-10-20 13:27"
+}
