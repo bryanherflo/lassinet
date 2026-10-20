@@ -46,10 +46,37 @@ function computeTreeLayout(data) {
   return pos;
 }
 
-// ---- alert flash: border pulse on nodes that just fired an alert -------------
+// ---- attack feedback: node flash + red glow on the tree wires attacked -------
+// (no extra cables: the links already drawn are temporarily painted red)
 let lastAttacks = -1;
 const flashUntil = {};
+const attackPathUntil = {};   // edge id -> expiry timestamp
+const attackArrow = {};       // edge id -> node on the victim side (arrow target)
+const attackLabel = {};       // edge id -> attack kind shown on the wire
 const FLASH_MS = 6000;
+
+function findLinkEdgeId(data, u, v) {
+  for (const e of data.edges) {
+    if (e.kind !== "link") continue;
+    if ((e.from === u && e.to === v) || (e.from === v && e.to === u)) {
+      return "L|" + e.from + "|" + e.to;
+    }
+  }
+  return null;
+}
+
+function markAttackPath(data, a, now) {
+  const router = data.nodes.find(h => h.role === "router");
+  if (!router || !a.src) return;
+  const hostIps = new Set(data.nodes.map(h => h.ip));
+  let victim = a.dst;
+  if (!hostIps.has(victim)) victim = (data.nodes.find(h => h.role === "external") || {}).ip; // exfil → outside
+  if (!victim || victim === a.src) return;
+  for (const [u, v] of [[a.src, router.ip], [router.ip, victim]]) {
+    const id = findLinkEdgeId(data, u, v);
+    if (id) { attackPathUntil[id] = now + FLASH_MS; attackArrow[id] = v; attackLabel[id] = a.attack; }
+  }
+}
 
 function updateFlashes(data, now) {
   const total = data.stats.attacks_total;
@@ -58,6 +85,37 @@ function updateFlashes(data, now) {
   lastAttacks = total;
   for (const a of data.alerts.slice(0, fresh)) {
     if (a.src) flashUntil[a.src] = now + FLASH_MS;
+    markAttackPath(data, a, now);
+  }
+}
+
+// repaint only the edges whose attack state changed (2 s snapshot cadence)
+let paintedEdges = new Set();
+
+function applyAttackStyle() {
+  const now = Date.now();
+  const active = new Set();
+  for (const [id, until] of Object.entries(attackPathUntil)) {
+    if (until > now) active.add(id);
+    else { delete attackPathUntil[id]; delete attackArrow[id]; delete attackLabel[id]; }
+  }
+  paintedEdges = new Set([...paintedEdges].filter(id => edges.get(id)));
+  for (const e of edges.get()) {
+    if (!e.id.startsWith("L|") && !paintedEdges.has(e.id)) continue;
+    const hot = active.has(e.id);
+    const wasHot = paintedEdges.has(e.id);
+    if (hot === wasHot) continue;                       // no transition → no churn
+    const arrowEnd = hot && e.to === attackArrow[e.id] ? "to"
+                    : hot && e.from === attackArrow[e.id] ? "from" : null;
+    edges.update({
+      id: e.id,
+      color: { color: hot ? "#f85149" : "#484f58" },
+      width: hot ? 4 : 2.5,
+      label: hot ? (attackLabel[e.id] || "attack") : "",
+      font: hot ? { color: "#ff7b72", size: 11, face: "monospace" } : undefined,
+      arrows: arrowEnd ? { [arrowEnd]: { enabled: true, scaleFactor: 0.55 } } : "",
+    });
+    if (hot) paintedEdges.add(e.id); else paintedEdges.delete(e.id);
   }
 }
 
@@ -128,6 +186,7 @@ function renderTopology(data) {
     seenEdges.add(id);
   }
   for (const e of edges.get()) if (!seenEdges.has(e.id)) edges.remove(e.id);
+  applyAttackStyle();
 }
 
 // ---- side panel --------------------------------------------------------------
