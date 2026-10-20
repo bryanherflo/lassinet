@@ -6,9 +6,11 @@ venv/
 .venv/
 env/
 
-# --- Model artifacts (metrics are kept, model is reproducible via train script) ---
+# --- Model artifacts (weights reproducible via training scripts; metrics kept) ---
 models/*.pkl
-ml-training/data/*.csv
+
+# --- ML training data (downloaded datasets + feature cache) ---
+ml-training/data/
 
 # --- Node / frontend ---
 node_modules/
