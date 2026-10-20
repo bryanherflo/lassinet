@@ -9,12 +9,13 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 
 <!-- TODO before publishing: record a 15-30s GIF of the dashboard (e.g. with ScreenToGif) and reference it here as docs/demo.gif -->
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![CI](https://github.com/bryanherflo/aegisnet/actions/workflows/ci.yml/badge.svg)](https://github.com/bryanherflo/aegisnet/actions/workflows/ci.yml)
+[![mode](https://img.shields.io/badge/mode-demo%20%2F%20live-8b5cf6)](#)
+
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](#)
 [![FastAPI](https://img.shields.io/badge/FastAPI-✓-009485)](#)
 [![scikit-learn](https://img.shields.io/badge/ML-scikit--learn-f89939)](#)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![CI](https://img.shields.io/badge/CI-tests%20✓-3fb950)](.github/workflows/ci.yml)
-[![mode](https://img.shields.io/badge/mode-demo%20%2F%20live-8b5cf6)](#)
 
 ---
 
