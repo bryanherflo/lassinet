@@ -50,15 +50,44 @@ fw = Firewall()
 MODELS_DIR = Path(__file__).resolve().parent / "models"
 detector = Detector(model_path=MODELS_DIR / ("demo_model.pkl" if MODE == "demo" else "aegis_model.pkl"))
 
-_metrics_file = MODELS_DIR / ("demo_metrics.json" if MODE == "demo" else "metrics.json")
-if _metrics_file.exists():
+SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
+def _load_metrics() -> None:
+    mfile = MODELS_DIR / ("demo_metrics.json" if MODE == "demo" else "metrics.json")
+    if not mfile.exists():
+        return
     try:
         import json
-        state.model_metrics = json.loads(_metrics_file.read_text())
+        state.model_metrics = json.loads(mfile.read_text())
     except Exception:
         log.exception("could not read model metrics")
 
-SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+_load_metrics()
+
+
+def _train_demo_model_if_missing() -> None:
+    """Fresh clones ship without model weights (gitignored, reproducible via
+    the training scripts). First run auto-trains the tiny synthetic demo model
+    (~1 s) so every clone starts with the full ML experience."""
+    model_path = MODELS_DIR / "demo_model.pkl"
+    if model_path.exists():
+        return
+    script = Path(__file__).resolve().parent / "ml-training" / "train_model.py"
+    log.info("demo model not found — auto-training it now (a few seconds)…")
+    import subprocess
+    import sys
+    try:
+        subprocess.run([sys.executable, str(script)], cwd=str(Path(__file__).resolve().parent),
+                       check=True, timeout=300, stdout=subprocess.DEVNULL)
+    except Exception:
+        log.warning("auto-training failed — the rule-based engine takes over "
+                    "until `python ml-training/train_model.py` is run")
+        return
+    detector.model = Detector(model_path=model_path).model
+    _load_metrics()
+    log.info("demo model trained and loaded")
 
 
 # --------------------------------------------------------------------------
@@ -164,6 +193,7 @@ def live_source() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if MODE == "demo":
+        _train_demo_model_if_missing()
         source = demo_loop
     else:
         try:

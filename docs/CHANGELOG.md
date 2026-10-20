@@ -2,6 +2,23 @@
 
 All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 
+## [0.4.0] — 2026-10-20 · "download-and-run"
+
+### Added
+- **First-run auto-training**: fresh clones ship without model weights (they
+  are gitignored and reproducible). On startup, demo mode now trains the
+  small synthetic model automatically and loads it — a clone goes
+  `pip install` → `python app.py` → full ML dashboard. Failure falls back
+  gracefully to the rule-based engine with a clear log hint.
+- **Bundled map library**: vendored `vis-network` 9.1.9 (dual MIT/Apache-2.0)
+  under `dashboard/vendor/` with a CDN fallback — the dashboard now renders
+  offline and is immune to CDN version drift.
+- `.env.example` documenting every configuration variable.
+
+### Changed
+- README quickstart simplified (training step is now optional) and the
+  zero-config row updated.
+
 ## [0.3.3] — 2026-10-20 · "any-network demo"
 
 ### Added

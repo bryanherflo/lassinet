@@ -31,7 +31,7 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 | 🚨 **Threat feed** | Severity-ranked alerts with confidence, detection engine (`ml` vs `rules`), timestamps |
 | 🧱 **Firewall control** | Read + write rules: `mock` (default), `nftables` (Linux), OPNsense/pfSense API |
 | 🤖 **Auto-response** | Optional auto-block of high/critical sources (manual SOAR-style containment) |
-| ⚡ **Zero config** | `pip install` → `python app.py` → open `http://localhost:8000`. Demo mode needs no privileges |
+| ⚡ **Zero config** | `pip install` → `python app.py` → open `http://localhost:8000`. Demo mode needs no privileges. The map library is bundled locally — no CDN, no build step, works offline |
 
 ## 🚀 Quickstart
 
@@ -40,14 +40,15 @@ git clone https://github.com/bryanherflo/aegisnet.git
 cd aegisnet
 pip install -r requirements.txt
 
-# train the model (10 lines of output, ~1 second on synthetic data)
-python ml-training/train_model.py
-
 # run (demo mode, simulated network, safe everywhere)
 python app.py
 ```
 
-**Run the test suite** (15 unit + API smoke tests, no network needed):
+> The tiny demo model **auto-trains on first run** when missing (a few
+> seconds) — running `python ml-training/train_model.py` manually is
+> equivalent, not required. The rule-based engine still works even then.
+
+**Run the test suite** (23 unit + API smoke tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt
