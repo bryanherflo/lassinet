@@ -1,7 +1,7 @@
 # Lab guide — testing AegisNet against a real (isolated) network
 
-AegisNet ships with a simulator so nothing here is *required*, but building the
-lab is a great exercise in itself (and looks good in your GitHub history).
+AegisNet ships with a simulator so nothing here is *required*, but building
+this lab is a worthwhile extension exercise.
 
 ## Option A — two-VM lab (VirtualBox / VMware / Proxmox)
 

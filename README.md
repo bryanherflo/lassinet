@@ -7,7 +7,9 @@ scores every flow with a machine-learning model, raises alerts, and lets you blo
 host in the firewall **with one click — or automatically** for critical alerts.
 Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 
-<!-- TODO before publishing: record a 15-30s GIF of the dashboard (e.g. with ScreenToGif) and reference it here as docs/demo.gif -->
+<!-- AegisNet dashboard demo (uncomment when docs/demo.gif exists):
+![AegisNet dashboard demo](docs/demo.gif)
+-->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![CI](https://github.com/bryanherflo/aegisnet/actions/workflows/ci.yml/badge.svg)](https://github.com/bryanherflo/aegisnet/actions/workflows/ci.yml)

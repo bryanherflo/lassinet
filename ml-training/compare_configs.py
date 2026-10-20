@@ -4,7 +4,7 @@ Run after `python ml-training/load_cicids.py` has produced
 ml-training/data/features_cache.npz. Results printed as a table and the
 winning hyper-parameters noted for load_cicids.py defaults.
 
-Kept as a portfolio artifact: it documents WHY load_cicids.py trains with
+This script documents WHY load_cicids.py trains with
 class_weight=None ("balanced" pushed recall up but tanked benign-vs-bf
 precision; F1 0.49 -> 0.87 without it).
 
