@@ -2,6 +2,26 @@
 
 All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 
+## [0.2.1] — 2026-10-20 · "review / optimisation pass"
+
+### Fixed
+- **Auto-response now reaches the real firewall** — the engine's auto-block
+  updated only the in-memory rule table; with `AEGIS_FW=nftables|pfsense` the
+  external command was never issued. `state` stays the single source of truth
+  for the UI, and the provider (`Firewall.block/unblock`) is always called
+  alongside it (manual endpoints and engine auto-blocks). `aegis/firewall.py`
+  is now a pure provider (it no longer keeps a duplicate rule list).
+- **Dashboard polling leak** — every WebSocket close spawned an uncancellable
+  fallback `setInterval`; reconnect loops multiplied polling requests over
+  time. Polling now starts at most once (`dashboard/app.js`).
+- **Live-mode hardening** — scapy import sanity-checked at startup with a
+  clear fallback-to-demo log (missing dependency no longer spams a traceback
+  every tick); `LiveCapture` initialised without the `NameError` probe hack.
+
+### Optimised
+- `uvicorn.run(access_log=False)` — health-probe request logs no longer flood
+  the console (app logs remain at INFO).
+
 ## [0.2.0] — 2026-10-20 · "production hygiene + real data"
 
 ### Added

@@ -80,7 +80,10 @@ def process_flows(flows: list[dict]) -> None:
             }
             state.add_alert(alert)
             if AUTO_BLOCK and SEVERITY_RANK[verdict["severity"]] >= 2:
+                # state is the rule-table truth for the UI; the firewall
+                # provider is called so real deployments actually apply it
                 if state.block_host(flow["src"], reason=f"{verdict['attack']} ({verdict['confidence']})"):
+                    fw.block(flow["src"], reason=verdict["attack"])
                     state.add_alert({**alert, "attack": "auto_block",
                                      "severity": "info"})
 
@@ -113,18 +116,16 @@ def start_engine(source: Callable[[], None]) -> None:
 # --------------------------------------------------------------------------
 # Live-mode source (optional, requires scapy)
 # --------------------------------------------------------------------------
+_capture = None
+
+
 def live_source() -> None:
     from aegis.live import LiveCapture, arp_discovery  # lazy import
 
-    global _capture  # noqa: F824
-    try:
-        _capture  # type: ignore[name-defined]
-    except NameError:
-        for host in arp_discovery():
-            state.upsert_host(host["ip"], **host)
+    global _capture
+    if _capture is None:
         _capture = LiveCapture()
         _capture.start_background()
-
     for host in arp_discovery():
         fields = {k: v for k, v in host.items() if k != "ip"}
         state.upsert_host(host["ip"], **fields)
@@ -139,15 +140,22 @@ def live_source() -> None:
 # --------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    source = demo_loop if MODE == "demo" else live_source
+    if MODE == "demo":
+        source = demo_loop
+    else:
+        try:
+            import aegis.live  # noqa: F401  (presence check; needs scapy + admin)
+            source = live_source
+        except ImportError:
+            log.error("AEGIS_MODE=live requires scapy (`pip install scapy`) — "
+                      "falling back to demo mode")
+            source = demo_loop
     start_engine(source)
     log.info("AegisNet running in %s mode", MODE)
     yield
 
 
 app = FastAPI(title="AegisNet", lifespan=lifespan)
-
-clients: set[WebSocket] = set()
 
 
 class BlockRequest(BaseModel):
@@ -162,15 +170,15 @@ def get_state() -> JSONResponse:
 
 @app.post("/api/firewall/block")
 def block(req: BlockRequest) -> dict:
-    fw.block(req.ip, req.reason)
-    state.block_host(req.ip, req.reason)
-    return {"ok": True, "rules": fw.list_rules()[:10]}
+    if state.block_host(req.ip, req.reason):
+        fw.block(req.ip, req.reason)
+    return {"ok": True, "rules": state.snapshot()["rules"][:10]}
 
 
 @app.post("/api/firewall/unblock")
 def unblock(req: BlockRequest) -> dict:
-    fw.unblock(req.ip)
-    state.unblock_host(req.ip)
+    if state.unblock_host(req.ip):
+        fw.unblock(req.ip)
     return {"ok": True}
 
 
@@ -184,15 +192,12 @@ def health() -> dict:
 @app.websocket("/ws")
 async def ws(sock: WebSocket) -> None:
     await sock.accept()
-    clients.add(sock)
     try:
         while True:
             await asyncio.sleep(TICK)
             await sock.send_json(state.snapshot())
     except WebSocketDisconnect:
         pass
-    finally:
-        clients.discard(sock)
 
 
 # dashboard (static, zero build step)
@@ -210,4 +215,5 @@ if __name__ == "__main__":
     ap.add_argument("--port", type=int, default=int(os.getenv("AEGIS_PORT", "8000")))
     args = ap.parse_args()
     app.state.port = args.port
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info",
+                access_log=False)  # keep ops logs clean (health probes poll every ~2s)

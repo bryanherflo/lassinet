@@ -66,7 +66,9 @@ an attacker appear, attack scenarios detected by the ML engine, and auto-blocks 
 | `AEGIS_AUTO_BLOCK` | `0` / `1` | `1` (demo), `0` (live) | auto-block high/critical sources |
 | `AEGIS_PORT` | int | `8000` | dashboard port |
 
-**Live mode** (real traffic, opt-in — needs admin/root and `pip install scapy`):
+**Live mode** (real traffic, opt-in — needs admin/root, `pip install scapy`,
+and ideally the real-data model `python ml-training/load_cicids.py`,
+otherwise the rule-based engine is used):
 
 ```bash
 pip install scapy
