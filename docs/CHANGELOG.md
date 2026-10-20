@@ -5,6 +5,11 @@ All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 ## [0.2.2] — 2026-10-20 · "dashboard render-fix & polish"
 
 ### Fixed
+- **Stale dashboard cache for real browsers** (observed live): FastAPI's
+  StaticFiles sends no explicit `Cache-Control`, so Chrome's heuristic cache
+  served an older `style.css` after a code change — the map looked blank even
+  though a fresh load rendered fine. The dashboard now answers with
+  `no-cache, no-store, must-revalidate` and assets carry a `?v=` bump.
 - **Map not rendering when many alerts accumulate** — the topology grid row
   had no height cap, so a long threat feed stretched the network canvas to
   thousands of pixels (nodes drawn far outside the visible slice). Layout now
