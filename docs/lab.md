@@ -39,6 +39,6 @@ docker run --rm -it --network lab b3ardino/attacker nmap -T5 -Pn -p- 172.17.0.2
 
 * **pfSense/OPNsense** — generate an API key in the web UI, then set
   `LASSI_FW=pfsense OPNSENSE_URL=... OPNSENSE_KEY=...` and complete the REST call
-  in `aegis/firewall.py::_opnsense_rule` (documented placeholder).
+  in `lassi/firewall.py::_opnsense_rule` (documented placeholder).
 * **Linux nftables** — `LASSI_FW=nftables` and ensure a table `inet lassinet`
   exists: `sudo nft add table inet lassinet`.

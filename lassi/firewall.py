@@ -1,6 +1,6 @@
 """Firewall providers.
 
-LassiNet keeps a single source of truth for the rule table — `aegis.state` —
+LassiNet keeps a single source of truth for the rule table — `lassi.state` —
 and this module only *issues* the corresponding commands to a real firewall
 provider. This guarantees that any auto-block (SOAR-style) is actually applied
 when running against nftables/OPNsense instead of updating the dashboard only.
@@ -16,7 +16,7 @@ import logging
 import os
 import subprocess
 
-log = logging.getLogger("aegis.firewall")
+log = logging.getLogger("lassi.firewall")
 
 def _family(ip: str) -> str:
     try:

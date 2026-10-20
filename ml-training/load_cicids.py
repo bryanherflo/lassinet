@@ -9,7 +9,7 @@ cite the paper if you report results obtained with this script):
   * Friday-WorkingHours-Afternoon-PortScan  -> benign + PortScan
 
 Each CICFlowMeter row is mapped onto LassiNet's 8 flow features
-(aegis.ml.FEATURES) and labels are mapped to the app's attack ids:
+(lassi.ml.FEATURES) and labels are mapped to the app's attack ids:
 
     BENIGN -> 0 · PortScan -> 1 · SSH/FTP-Patator -> 2 · DDoS -> 3
 
@@ -53,7 +53,7 @@ def download(url: str, dest: Path) -> Path:
         return dest
     print(f"downloading {dest.name} ...")
     t0 = time.time()
-    req = Request(url, headers={"User-Agent": "aegisnet-training/0.1"})
+    req = Request(url, headers={"User-Agent": "lassinet-training/0.1"})
     with urlopen(req, timeout=60) as resp, open(dest, "wb") as fh:
         while chunk := resp.read(1 << 20):
             fh.write(chunk)
@@ -69,7 +69,7 @@ def column_index(header: list[str], *names: str) -> int | None:
 
 
 def load_source(path: Path) -> tuple[list[list[float]], list[int]]:
-    """Stream one CIC CSV and project rows onto aegis.ml.FEATURES rows."""
+    """Stream one CIC CSV and project rows onto lassi.ml.FEATURES rows."""
     t0 = time.time()
     X_rows: list[list[float]] = []
     y_rows: list[int] = []

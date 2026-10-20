@@ -30,7 +30,7 @@ MODEL_PATH = MODELS_DIR / "demo_model.pkl"
 METRICS_PATH = MODELS_DIR / "demo_metrics.json"
 
 
-# --- synthetic data: mirrors aegis.simulator.attack_story distributions -----
+# --- synthetic data: mirrors lassi.simulator.attack_story distributions -----
 def synth_dataset(n: int = 20_000, rng: np.random.RandomState | None = None):
     rng = rng or np.random.RandomState(42)
     y = rng.choice([0, 1, 2, 3, 4], size=n, p=[0.85, 0.05, 0.04, 0.03, 0.03])

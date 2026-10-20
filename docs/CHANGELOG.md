@@ -145,7 +145,7 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
   updated only the in-memory rule table; with `LASSI_FW=nftables|pfsense` the
   external command was never issued. `state` stays the single source of truth
   for the UI, and the provider (`Firewall.block/unblock`) is always called
-  alongside it (manual endpoints and engine auto-blocks). `aegis/firewall.py`
+  alongside it (manual endpoints and engine auto-blocks). `lassi/firewall.py`
   is now a pure provider (it no longer keeps a duplicate rule list).
 - **Dashboard polling leak** — every WebSocket close spawned an uncancellable
   fallback `setInterval`; reconnect loops multiplied polling requests over
@@ -187,7 +187,7 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 ### Fixes
 - **`/health` endpoint added** (`app.py`) — returns `{ok, mode, model, flows_total}`;
   the dashboard and any monitoring can now probe the service.
-- **`aegis/state.py`** — `mode` is now an instance attribute initialised in
+- **`lassi/state.py`** — `mode` is now an instance attribute initialised in
   `__init__` (was a trailing class-level annotation, fragile); `set_mode` removed,
   callers assign `state.mode` directly.
 - **`app.py`** — WebSocket handler cleaned (no dangling `app` parameter, no
@@ -205,7 +205,7 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
 ### Notes
 - First CI run on GitHub Actions: green in 34 s (train smoke + full suite).
-- Repo published at https://github.com/bryanherflo/aegisnet.
+- Repo published at https://github.com/bryanherflo/lassinet.
 
 ## [0.1.0] — 2026-10-20 · initial release
 - Network map (vis-network dashboard), demo simulator with attack stories,

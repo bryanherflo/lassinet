@@ -19,7 +19,7 @@ from typing import Any
 import joblib
 import numpy as np
 
-log = logging.getLogger("aegis.ml")
+log = logging.getLogger("lassi.ml")
 
 FEATURES = [
     "pkts", "bytes", "duration", "syn_ratio",

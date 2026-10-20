@@ -33,7 +33,7 @@ from lassi.state import State, audit, is_external
 from lassi.simulator import Simulator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-log = logging.getLogger("aegis")
+log = logging.getLogger("lassi")
 
 TICK = 2.0  # seconds between engine cycles
 

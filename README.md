@@ -48,7 +48,7 @@ python app.py
 > seconds) — running `python ml-training/train_model.py` manually is
 > equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (23 unit + API smoke tests, no network needed):
+**Run the test suite** (25 unit + API smoke tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt

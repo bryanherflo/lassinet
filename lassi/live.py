@@ -11,7 +11,7 @@ import time
 import ipaddress
 from typing import Any
 
-log = logging.getLogger("aegis.live")
+log = logging.getLogger("lassi.live")
 
 try:
     from scapy.all import ARP, Ether, srp, sniff  # type: ignore
@@ -137,7 +137,7 @@ def arp_discovery(cidr: str | None = None, timeout: int = 2) -> list[dict[str, A
 
 class LiveCapture:
     """Aggregates packets into per (src,dst,service-ish) flows and emits
-    feature dicts compatible with aegis.ml.extract_features()."""
+    feature dicts compatible with lassi.ml.extract_features()."""
 
     FLOW_FLUSH = 10.0
 
