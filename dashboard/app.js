@@ -218,7 +218,12 @@ function renderTopology(data) {
       color: nodeColor,
       opacity: isBlocked ? 0.5 : 1,
       borderWidth: isBlocked ? 3 : flashing ? 4 : 2,
-      font: { color: isBlocked ? "#8b949e" : "#c9d1d9" },
+      font: { color: isBlocked ? "#8b949e" : "#c9d1d9", size: 12 },
+      shadow: {
+        enabled: true,
+        color: isBlocked ? "#f8514966" : "#00000066",
+        size: isBlocked ? 16 : 10, x: 0, y: 3,
+      },
     };
     if (!nodes.get(h.ip)) {
       nodes.add({
@@ -360,12 +365,31 @@ window.addEventListener("keydown", ev => {
 });
 
 // ---- stats / badges -------------------------------------------------------------
+const statPrev = {};   // id -> tween state (value + raf handle)
+
+function tweenStat(id, target, fmt = v => Math.round(v).toString()) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const from = statPrev[id] ?? target;
+  statPrev[id] = target;
+  if (from === target) { el.textContent = fmt(target); return; }
+  const t0 = performance.now(), dur = 350;
+  const step = now => {
+    const k = Math.min(1, (now - t0) / dur);
+    const eased = 1 - Math.pow(1 - k, 2);
+    el.textContent = fmt(from + (target - from) * eased);
+    if (k < 1) statPrev[id + ":raf"] = requestAnimationFrame(step);
+  };
+  cancelAnimationFrame(statPrev[id + ":raf"]);
+  statPrev[id + ":raf"] = requestAnimationFrame(step);
+}
+
 function renderStats(data) {
   const s = data.stats;
-  document.getElementById("s-devices").textContent = data.nodes.length;
-  document.getElementById("s-flows").textContent = s.flows_per_sec;
-  document.getElementById("s-alerts").textContent = s.attacks_total;
-  document.getElementById("s-blocked").textContent = s.blocks_total;
+  tweenStat("s-devices", data.nodes.length);
+  tweenStat("s-flows", s.flows_per_sec, v => v.toFixed(1));
+  tweenStat("s-alerts", s.attacks_total);
+  tweenStat("s-blocked", s.blocks_total);
   document.getElementById("mode-badge").textContent = "\u25CF " + (data.mode || "demo");
   const m = data.model_metrics;
   document.getElementById("model-badge").textContent =

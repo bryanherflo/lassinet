@@ -14,6 +14,7 @@ Modes (env vars):
 """
 
 import asyncio
+import json
 import logging
 import os
 import threading
@@ -235,6 +236,19 @@ async def no_cache_dashboard(request, call_next):
 @app.get("/api/state")
 def get_state() -> JSONResponse:
     return JSONResponse(state.snapshot())
+
+
+@app.get("/api/logs")
+def get_logs(limit: int = 50) -> dict:
+    """Tail the local JSONL event log over HTTP (for scripts / SOAR glue)."""
+    from lassi.state import EVENTS_LOG_PATH
+    try:
+        if not EVENTS_LOG_PATH.exists():
+            return {"events": []}
+        tail = EVENTS_LOG_PATH.read_text(encoding="utf-8").splitlines()[-min(max(limit, 1), 500):]
+        return {"events": [json.loads(line) for line in tail if line.strip()]}
+    except Exception:
+        return {"events": []}
 
 
 @app.post("/api/firewall/block")

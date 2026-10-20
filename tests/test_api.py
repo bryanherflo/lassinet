@@ -35,6 +35,15 @@ def test_state_shape(client: TestClient) -> None:
         assert key in snap
 
 
+def test_logs_endpoint(client: TestClient) -> None:
+    r = client.get("/api/logs", params={"limit": 10})
+    assert r.status_code == 200
+    events = r.json()["events"]
+    assert isinstance(events, list)
+    # the lifespan already wrote the startup event; every line must parse
+    assert all(e.get("ts") and e.get("event") for e in events)
+
+
 def test_block_and_unblock_flow(client: TestClient) -> None:
     r = client.post("/api/firewall/block", json={"ip": "10.0.0.9", "reason": "test"})
     assert r.status_code == 200 and r.json()["ok"] is True

@@ -29,6 +29,10 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 - Dashboard visual pass: gradient brand and header, graded stat cards with
   hover lift and tabular numerals, severity glow shadows on alert cards,
   dark custom scrollbars, subtle map vignette, micro-transitions everywhere.
+- Second polish round: cyber grid pattern behind the map, node glow shadows
+  (red halo for blocked hosts), animated count-up on the stat cards, icons on
+  stat labels, dark vis-network tooltips, and a new `GET /api/logs?limit=N`
+  endpoint to tail the local JSONL event log over HTTP (tested).
 
 ## [0.4.2] — 2026-10-20 · "you can see the attack travel"
 
