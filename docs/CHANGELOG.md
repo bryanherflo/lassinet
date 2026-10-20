@@ -5,11 +5,11 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 ## [0.4.2] — 2026-10-20 · "you can see the attack travel"
 
 ### Added
-- **Attack-path highlight on the map**: when an alert fires, the tree wires
-  the attack crosses (attacker → router → victim) turn red with a flow arrow
-  pointing at the victim and the attack kind as a label on the wire. No extra
-  cables — the existing infrastructure links are temporarily repainted and
-  fade back automatically after 6 s.
+- **Attack-path packets on the map**: when an alert fires, red malicious
+  "packet" dots ride the existing tree wires (attacker → router → victim)
+  for 6 s and fade out. Rendered on a transparent overlay canvas in DOM
+  coordinates (zoom/pan aware) so the vis DataSet is never churned during
+  an attack — keeps the topology render stable. No labels, no extra cables.
 
 ## [0.4.1] — 2026-10-20 · "multi-network laptop"
 

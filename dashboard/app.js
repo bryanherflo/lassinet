@@ -46,36 +46,27 @@ function computeTreeLayout(data) {
   return pos;
 }
 
-// ---- attack feedback: node flash + red glow on the tree wires attacked -------
-// (no extra cables: the links already drawn are temporarily painted red)
+// ---- attack feedback: node flash + malicious "packet" dots over the wires ----
+// the dots are drawn on a transparent overlay canvas, so the vis DataSet
+// is never churned during an attack (that churn was breaking rendering),
+// and there is nothing textual — just red packets riding the existing wires.
 let lastAttacks = -1;
 const flashUntil = {};
-const attackPathUntil = {};   // edge id -> expiry timestamp
-const attackArrow = {};       // edge id -> node on the victim side (arrow target)
-const attackLabel = {};       // edge id -> attack kind shown on the wire
+const attackPaths = [];        // { born, until, segments:[[src,router],[router,victim]] }
 const FLASH_MS = 6000;
-
-function findLinkEdgeId(data, u, v) {
-  for (const e of data.edges) {
-    if (e.kind !== "link") continue;
-    if ((e.from === u && e.to === v) || (e.from === v && e.to === u)) {
-      return "L|" + e.from + "|" + e.to;
-    }
-  }
-  return null;
-}
 
 function markAttackPath(data, a, now) {
   const router = data.nodes.find(h => h.role === "router");
   if (!router || !a.src) return;
   const hostIps = new Set(data.nodes.map(h => h.ip));
   let victim = a.dst;
-  if (!hostIps.has(victim)) victim = (data.nodes.find(h => h.role === "external") || {}).ip; // exfil → outside
+  if (!hostIps.has(victim)) victim = (data.nodes.find(h => h.role === "external") || {}).ip;  // exfil -> outside
   if (!victim || victim === a.src) return;
-  for (const [u, v] of [[a.src, router.ip], [router.ip, victim]]) {
-    const id = findLinkEdgeId(data, u, v);
-    if (id) { attackPathUntil[id] = now + FLASH_MS; attackArrow[id] = v; attackLabel[id] = a.attack; }
-  }
+  const links = new Set(data.edges.filter(e => e.kind === "link").map(e => e.from + "|" + e.to));
+  const seg = (u, v) => (links.has(u + "|" + v) || links.has(v + "|" + u)) ? [u, v] : null;
+  const s1 = seg(a.src, router.ip);
+  const s2 = seg(router.ip, victim);
+  if (s1 && s2) attackPaths.push({ born: now, until: now + FLASH_MS, segments: [s1, s2] });
 }
 
 function updateFlashes(data, now) {
@@ -83,41 +74,86 @@ function updateFlashes(data, now) {
   if (lastAttacks < 0) { lastAttacks = total; return; }   // first load: baseline only
   const fresh = Math.max(0, total - lastAttacks);
   lastAttacks = total;
+  while (attackPaths.length && attackPaths[0].until < now) attackPaths.shift();
   for (const a of data.alerts.slice(0, fresh)) {
     if (a.src) flashUntil[a.src] = now + FLASH_MS;
     markAttackPath(data, a, now);
   }
 }
 
-// repaint only the edges whose attack state changed (2 s snapshot cadence)
-let paintedEdges = new Set();
+// ---- malicious packet animation (overlay canvas) -------------------------------
+const fxHost = document.getElementById("map");
+fxHost.style.position = "relative";          // anchor the overlay canvas to the map box
+const fx = document.createElement("canvas");
+fx.style.position = "absolute";
+fx.style.inset = "0";
+fx.style.width = "100%";
+fx.style.height = "100%";
+fx.style.pointerEvents = "none";
+fxHost.appendChild(fx);
+const fctx = fx.getContext("2d");
 
-function applyAttackStyle() {
-  const now = Date.now();
-  const active = new Set();
-  for (const [id, until] of Object.entries(attackPathUntil)) {
-    if (until > now) active.add(id);
-    else { delete attackPathUntil[id]; delete attackArrow[id]; delete attackLabel[id]; }
-  }
-  paintedEdges = new Set([...paintedEdges].filter(id => edges.get(id)));
-  for (const e of edges.get()) {
-    if (!e.id.startsWith("L|") && !paintedEdges.has(e.id)) continue;
-    const hot = active.has(e.id);
-    const wasHot = paintedEdges.has(e.id);
-    if (hot === wasHot) continue;                       // no transition → no churn
-    const arrowEnd = hot && e.to === attackArrow[e.id] ? "to"
-                    : hot && e.from === attackArrow[e.id] ? "from" : null;
-    edges.update({
-      id: e.id,
-      color: { color: hot ? "#f85149" : "#484f58" },
-      width: hot ? 4 : 2.5,
-      label: hot ? (attackLabel[e.id] || "attack") : "",
-      font: hot ? { color: "#ff7b72", size: 11, face: "monospace" } : undefined,
-      arrows: arrowEnd ? { [arrowEnd]: { enabled: true, scaleFactor: 0.55 } } : "",
-    });
-    if (hot) paintedEdges.add(e.id); else paintedEdges.delete(e.id);
+function sizeFx() {
+  fx.width = fxHost.clientWidth;
+  fx.height = fxHost.clientHeight;
+}
+new ResizeObserver(sizeFx).observe(fxHost);
+sizeFx();
+
+const SPEED = 140;      // packet speed, px/s along the wires
+const BALLS = 4;        // packets riding each attack path (staggered)
+const BALL_R = 4.5;
+const RED = "#f85149";
+
+function nodeDOMPos(ip) {
+  const p = network.getPositions([ip])[ip];          // canvas coords
+  return p ? network.canvasToDOM(p) : null;          // DOM coords (zoom/pan aware)
+}
+
+function drawAttackFx(now) {
+  while (attackPaths.length && attackPaths[0].until < now) attackPaths.shift();
+  fctx.clearRect(0, 0, fx.width, fx.height);
+  for (const p of attackPaths) {
+    const pts = [
+      nodeDOMPos(p.segments[0][0]),
+      nodeDOMPos(p.segments[0][1]),
+      nodeDOMPos(p.segments[1][1]),
+    ];
+    if (pts.some(q => !q)) continue;                 // node vanished mid-flight
+    const legs = [
+      Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y),
+      Math.hypot(pts[2].x - pts[1].x, pts[2].y - pts[1].y),
+    ];
+    const total = legs[0] + legs[1];
+    if (total <= 0) continue;
+    // fade in on spawn, fade out as it expires
+    const alpha = Math.min(1, (now - p.born) / 400, Math.max(0, (p.until - now) / 800));
+    const d0 = (now / 1000) * SPEED;
+    for (let i = 0; i < BALLS; i++) {
+      let d = (d0 + (i * total) / BALLS) % total;
+      let a, b, legLen;
+      if (d < legs[0]) { a = pts[0]; b = pts[1]; legLen = legs[0]; }
+      else { d -= legs[0]; a = pts[1]; b = pts[2]; legLen = legs[1]; }
+      const t = legLen > 0 ? d / legLen : 0;
+      const x = a.x + (b.x - a.x) * t;
+      const y = a.y + (b.y - a.y) * t;
+      fctx.globalAlpha = alpha;
+      fctx.beginPath();
+      fctx.arc(x, y, BALL_R, 0, Math.PI * 2);
+      fctx.fillStyle = RED;
+      fctx.shadowColor = RED;
+      fctx.shadowBlur = 12;
+      fctx.fill();
+      fctx.shadowBlur = 0;
+      fctx.globalAlpha = 1;
+    }
   }
 }
+
+(function tick() {
+  drawAttackFx(Date.now());
+  requestAnimationFrame(tick);
+})();
 
 function renderTopology(data) {
   const now = Date.now();
@@ -186,7 +222,6 @@ function renderTopology(data) {
     seenEdges.add(id);
   }
   for (const e of edges.get()) if (!seenEdges.has(e.id)) edges.remove(e.id);
-  applyAttackStyle();
 }
 
 // ---- side panel --------------------------------------------------------------
