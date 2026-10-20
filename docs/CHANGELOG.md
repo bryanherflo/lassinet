@@ -2,6 +2,21 @@
 
 All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 
+## [0.4.1] — 2026-10-20 · "multi-network laptop"
+
+### Fixed
+- **Gateway resolution per swept network**: on machines with two uplinks
+  (e.g. school Wi-Fi + personal hotspot), the hub was resolved from the OS
+  default route — the *wrong* network. `discover()` now resolves the gateway
+  of the subnetwork it actually sweeps (on-link networks fall back to the
+  local interface address, which is de-facto their hub).
+- **`AEGIS_IFACE`** (new env var): pin the sniffing interface for
+  multi-network laptops instead of relying on the OS default.
+
+### Changed
+- `arp_discovery()` kept as a backward-compatible host-only wrapper of the
+  richer `discover()` (hosts + gateway).
+
 ## [0.4.0] — 2026-10-20 · "download-and-run"
 
 ### Added

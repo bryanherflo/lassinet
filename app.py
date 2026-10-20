@@ -154,14 +154,14 @@ _capture = None
 
 
 def live_source() -> None:
-    from aegis.live import LiveCapture, arp_discovery, default_gateway, local_ip  # lazy import
+    from aegis.live import LiveCapture, discover, local_ip  # lazy import
 
     global _capture
     if _capture is None:
-        _capture = LiveCapture()
+        # interface override for multi-network laptops (AEGIS_IFACE), else default
+        _capture = LiveCapture(interface=os.getenv("AEGIS_IFACE"))
         _capture.start_background()
-    hosts = arp_discovery()
-    gateway_ip = default_gateway()
+    hosts, gateway_ip = discover()
     me = local_ip()
     if me and me not in {h["ip"] for h in hosts}:
         hosts.append({"ip": me, "mac": None, "hostname": "this host", "role": "workstation", "open_ports": []})

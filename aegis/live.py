@@ -63,8 +63,34 @@ def _candidate_subnets() -> list[str]:
     return [g for g in guesses if not (g in seen or seen.add(g))]
 
 
-def arp_discovery(cidr: str | None = None, timeout: int = 2) -> list[dict[str, Any]]:
-    """ARP-sweep the local network and collect neighbours.
+def _sweep(cidr: str, timeout: int = 2) -> list[dict[str, Any]]:
+    """One ARP broadcast against `cidr`; returns neighbours (passive listeners stay quiet)."""
+    if not HAS_SCAPY:
+        raise RuntimeError("scapy is not installed — run `pip install scapy`")
+    log.info("ARP discovery on %s", cidr)
+    answered, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=cidr), timeout=timeout, verbose=0)
+    return [{"ip": received.psrc, "mac": received.hwsrc, "hostname": received.psrc,
+             "role": "workstation", "open_ports": []} for _, received in answered]
+
+
+def _gw_for(net: ipaddress.IPv4Network) -> str | None:
+    """Gateway of THIS specific subnet (not the OS default route), so laptops
+    with two uplinks (e.g. school Wi-Fi + personal hotspot) resolve the right
+    hub per network. On-link networks (host-only/VM gear) fall back to the
+    local interface address, which is de-facto the hub there."""
+    if not HAS_SCAPY:
+        return None
+    try:
+        from scapy.all import conf  # type: ignore
+        _dev, gw, iface_ip = conf.route.route(str(net))
+        gw_local = iface_ip or None
+        return (gw if gw and gw != "0.0.0.0" else gw_local) or None
+    except Exception:
+        return None
+
+
+def discover(cidr: str | None = None, timeout: int = 2) -> tuple[list[dict[str, Any]], str | None]:
+    """ARP-discover neighbours + their network's real gateway.
 
     Network auto-detection (works on *any* LAN, home or lab):
     1. explicit `cidr` argument wins,
@@ -72,16 +98,17 @@ def arp_discovery(cidr: str | None = None, timeout: int = 2) -> list[dict[str, A
     3. else the /24 the machine itself lives in (derived from its default
        route), whatever addressing it uses,
     4. else common defaults are swept until one returns neighbours.
+    Returns (hosts, gateway_ip) — gateway in the SAME network as the sweep.
     """
-    if not HAS_SCAPY:
-        raise RuntimeError("scapy is not installed — run `pip install scapy`")
-
     if cidr:
-        candidates = [cidr]
+        candidates: list[str] = [cidr]
     else:
         env = os.environ.get("AEGIS_SUBNET")
         candidates = [env] if env else _candidate_subnets()
 
+    hosts: list[dict[str, Any]] = []
+    chosen: str | None = None
+    gw: str | None = None
     for c in candidates:
         try:
             net = ipaddress.ip_network(c, strict=False)
@@ -91,20 +118,21 @@ def arp_discovery(cidr: str | None = None, timeout: int = 2) -> list[dict[str, A
         # never sweep more than a /24 (an ARP storm on big nets is rude)
         scan = net if net.prefixlen >= 24 else ipaddress.ip_network(
             f"{c.rsplit('/', 1)[0]}/24", strict=False)
-        log.info("ARP discovery on %s", scan)
-        answered, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=str(scan)),
-                          timeout=timeout, verbose=0)
-        if not answered:
+        hosts = _sweep(str(scan), timeout)
+        if not hosts:
             continue
-        hosts = []
-        for _, received in answered:
-            hosts.append({"ip": received.psrc, "mac": received.hwsrc,
-                          "hostname": received.psrc, "role": "workstation",
-                          "open_ports": []})
-        log.info("ARP discovery found %d host(s) on %s", len(hosts), scan)
-        return hosts
-    log.warning("ARP discovery found no neighbours in %s", candidates)
-    return []
+        chosen = str(scan)
+        gw = _gw_for(net)
+        log.info("ARP discovery found %d host(s) on %s (gateway %s)", len(hosts), scan, gw)
+        break
+    if not hosts:
+        log.warning("ARP discovery found no neighbours in %s", candidates)
+    return hosts, (gw if hosts and chosen else None)
+
+
+def arp_discovery(cidr: str | None = None, timeout: int = 2) -> list[dict[str, Any]]:
+    """Backward-compatible wrapper: hosts only (gateway is ignored here)."""
+    return discover(cidr, timeout)[0]
 
 
 class LiveCapture:
