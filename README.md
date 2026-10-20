@@ -183,7 +183,7 @@ fully simulated network for exactly that reason.
 ## 👤 Author
 
 **Bryan Hernandez** — built as a cybersecurity master's portfolio project.
-GitHub: [github.com/bryanherflo](https://github.com/bryanherflo) · LinkedIn: *[add your profile link]*
+GitHub: [github.com/bryanherflo](https://github.com/bryanherflo) · LinkedIn: [linkedin.com/in/bryan-hernandez-florian](https://www.linkedin.com/in/bryan-hernandez-florian)
 
 > 💡 Post on LinkedIn with a 15-30s GIF of the live block: *“Detección de red con
 > ML + respuesta de firewall en un solo panel. Proyecto open source”*.
