@@ -66,7 +66,13 @@ function markAttackPath(data, a, now) {
   const seg = (u, v) => (links.has(u + "|" + v) || links.has(v + "|" + u)) ? [u, v] : null;
   const s1 = seg(a.src, router.ip);
   const s2 = seg(router.ip, victim);
-  if (s1 && s2) attackPaths.push({ born: now, until: now + FLASH_MS, segments: [s1, s2] });
+  if (s1 && s2) {
+    const key = s1[0] + ">" + s1[1] + "|" + s2[0] + ">" + s2[1];
+    // repeated alerts (same story) must not stack identical dot trains
+    if (!attackPaths.some(p => p.until > now && p.key === key)) {
+      attackPaths.push({ key, born: now, until: now + FLASH_MS, segments: [s1, s2] });
+    }
+  }
 }
 
 function updateFlashes(data, now) {
@@ -195,6 +201,12 @@ function drawAttackFx(now) {
   drawAttackFx(Date.now());
   requestAnimationFrame(tick);
 })();
+
+// ---- interaction hint (topmost overlay, above the fx canvas) -------------------
+const hint = document.createElement("div");
+hint.id = "hint";
+hint.textContent = "drag to pan · wheel to zoom · select a node + press B to block";
+fxHost.appendChild(hint);
 
 function renderTopology(data) {
   const now = Date.now();
@@ -329,14 +341,28 @@ function renderLog(data) {
   }
   rows.sort((x, y) => y.time.localeCompare(x.time));
   rows.length = Math.min(rows.length, 80);           // keep the panel snappy
-  document.getElementById("log").replaceChildren(...rows.map(fmtLogRow));
+  const log = document.getElementById("log");
+  log.replaceChildren(
+    ...rows.length ? rows.map(fmtLogRow) : [emptyState("waiting for events…")]
+  );
+}
+
+function emptyState(msg) {
+  const div = document.createElement("div");
+  div.className = "empty";
+  div.textContent = msg;
+  return div;
 }
 
 function renderFeeds(data) {
   const alerts = document.getElementById("alerts");
-  alerts.replaceChildren(...data.alerts.map(fmtAlert));
+  alerts.replaceChildren(
+    ...data.alerts.length ? data.alerts.map(fmtAlert) : [emptyState("no threats yet — watching…")]
+  );
   const rules = document.getElementById("rules");
-  rules.replaceChildren(...data.rules.map(fmtRule));
+  rules.replaceChildren(
+    ...data.rules.length ? data.rules.map(fmtRule) : [emptyState("no firewall rules yet")]
+  );
 }
 
 // ---- actions -------------------------------------------------------------------

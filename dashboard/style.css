@@ -139,6 +139,29 @@ aside .feed.log { flex: 1 1 26%; font-family: "Cascadia Mono", Consolas, monospa
   transition: background .12s ease;
 }
 .log-line:hover { background: #161b22cc; }
+
+/* empty-state tiles while a feed has nothing to show */
+.empty {
+  margin: 8px 0; padding: 12px 10px; text-align: center;
+  color: #59636d; font-size: 12px;
+  border: 1px dashed #21262d; border-radius: 8px;
+}
+
+/* keyboard/mouse hint pill inside the map (over every canvas) */
+#hint {
+  position: absolute; left: 12px; bottom: 10px; z-index: 11;
+  font-size: 11px; color: var(--muted); pointer-events: none;
+  background: #0d1117cc; border: 1px solid var(--border); border-radius: 999px;
+  padding: 5px 12px; backdrop-filter: blur(2px);
+}
+
+/* narrow screens: stacks the sidebar under the map */
+@media (max-width: 1120px) {
+  main { grid-template-columns: 1fr; grid-template-rows: minmax(320px, 46vh) minmax(0, 1fr); }
+  #map { grid-row: 1; }
+  aside { grid-row: 2; }
+  #legend { display: none; }
+}
 .log-line .t { color: #59636d; margin-right: 7px; }
 .log-line.critical { border-left-color: var(--red); color: #ffa198; }
 .log-line.high     { border-left-color: var(--orange); color: #ecb45c; }
