@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AegisNet — Network Security Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
 <link rel="stylesheet" href="style.css">
 <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
@@ -15,6 +16,14 @@
     <span id="model-badge" class="badge secondary"></span>
   </div>
 </header>
+
+<div id="legend">
+  <span class="li"><i style="background:#a371f7"></i>Router</span>
+  <span class="li"><i style="background:#58a6ff"></i>Server</span>
+  <span class="li"><i style="background:#3fb950"></i>Workstation</span>
+  <span class="li"><i style="background:#d29922"></i>IoT</span>
+  <span class="li"><i style="background:#f85149;border:2px solid #f85149;background:transparent;"></i>Blocked</span>
+</div>
 
 <section class="stats">
   <div class="stat"><div class="value" id="s-devices">0</div><div class="label">devices</div></div>

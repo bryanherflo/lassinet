@@ -32,13 +32,18 @@ function renderTopology(data) {
   for (const h of data.nodes) {
     const style = ROLE_STYLE[h.role] || ROLE_STYLE.workstation;
     const isBlocked = h.blocked;
+    const nodeColor = {
+      background: style.color,
+      border: isBlocked ? "#f85149" : style.color,
+      highlight: { background: style.color, border: "#ffffff" },
+    };
     if (nodes.get(h.ip)) {
-      nodes.update({ id: h.ip, color: isBlocked ? "#30363d" : style.color,
-                     font: { color: isBlocked ? "#4d5259" : "#c9d1d9" } });
+      nodes.update({ id: h.ip, color: nodeColor, opacity: isBlocked ? 0.5 : 1,
+                     borderWidth: isBlocked ? 3 : 2, font: { color: isBlocked ? "#8b949e" : "#c9d1d9" } });
     } else {
       nodes.add({
         id: h.ip, label: `${h.hostname}\n${h.ip}`,
-        color: isBlocked ? "#30363d" : style.color,
+        color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : 2,
         title: `${isBlocked ? "\u{1F6AB} BLOCKED" : style.label}\nMAC: ${h.mac || "n/a"}\nports: ${h.open_ports.length ? h.open_ports.join(", ") : "—"}\nselect + press B to block`,
         shape: style.shape, size: h.role === "router" ? 18 : 12,
       });

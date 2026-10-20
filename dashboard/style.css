@@ -36,14 +36,19 @@ header {
 .stat.danger .value { color: var(--red); }
 .stat.warn .value { color: var(--orange); }
 
-main { flex: 1; display: grid; grid-template-columns: 1fr 340px; gap: 10px; padding: 0 18px 18px; min-height: 0; }
-#map { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+main {
+  flex: 1; display: grid;
+  grid-template-columns: 1fr 340px;
+  grid-template-rows: minmax(0, 1fr);   /* hard-cap row height -> children can scroll, map stays real-sized */
+  gap: 10px; padding: 0 18px 18px; min-height: 0;
+}
+#map { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; min-height: 0; }
 aside {
   display: flex; flex-direction: column; gap: 8px; min-height: 0;
   overflow: hidden;
 }
 aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
-.feed { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.feed { flex: 1 1 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 
 .alert, .rule {
   background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--muted);
@@ -59,6 +64,17 @@ aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; colo
 .alert b { color: #fff; }
 .rule .ip { font-weight: 600; color: var(--accent); }
 .meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+/* legend overlay for the map */
+#legend {
+  position: absolute; left: 30px; bottom: 30px; z-index: 10;
+  display: flex; flex-direction: column; gap: 4px;
+  background: #0d1117cc; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; font-size: 11px; color: var(--muted);
+  backdrop-filter: blur(2px);
+}
+#legend .li { display: flex; align-items: center; gap: 6px; }
+#legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 
 button.act {
   margin-top: 6px; font-size: 11px; padding: 3px 10px; border-radius: 5px;

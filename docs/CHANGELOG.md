@@ -2,6 +2,24 @@
 
 All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 
+## [0.2.2] — 2026-10-20 · "dashboard render-fix & polish"
+
+### Fixed
+- **Map not rendering when many alerts accumulate** — the topology grid row
+  had no height cap, so a long threat feed stretched the network canvas to
+  thousands of pixels (nodes drawn far outside the visible slice). Layout now
+  pins rows to the viewport (`grid-template-rows: minmax(0, 1fr)`) and the
+  feed scrolls internally. Verified headless: container back to real viewport
+  size, all nodes render.
+- **favicon 404** — inline SVG shield, no more failed request noise.
+
+### Added/Polished
+- Blocked devices now keep their role colour with a red ring + transparency
+  instead of vanishing into grey (much clearer for demos/screenshots).
+- Role legend overlay on the map (router / server / workstation / IoT /
+  blocked).
+- Verified with an automated headless-Chrome check (console captured clean).
+
 ## [0.2.1] — 2026-10-20 · "review / optimisation pass"
 
 ### Fixed
