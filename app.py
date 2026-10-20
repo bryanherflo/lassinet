@@ -98,13 +98,10 @@ def demo_loop() -> None:
         if router_ip and host["ip"] != router_ip:
             state.add_link(router_ip, host["ip"])
     flows = sim.flows()
-    for flow in flows:
-        # traffic edges only between internal hosts; egress to external IPs is
-        # routed through a virtual "Internet" node hanging off the router
-        if flow["dst"] in state.hosts and flow["src"] in state.hosts:
-            state.touch_edge(flow["src"], flow["dst"])
-        elif flow["src"] in state.hosts and not flow["dst"].startswith("10."):
-            state.register_egress(flow["src"], router_ip)
+    # the schema only draws the infrastructure tree (router <-> devices and the
+    # Internet uplink); attack and egress context lives in the feeds/alerts
+    if any(not flow["dst"].startswith("10.") for flow in flows):
+        state.register_egress(router_ip)
     process_flows(flows)
     state.tick_rate()
 

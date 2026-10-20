@@ -2,6 +2,18 @@
 
 All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 
+## [0.3.1] — 2026-10-20 · "schema decluttering"
+
+### Changed
+- **Connections simplified to the infrastructure tree only**: per-flow
+  traffic edges between device pairs, and per-source egress arcs towards
+  the Internet node, are no longer drawn — they braided the schema into a
+  spider web. The map now shows exactly the links that physically exist
+  (router ↔ devices, router ↔ Internet uplink).
+- Attack context moves where it already lived: every newly-fired alert
+  pulses a red border on the affected node for a few seconds, and
+  auto-blocked devices keep their red ring.
+
 ## [0.3.0] — 2026-10-20 · "network-schema redesign"
 
 ### Added

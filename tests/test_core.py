@@ -78,19 +78,16 @@ def test_infrastructure_links_are_tagged() -> None:
 def test_egress_registers_internet_node_and_uplink() -> None:
     st = State()
     st.upsert_host("10.0.0.3", hostname="pc", role="workstation")
-    st.register_egress("10.0.0.3", "10.0.0.1")   # router uplink
-    st.register_egress("10.0.0.3", "10.0.0.1")   # idempotent second tick
+    st.register_egress("10.0.0.1")   # router uplink
+    st.register_egress("10.0.0.1")   # idempotent second tick
     snap = st.snapshot()
     inet = next(h for h in snap["nodes"] if h["ip"] == "0.0.0.0")
     assert inet["hostname"] == "Internet" and inet["role"] == "external"
-    link = {"from": "0.0.0.0", "to": "10.0.0.1", "kind": "link"}
-    edge = {"from": "0.0.0.0", "to": "10.0.0.3", "kind": "traffic"}
-    assert link in snap["edges"] and edge in snap["edges"]
-    st.register_egress("10.0.0.3", None)         # no router -> no-op
+    assert {"from": "0.0.0.0", "to": "10.0.0.1", "kind": "link"} in snap["edges"]
+    # per-flow egress edges are never drawn: the schema stays a clean tree
+    assert not any(e["kind"] == "traffic" for e in snap["edges"])
+    st.register_egress(None)         # no router -> no-op
     assert len(st.snapshot()["nodes"]) == 2
-    st.register_egress("10.0.0.1", "10.0.0.1")   # router's own egress: uplink only
-    assert not any(e["kind"] == "traffic" and "10.0.0.1" in (e["from"], e["to"])
-                   for e in st.snapshot()["edges"])
 
 
 # ---- simulator ----------------------------------------------------------------

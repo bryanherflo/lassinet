@@ -42,8 +42,9 @@ class State:
         with self._lock:
             self.links.add(tuple(sorted((a, b))))
 
-    def register_egress(self, src: str, router_ip: str | None) -> None:
-        """Egress traffic: draw the router uplink to a virtual Internet node."""
+    def register_egress(self, router_ip: str | None) -> None:
+        """Egress exists on the map only as the Internet node + router uplink;
+        per-flow edges are deliberately not drawn (they braid the schema)."""
         if router_ip is None:
             return
         with self._lock:
@@ -54,9 +55,6 @@ class State:
                     "last_seen": time.time(), "blocked": False,
                 }
             self.links.add(tuple(sorted((router_ip, "0.0.0.0"))))
-            # the router's own egress would just overlap the uplink edge
-            if src not in (router_ip, "0.0.0.0"):
-                self.edges.add(tuple(sorted((src, "0.0.0.0"))))
 
     # ---- flows / alerts ----------------------------------------------------
     def add_flow(self, is_attack: bool | None = None) -> None:

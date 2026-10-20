@@ -46,7 +46,24 @@ function computeTreeLayout(data) {
   return pos;
 }
 
+// ---- alert flash: border pulse on nodes that just fired an alert -------------
+let lastAttacks = -1;
+const flashUntil = {};
+const FLASH_MS = 6000;
+
+function updateFlashes(data, now) {
+  const total = data.stats.attacks_total;
+  if (lastAttacks < 0) { lastAttacks = total; return; }   // first load: baseline only
+  const fresh = Math.max(0, total - lastAttacks);
+  lastAttacks = total;
+  for (const a of data.alerts.slice(0, fresh)) {
+    if (a.src) flashUntil[a.src] = now + FLASH_MS;
+  }
+}
+
 function renderTopology(data) {
+  const now = Date.now();
+  updateFlashes(data, now);
   const pos = computeTreeLayout(data);
   const key = Object.keys(pos).sort().join(",");
   const layoutChanged = key !== layoutKey;
@@ -55,15 +72,16 @@ function renderTopology(data) {
   for (const h of data.nodes) {
     const style = ROLE_STYLE[h.role] || ROLE_STYLE.workstation;
     const isBlocked = h.blocked;
+    const flashing = !isBlocked && (flashUntil[h.ip] || 0) > now;
     const nodeColor = {
       background: style.color,
-      border: isBlocked ? "#f85149" : style.color,
+      border: isBlocked || flashing ? "#f85149" : style.color,
       highlight: { background: style.color, border: "#ffffff" },
     };
     const base = {
       color: nodeColor,
       opacity: isBlocked ? 0.5 : 1,
-      borderWidth: isBlocked ? 3 : 2,
+      borderWidth: isBlocked ? 3 : flashing ? 4 : 2,
       font: { color: isBlocked ? "#8b949e" : "#c9d1d9" },
     };
     if (!nodes.get(h.ip)) {
