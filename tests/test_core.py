@@ -116,6 +116,42 @@ def test_egress_registers_internet_node_and_uplink() -> None:
 
 
 # ---- simulator ----------------------------------------------------------------
+def test_sim_subnet_adapts_to_any_network(monkeypatch) -> None:
+    import ipaddress
+
+    monkeypatch.setenv("AEGIS_DEMO_NET", "192.168.77.0/24")
+    sim = Simulator()
+    devices = sim.devices()
+    assert all(dev["ip"].startswith("192.168.77.") for dev in devices)
+    router = next(d for d in devices if d["role"] == "router")
+    assert router["ip"] == "192.168.77.1"
+    sim.devices()                       # tick 2 -> attacker joins
+    flows = sim.flows()
+    assert flows
+    for flow in flows:
+        assert ipaddress.ip_address(flow["src"]) in ipaddress.ip_network("192.168.77.0/24")
+        dst = ipaddress.ip_address(flow["dst"])
+        assert dst.is_global or dst in ipaddress.ip_network("192.168.77.0/24")
+
+
+def test_sim_falls_back_on_garbage_net(monkeypatch) -> None:
+    monkeypatch.setenv("AEGIS_DEMO_NET", "not-a-subnet")
+    sim = Simulator()
+    assert next(d for d in sim.devices() if d["role"] == "router")["ip"].startswith("10.0.0.")
+
+
+def test_nft_rule_picks_ip_family(monkeypatch) -> None:
+    captured: list[str] = []
+    monkeypatch.setattr("aegis.firewall.Firewall._nft",
+                        staticmethod(lambda cmd: captured.append(cmd)))
+    from aegis.firewall import Firewall
+
+    fw = Firewall(provider="nftables")
+    fw.block("10.0.0.9")
+    fw.block("2001:db8::1")
+    assert "ip daddr 10.0.0.9" in captured[0]
+    assert "ip6 daddr 2001:db8::1" in captured[1]
+
 def test_simulator_reveals_devices_progressively() -> None:
     sim = Simulator()
     d1 = sim.devices()
@@ -131,9 +167,8 @@ def test_simulator_flows_are_wellformed() -> None:
 
 def test_attack_story_covers_all_kinds() -> None:
     sim = Simulator()
-    atk = {"ip": "10.0.0.9"}
     for kind in ["port_scan", "brute_force", "ddos", "data_exfiltration"]:
-        flows = Simulator.attack_story(kind, atk)   # type: ignore[arg-type]
+        flows = sim.attack_story(kind)
         assert flows and flows[0]["label"] != 0
 
 

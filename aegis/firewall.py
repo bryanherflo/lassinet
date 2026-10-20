@@ -11,11 +11,18 @@ Providers (AEGIS_FW env var):
   * pfsense  — OPNsense/pfSense REST API (needs base URL + API key)
 """
 
+import ipaddress
 import logging
 import os
 import subprocess
 
 log = logging.getLogger("aegis.firewall")
+
+def _family(ip: str) -> str:
+    try:
+        return "ip6" if ipaddress.ip_address(ip).version == 6 else "ip"
+    except ValueError:
+        return "ip"
 
 
 class Firewall:
@@ -28,7 +35,7 @@ class Firewall:
     def block(self, ip: str, reason: str = "manual") -> None:
         """Apply a BLOCK rule for `ip` on the configured provider."""
         if self.provider == "nftables":
-            self._nft(f"nft add rule inet aegisnet drop ip daddr {ip}")
+            self._nft(f"nft add rule inet aegisnet drop {_family(ip)} daddr {ip}")
         elif self.provider == "pfsense":
             self._opnsense_rule(ip, block=True)
         else:

@@ -2,6 +2,16 @@
 
 All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 
+## [0.3.3] — 2026-10-20 · "any-network demo"
+
+### Added
+- **`AEGIS_DEMO_NET`**: the simulated demo network now derives every device
+  address from a configurable base subnet (any CIDR). The attack stories run
+  identically on `192.168.x`, `172.16.x`, `10.x`… Invalid values fall back to
+  the documented default.
+- **nftables rules are IP-family aware**: IPv6 sources/terms now emit
+  `ip6 daddr` rules instead of the invalid `ip daddr`.
+
 ## [0.3.2] — 2026-10-20 · "network-agnostic"
 
 ### Added

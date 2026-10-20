@@ -68,6 +68,7 @@ an attacker appear, attack scenarios detected by the ML engine, and auto-blocks 
 | `AEGIS_AUTO_BLOCK` | `0` / `1` | `1` (demo), `0` (live) | auto-block high/critical sources |
 | `AEGIS_PORT` | int | `8000` | dashboard port |
 | `AEGIS_SUBNET` | CIDR | *auto-detect* | network to ARP-sweep in live mode; by default the scanner discovers the subnet the machine itself lives on (`10.x`, `172.16.x`, `192.168.x`… anything), then falls back to common home/lab defaults |
+| `AEGIS_DEMO_NET` | CIDR | `10.0.0.0/24` | base subnet for the simulated demo network — change it and every demo device/attack story moves to that addressing |
 
 **Live mode** (real traffic, opt-in — needs admin/root, `pip install scapy`,
 and ideally the real-data model `python ml-training/load_cicids.py`,
