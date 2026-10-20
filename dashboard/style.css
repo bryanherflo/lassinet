@@ -83,3 +83,17 @@ button.act {
 button.act:hover { background: var(--red); color: #fff; }
 button.act.unblock { border-color: var(--green); color: var(--green); }
 button.act.unblock:hover { background: var(--green); color: #fff; }
+
+/* ---- system log panel (monospace event stream) ------------------------------- */
+aside .feed.log { flex: 1 1 26%; font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; gap: 2px; }
+.log-line {
+  flex: none; padding: 3px 8px; border-radius: 4px; background: #0d111780;
+  border-left: 2px solid var(--muted); color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.log-line .t { color: #59636d; margin-right: 7px; }
+.log-line.critical { border-left-color: var(--red); color: #ffa198; }
+.log-line.high     { border-left-color: var(--orange); color: #ecb45c; }
+.log-line.warn     { border-left-color: #dbb12f; color: #d8c46a; }
+.log-line.ok       { border-left-color: var(--green); color: #7ee187; }
+.log-line.fw       { border-left-color: #59636d; color: #9aa4af; }

@@ -1,9 +1,13 @@
 """Shared in-memory state (thread-safe)."""
 
 import ipaddress
+import json
+import os
 import threading
 import time
 from collections import deque
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 
@@ -17,6 +21,27 @@ def is_external(ip: str) -> bool:
         return False
 
 
+# ---- local event log --------------------------------------------------------
+# Every alert and firewall action is appended as one JSON line to a local
+# file, so there is a persistent record even with no dashboard open.
+EVENTS_LOG_PATH = Path(os.environ.get("LASSI_LOGFILE", "logs/events.jsonl"))
+_audit_lock = threading.Lock()
+
+
+def audit(event: dict[str, Any]) -> None:
+    """Append one structured event to the local log. Best-effort: a logging
+    failure must never break the engine (logging-guard rules itself)."""
+    try:
+        EVENTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), **event},
+                          default=str, ensure_ascii=False)
+        with _audit_lock:
+            with EVENTS_LOG_PATH.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+    except Exception:
+        pass
+
+
 class State:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -26,6 +51,7 @@ class State:
         self.links: set[tuple[str, str]] = set()            # infrastructure links (device <-> router)
         self.alerts: deque[dict[str, Any]] = deque(maxlen=200)
         self.rules: list[dict[str, Any]] = []               # firewall rules
+        self.traffic: deque[dict[str, Any]] = deque(maxlen=30)   # recent flows for the live map animation
         self.stats: dict[str, Any] = {"flows_total": 0, "attacks_total": 0, "blocks_total": 0, "flows_per_sec": 0}
         self.model_metrics: dict[str, Any] | None = None
         self._flow_window: int = 0
@@ -68,10 +94,12 @@ class State:
             self.links.add(tuple(sorted((router_ip, "0.0.0.0"))))
 
     # ---- flows / alerts ----------------------------------------------------
-    def add_flow(self, is_attack: bool | None = None) -> None:
+    def add_flow(self, is_attack: bool | None = None, src: str = "", dst: str = "") -> None:
         with self._lock:
             self.stats["flows_total"] += 1
             self._flow_window += 1
+            if src and dst and src != dst:
+                self.traffic.append({"src": src, "dst": dst, "attack": bool(is_attack)})
             if is_attack:
                 self.stats["attacks_total"] += 1
 
@@ -79,6 +107,7 @@ class State:
         alert["time"] = alert.get("time") or time.strftime("%H:%M:%S")
         with self._lock:
             self.alerts.appendleft(alert)
+        audit({"event": "alert", **alert})
 
     def tick_rate(self) -> None:
         with self._lock:
@@ -95,7 +124,8 @@ class State:
             self.stats["blocks_total"] += 1
             self.rules.append({"ip": ip, "action": "BLOCK", "reason": reason,
                                "time": time.strftime("%H:%M:%S")})
-            return True
+        audit({"event": "block", "ip": ip, "reason": reason})
+        return True
 
     def unblock_host(self, ip: str) -> bool:
         with self._lock:
@@ -105,7 +135,8 @@ class State:
             host["blocked"] = False
             self.rules.append({"ip": ip, "action": "ALLOW", "reason": "manual unblock",
                                "time": time.strftime("%H:%M:%S")})
-            return True
+        audit({"event": "unblock", "ip": ip})
+        return True
 
     # ---- snapshot for UI ----------------------------------------------------
     def snapshot(self) -> dict[str, Any]:
@@ -119,6 +150,7 @@ class State:
                           + [{"from": a, "to": b, "kind": "traffic"} for a, b in self.edges]),
                 "alerts": list(self.alerts),
                 "rules": self.rules[-50:][::-1],
+                "traffic": list(self.traffic)[::-1],
                 "stats": self.stats,
                 "model_metrics": self.model_metrics,
                 "mode": self.mode,

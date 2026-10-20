@@ -203,3 +203,34 @@ def test_model_is_loadable_and_classifies() -> None:
             "syn_ratio": 0.98, "dst_port_count": 60, "mean_pkt_size": 68, "pkt_rate": 16}
     verdict = det.predict([scan])[0]
     assert verdict["attack"] == "port_scan"
+
+
+def test_audit_log_records_alerts_and_blocks(tmp_path, monkeypatch):
+    import json
+    import lassi.state as st
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", tmp_path / "events.jsonl")
+    state = st.State()
+    state.upsert_host("10.0.0.2", hostname="victim", role="server", open_ports=[], mac=None)
+    state.add_alert({"attack": "port_scan", "severity": "medium",
+                     "src": "1.2.3.4", "dst": "10.0.0.2", "engine": "ml", "confidence": 1.0})
+    assert state.block_host("10.0.0.2", reason="port_scan (1.0)")
+    assert state.unblock_host("10.0.0.2")
+    events = [json.loads(x) for x in (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    kinds = {e["event"] for e in events}
+    assert {"alert", "block", "unblock"} <= kinds
+    alert = next(e for e in events if e["event"] == "alert")
+    assert alert["src"] == "1.2.3.4" and alert["ts"]
+
+
+def test_traffic_samples_feed_snapshot():
+    from lassi.state import State
+    st = State()
+    st.add_flow(is_attack=True, src="10.0.0.9", dst="10.0.0.2")
+    st.add_flow(is_attack=False, src="10.0.0.1", dst="10.0.0.2")
+    traffic = st.snapshot()["traffic"]
+    assert {"src": "10.0.0.9", "dst": "10.0.0.2", "attack": True} in traffic
+    assert st.stats["attacks_total"] == 1
+    # flows without src/dst (old callers) must still work and log no samples
+    st2 = State()
+    st2.add_flow(is_attack=True)
+    assert st2.snapshot()["traffic"] == [] and st2.stats["attacks_total"] == 1

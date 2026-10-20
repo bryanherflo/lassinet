@@ -29,7 +29,7 @@ from pydantic import BaseModel
 
 from lassi.firewall import Firewall
 from lassi.ml import Detector
-from lassi.state import State, is_external
+from lassi.state import State, audit, is_external
 from lassi.simulator import Simulator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -96,7 +96,8 @@ def _train_demo_model_if_missing() -> None:
 def process_flows(flows: list[dict]) -> None:
     verified = detector.predict(flows)
     for flow, verdict in zip(flows, verified):
-        state.add_flow(is_attack=verdict["attack"] != "benign")
+        state.add_flow(is_attack=verdict["attack"] != "benign",
+                       src=flow["src"], dst=flow["dst"])
         if verdict["severity"] in ("medium", "high", "critical"):
             alert = {
                 "severity": verdict["severity"],
@@ -205,6 +206,9 @@ async def lifespan(app: FastAPI):
             source = demo_loop
     start_engine(source)
     log.info("LassiNet running in %s mode", MODE)
+    audit({"event": "startup", "mode": MODE,
+           "firewall": fw.__class__.__name__,
+           "model": state.model_metrics is not None})
     yield
 
 

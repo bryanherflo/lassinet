@@ -2,6 +2,21 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.3] — 2026-10-20 · "a living network"
+
+### Added
+- **Ambient traffic animation**: normal flows now ride the tree wires as small
+  grey packet dots (spawned from a live sample of recent flows, including
+  egress rides ending at the Internet node), so the map stays dynamic between
+  attacks. Attacks keep their bigger red glowing dots on attacker → router →
+  victim.
+- **System log panel** (three-column sidebar): monospace event stream with
+  colour-coded severity (critical / high / warn / fw / ok), timestamps and
+  confidence — every alert, auto-block and firewall action, newest first.
+- **Local event log**: every alert, block, unblock and startup is appended as
+  one JSON line to `logs/events.jsonl` (gitignored; path via `LASSI_LOGFILE`),
+  giving a persistent audit trail even with no dashboard open.
+
 ## [0.4.2] — 2026-10-20 · "you can see the attack travel"
 
 ### Added

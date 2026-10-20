@@ -100,54 +100,95 @@ function sizeFx() {
 new ResizeObserver(sizeFx).observe(fxHost);
 sizeFx();
 
-const SPEED = 140;      // packet speed, px/s along the wires
+const SPEED = 140;      // speed of red attack packets, px/s along the wires
 const BALLS = 4;        // packets riding each attack path (staggered)
 const BALL_R = 4.5;
 const RED = "#f85149";
+const AMBIENT_MAX = 14; // simultaneous background "normal traffic" dots
+const SPAWN_MS = 120;   // one background dot every ~120 ms while traffic flows
+
+// caches refreshed on every snapshot so the animation follows the live map
+let fxRouter = null, fxExt = null, fxLinks = new Set(), fxHostIds = new Set(), trafficSamples = [];
+const ambientDots = [];          // { born, until, segments } — normal traffic riding the wires
+let lastSpawn = 0;
+
+function fxSync(data) {
+  fxRouter = (data.nodes.find(h => h.role === "router") || {}).ip || null;
+  fxExt = (data.nodes.find(h => h.role === "external") || {}).ip || null;
+  fxHostIds = new Set(data.nodes.map(h => h.ip));
+  fxLinks = new Set(data.edges.filter(e => e.kind === "link").map(e => e.from + "|" + e.to));
+  trafficSamples = Array.isArray(data.traffic) ? data.traffic : [];
+}
+
+function spawnAmbient(now) {
+  if (!trafficSamples.length || ambientDots.length >= AMBIENT_MAX) return;
+  if (now - lastSpawn < SPAWN_MS) return;
+  lastSpawn = now;
+  const s = trafficSamples[Math.floor(Math.random() * trafficSamples.length)];
+  if (!s || s.attack || s.src === s.dst) return;
+  if (!fxHostIds.has(s.src) || !fxRouter) return;               // unknown source → skip
+  const src = s.src;
+  const dst = fxHostIds.has(s.dst) ? s.dst : fxExt;             // egress rides to the Internet node
+  if (!dst || src === dst) return;
+  const link = (u, v) => (fxLinks.has(u + "|" + v) || fxLinks.has(v + "|" + u)) ? [u, v] : null;
+  const raw = src === fxRouter ? [link(src, dst)] : [link(src, fxRouter), link(fxRouter, dst)];
+  const segments = raw.filter(Boolean);
+  if (!segments.length) return;
+  ambientDots.push({ born: now, until: now + 800 + Math.random() * 900, segments, kind: "ambient" });
+}
 
 function nodeDOMPos(ip) {
   const p = network.getPositions([ip])[ip];          // canvas coords
   return p ? network.canvasToDOM(p) : null;          // DOM coords (zoom/pan aware)
 }
 
+function drawRider(p, now) {
+  const idx = p.segments.map(seg => nodeDOMPos(seg[0]));
+  idx.push(nodeDOMPos(p.segments[p.segments.length - 1][1]));
+  if (idx.some(q => !q)) return;                     // node vanished mid-flight
+  const legs = [];
+  let total = 0;
+  for (let i = 0; i < idx.length - 1; i++) {
+    const L = Math.hypot(idx[i + 1].x - idx[i].x, idx[i + 1].y - idx[i].y);
+    legs.push(L); total += L;
+  }
+  if (total <= 0) return;
+  const isAttack = p.kind !== "ambient";
+  // fade in on spawn, fade out as it expires
+  const alpha = Math.min(1, (now - p.born) / 400, Math.max(0, (p.until - now) / 800)) * (isAttack ? 1 : 0.9);
+  const n = isAttack ? BALLS : 1;
+  const d0 = (now / 1000) * SPEED;
+  for (let i = 0; i < n; i++) {
+    let d = isAttack ? (d0 + (i * total) / n) % total
+                     : total * ((now - p.born) / (p.until - p.born));
+    let a, b, legLen = 0;
+    for (let k = 0; k < legs.length; k++) {
+      if (d < legs[k]) { a = idx[k]; b = idx[k + 1]; legLen = legs[k]; break; }
+      d -= legs[k];
+    }
+    if (a === undefined) { a = idx[idx.length - 2]; b = idx[idx.length - 1]; legLen = legs[legs.length - 1]; }
+    const t = legLen > 0 ? d / legLen : 0;
+    const x = a.x + (b.x - a.x) * t;
+    const y = a.y + (b.y - a.y) * t;
+    fctx.globalAlpha = alpha;
+    fctx.beginPath();
+    fctx.arc(x, y, isAttack ? BALL_R : 2.6, 0, Math.PI * 2);
+    fctx.fillStyle = isAttack ? RED : "#8b949e";
+    fctx.shadowColor = fctx.fillStyle;
+    fctx.shadowBlur = isAttack ? 12 : 5;
+    fctx.fill();
+    fctx.shadowBlur = 0;
+    fctx.globalAlpha = 1;
+  }
+}
+
 function drawAttackFx(now) {
   while (attackPaths.length && attackPaths[0].until < now) attackPaths.shift();
+  while (ambientDots.length && ambientDots[0].until < now) ambientDots.shift();
+  spawnAmbient(now);
   fctx.clearRect(0, 0, fx.width, fx.height);
-  for (const p of attackPaths) {
-    const pts = [
-      nodeDOMPos(p.segments[0][0]),
-      nodeDOMPos(p.segments[0][1]),
-      nodeDOMPos(p.segments[1][1]),
-    ];
-    if (pts.some(q => !q)) continue;                 // node vanished mid-flight
-    const legs = [
-      Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y),
-      Math.hypot(pts[2].x - pts[1].x, pts[2].y - pts[1].y),
-    ];
-    const total = legs[0] + legs[1];
-    if (total <= 0) continue;
-    // fade in on spawn, fade out as it expires
-    const alpha = Math.min(1, (now - p.born) / 400, Math.max(0, (p.until - now) / 800));
-    const d0 = (now / 1000) * SPEED;
-    for (let i = 0; i < BALLS; i++) {
-      let d = (d0 + (i * total) / BALLS) % total;
-      let a, b, legLen;
-      if (d < legs[0]) { a = pts[0]; b = pts[1]; legLen = legs[0]; }
-      else { d -= legs[0]; a = pts[1]; b = pts[2]; legLen = legs[1]; }
-      const t = legLen > 0 ? d / legLen : 0;
-      const x = a.x + (b.x - a.x) * t;
-      const y = a.y + (b.y - a.y) * t;
-      fctx.globalAlpha = alpha;
-      fctx.beginPath();
-      fctx.arc(x, y, BALL_R, 0, Math.PI * 2);
-      fctx.fillStyle = RED;
-      fctx.shadowColor = RED;
-      fctx.shadowBlur = 12;
-      fctx.fill();
-      fctx.shadowBlur = 0;
-      fctx.globalAlpha = 1;
-    }
-  }
+  for (const p of attackPaths) drawRider({ ...p, kind: "attack" }, now);
+  for (const p of ambientDots) drawRider(p, now);
 }
 
 (function tick() {
@@ -158,6 +199,7 @@ function drawAttackFx(now) {
 function renderTopology(data) {
   const now = Date.now();
   updateFlashes(data, now);
+  fxSync(data);
   const pos = computeTreeLayout(data);
   const key = Object.keys(pos).sort().join(",");
   const layoutChanged = key !== layoutKey;
@@ -247,6 +289,44 @@ function fmtRule(r) {
   return div;
 }
 
+// ---- system log panel: everything that happened, newest first ----------------
+function fmtLogRow(row) {
+  const div = document.createElement("div");
+  div.className = "log-line " + row.cls;
+  const t = document.createElement("span");
+  t.className = "t";
+  t.textContent = row.time;
+  div.appendChild(t);
+  div.appendChild(document.createTextNode(row.msg));
+  return div;
+}
+
+function renderLog(data) {
+  const rows = [];
+  for (const a of data.alerts) {
+    if (a.attack === "auto_block") {
+      rows.push({ time: a.time, cls: "ok", msg: `AUTO-BLOCK fired ${a.src}` });
+    } else {
+      const conf = typeof a.confidence === "number" ? a.confidence.toFixed(2) : "?";
+      rows.push({
+        time: a.time,
+        cls: a.severity === "critical" || a.severity === "high" ? a.severity : "warn",
+        msg: `${(a.severity || "info").toUpperCase().padEnd(8)} ${a.attack} · ${a.src} → ${a.dst} · engine ${a.engine} conf ${conf}`,
+      });
+    }
+  }
+  for (const r of data.rules) {
+    rows.push({
+      time: r.time,
+      cls: r.action === "BLOCK" ? "fw" : "ok",
+      msg: `FW ${r.action.padEnd(5)} ${r.ip} — ${r.reason}`,
+    });
+  }
+  rows.sort((x, y) => y.time.localeCompare(x.time));
+  rows.length = Math.min(rows.length, 80);           // keep the panel snappy
+  document.getElementById("log").replaceChildren(...rows.map(fmtLogRow));
+}
+
 function renderFeeds(data) {
   const alerts = document.getElementById("alerts");
   alerts.replaceChildren(...data.alerts.map(fmtAlert));
@@ -309,6 +389,7 @@ async function refresh() {
 function apply(data) {
   renderTopology(data);
   renderFeeds(data);
+  renderLog(data);
   renderStats(data);
 }
 

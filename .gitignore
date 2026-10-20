@@ -9,6 +9,9 @@ env/
 # --- Model artifacts (weights reproducible via training scripts; metrics kept) ---
 models/*.pkl
 
+# --- Local event log (JSONL audit trail written by the engine) ---
+logs/
+
 # --- ML training data (downloaded datasets + feature cache) ---
 ml-training/data/
 
