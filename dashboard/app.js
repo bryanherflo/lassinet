@@ -374,11 +374,13 @@ function renderStats(data) {
 
 // ---- data loop: WebSocket w/ polling fallback -----------------------------------
 // start polling only ONCE — WS reconnects must not stack intervals
-let pollingStarted = false;
+let pollTimer = null;
 function startPolling() {
-  if (pollingStarted) return;
-  pollingStarted = true;
-  setInterval(refresh, 2000);
+  if (pollTimer) return;
+  pollTimer = setInterval(refresh, 2000);
+}
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
 async function refresh() {
@@ -401,6 +403,8 @@ function apply(data) {
     const connect = () => {
       const proto = location.protocol === "https:" ? "wss" : "ws";
       const ws = new WebSocket(`${proto}://${location.host}/ws`);
+      // once the socket is live, the 2 s polling fallback is redundant
+      ws.onopen = stopPolling;
       ws.onmessage = ev => apply(JSON.parse(ev.data));
       ws.onclose = () => { startPolling(); setTimeout(connect, 4000); };
     };

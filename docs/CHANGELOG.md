@@ -17,6 +17,19 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
   one JSON line to `logs/events.jsonl` (gitignored; path via `LASSI_LOGFILE`),
   giving a persistent audit trail even with no dashboard open.
 
+### Fixed
+- **Duplicated live feed renders**: the 2 s polling fallback now stops as soon
+  as the WebSocket (re)connects — before, both channels ran in parallel after
+  the first disconnect, doubling every update.
+- **Alert spam for blocked sources**: the engine no longer raises alerts for a
+  host the firewall already blocked (a blocked attacker is shut out — this
+  cut repeat alerts from ~35/min to silence after auto-block).
+
+### Changed
+- Dashboard visual pass: gradient brand and header, graded stat cards with
+  hover lift and tabular numerals, severity glow shadows on alert cards,
+  dark custom scrollbars, subtle map vignette, micro-transitions everywhere.
+
 ## [0.4.2] — 2026-10-20 · "you can see the attack travel"
 
 ### Added

@@ -99,6 +99,8 @@ def process_flows(flows: list[dict]) -> None:
         state.add_flow(is_attack=verdict["attack"] != "benign",
                        src=flow["src"], dst=flow["dst"])
         if verdict["severity"] in ("medium", "high", "critical"):
+            if state.hosts.get(flow["src"], {}).get("blocked"):
+                continue   # the firewall already shut this source out — no alert spam
             alert = {
                 "severity": verdict["severity"],
                 "attack": verdict["attack"],
