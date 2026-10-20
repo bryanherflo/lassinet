@@ -89,14 +89,22 @@ def process_flows(flows: list[dict]) -> None:
 
 
 def demo_loop() -> None:
-    for host in sim.devices():
+    devices = sim.devices()
+    router_ip = next((h["ip"] for h in devices if h["role"] == "router"), None)
+    for host in devices:
         fields = {k: v for k, v in host.items() if k != "ip"}
         state.upsert_host(host["ip"], **fields)
+        # infrastructure layer: every device hangs off the router
+        if router_ip and host["ip"] != router_ip:
+            state.add_link(router_ip, host["ip"])
     flows = sim.flows()
     for flow in flows:
-        # only draw edges between discovered hosts (avoid ghost nodes for external IPs)
+        # traffic edges only between internal hosts; egress to external IPs is
+        # routed through a virtual "Internet" node hanging off the router
         if flow["dst"] in state.hosts and flow["src"] in state.hosts:
             state.touch_edge(flow["src"], flow["dst"])
+        elif flow["src"] in state.hosts and not flow["dst"].startswith("10."):
+            state.register_egress(flow["src"], router_ip)
     process_flows(flows)
     state.tick_rate()
 

@@ -2,6 +2,23 @@
 
 All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 
+## [0.3.0] — 2026-10-20 · "network-schema redesign"
+
+### Added
+- **Tree network schema**: the topology map is now a deterministic 3-level
+  layout (no physics engine) — Internet on top, the router in the middle,
+  devices on a single row below. Edge bundling and elastic drift are gone.
+- **Internet (external) node**: egress traffic is routed through a virtual
+  `0.0.0.0` node hanging off the router via an uplink, so outbound flows
+  (e.g. the data-exfiltration storyline) are visible on the map instead of
+  silently dropped. The router's own egress does not duplicate the uplink.
+
+### Changed
+- Legend moved to the map's top-right corner (the leaf row reaches the
+  bottom edge); attacker + blocked entries added.
+- Infrastructure links render as straight solid lines; observed traffic as
+  dashed arrows with a slight bow, so the two layers never blur together.
+
 ## [0.2.2] — 2026-10-20 · "dashboard render-fix & polish"
 
 ### Fixed

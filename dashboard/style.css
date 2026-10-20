@@ -65,9 +65,9 @@ aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; colo
 .rule .ip { font-weight: 600; color: var(--accent); }
 .meta { color: var(--muted); font-size: 11px; margin-top: 2px; }
 
-/* legend overlay for the map */
+/* legend overlay for the map (top-right: the leaf row reaches the bottom edge) */
 #legend {
-  position: absolute; left: 30px; bottom: 30px; z-index: 10;
+  position: absolute; right: 370px; top: 130px; z-index: 10;
   display: flex; flex-direction: column; gap: 4px;
   background: #0d1117cc; border: 1px solid var(--border); border-radius: 8px;
   padding: 8px 12px; font-size: 11px; color: var(--muted);

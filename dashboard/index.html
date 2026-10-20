@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AegisNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=2.3">
+<link rel="stylesheet" href="style.css?v=2.6">
 <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
@@ -19,10 +19,11 @@
 
 <div id="legend">
   <span class="li"><i style="background:#a371f7"></i>Router</span>
-  <span class="li"><i style="background:#58a6ff"></i>Server</span>
+  <span class="li"><i style="background:#58a6ff"></i>Server / Internet</span>
   <span class="li"><i style="background:#3fb950"></i>Workstation</span>
   <span class="li"><i style="background:#d29922"></i>IoT</span>
-  <span class="li"><i style="background:#f85149;border:2px solid #f85149;background:transparent;"></i>Blocked</span>
+  <span class="li"><i style="background:#f85149"></i>Attacker</span>
+  <span class="li"><i style="border:2px solid #f85149;background:transparent;"></i>Blocked</span>
 </div>
 
 <section class="stats">
@@ -43,6 +44,6 @@
   </aside>
 </main>
 
-<script src="app.js?v=2.3"></script>
+<script src="app.js?v=2.6"></script>
 </body>
 </html>

@@ -54,7 +54,43 @@ def test_edges_are_sorted_dedup() -> None:
     st.touch_edge("10.0.0.2", "10.0.0.1")
     st.touch_edge("10.0.0.1", "10.0.0.2")
     snap = st.snapshot()
-    assert snap["edges"] == [{"from": "10.0.0.1", "to": "10.0.0.2"}]
+    assert snap["edges"] == [{"from": "10.0.0.1", "to": "10.0.0.2", "kind": "traffic"}]
+
+
+def test_self_edges_and_flows_are_rejected() -> None:
+    st = State()
+    st.touch_edge("10.0.0.1", "10.0.0.1")
+    st.add_link("10.0.0.1", "10.0.0.1")
+    assert st.snapshot()["edges"] == []
+
+
+def test_infrastructure_links_are_tagged() -> None:
+    st = State()
+    st.add_link("10.0.0.1", "10.0.0.2")
+    st.touch_edge("10.0.0.2", "10.0.0.1")
+    edges = st.snapshot()["edges"]
+    kinds = {e["kind"] for e in edges}
+    assert kinds == {"link", "traffic"}
+    assert any(e["kind"] == "link" and e["from"] == "10.0.0.1" and e["to"] == "10.0.0.2"
+               for e in edges)
+
+
+def test_egress_registers_internet_node_and_uplink() -> None:
+    st = State()
+    st.upsert_host("10.0.0.3", hostname="pc", role="workstation")
+    st.register_egress("10.0.0.3", "10.0.0.1")   # router uplink
+    st.register_egress("10.0.0.3", "10.0.0.1")   # idempotent second tick
+    snap = st.snapshot()
+    inet = next(h for h in snap["nodes"] if h["ip"] == "0.0.0.0")
+    assert inet["hostname"] == "Internet" and inet["role"] == "external"
+    link = {"from": "0.0.0.0", "to": "10.0.0.1", "kind": "link"}
+    edge = {"from": "0.0.0.0", "to": "10.0.0.3", "kind": "traffic"}
+    assert link in snap["edges"] and edge in snap["edges"]
+    st.register_egress("10.0.0.3", None)         # no router -> no-op
+    assert len(st.snapshot()["nodes"]) == 2
+    st.register_egress("10.0.0.1", "10.0.0.1")   # router's own egress: uplink only
+    assert not any(e["kind"] == "traffic" and "10.0.0.1" in (e["from"], e["to"])
+                   for e in st.snapshot()["edges"])
 
 
 # ---- simulator ----------------------------------------------------------------

@@ -54,6 +54,8 @@ class Simulator:
         for _ in range(25):
             src, dst = random.choice(["10.0.0.1", "10.0.0.3", "10.0.0.4", "10.0.0.5"]), \
                        random.choice(["10.0.0.2", "10.0.0.1", "8.8.8.8"])
+            if src == dst:   # a host talking to itself is not a flow
+                continue
             flows.append({
                 "src": src, "dst": dst, "pkts": random.randint(4, 40),
                 "bytes": random.randint(400, 30_000), "duration": round(random.uniform(0.5, 30), 2),

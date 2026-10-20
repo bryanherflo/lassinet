@@ -2,12 +2,13 @@
 "use strict";
 
 const ROLE_STYLE = {
-  router:      { color: "#a371f7", label: "Router",     shape: "hexagon" },
-  server:      { color: "#58a6ff", label: "Server",     shape: "dot" },
-  workstation: { color: "#3fb950", label: "Workstation",shape: "dot" },
-  iot:         { color: "#d29922", label: "IoT",        shape: "dot" },
-  printer:     { color: "#8b949e", label: "Printer",    shape: "dot" },
-  attacker:    { color: "#f85149", label: "Attacker",   shape: "star"  },
+  router:      { color: "#a371f7", label: "Router",        shape: "hexagon" },
+  server:      { color: "#58a6ff", label: "Server",        shape: "dot" },
+  workstation: { color: "#3fb950", label: "Workstation",   shape: "dot" },
+  iot:         { color: "#d29922", label: "IoT",           shape: "dot" },
+  printer:     { color: "#8b949e", label: "Printer",       shape: "dot" },
+  attacker:    { color: "#f85149", label: "Attacker",      shape: "star"  },
+  external:    { color: "#58a6ff", label: "Internet",      shape: "ellipse" },
 };
 
 const SEV_ICONS = { critical: "\u{1F6A8}", high: "\u26A0\uFE0F", medium: "\u26D3\uFE0F", info: "\u2705" };
@@ -20,14 +21,36 @@ const network = new vis.Network(
   { nodes, edges },
   {
     autoResize: true,
-    physics: { solver: "forceAtlas2Based", forceAtlas2Based: { gravitationalConstant: -45 } },
+    physics: { enabled: false },   // deterministic tree layout — no elastic drift
     interaction: { hover: true, tooltipDelay: 120 },
     nodes: { font: { color: "#c9d1d9", size: 12 }, borderWidth: 2 },
-    edges: { color: { color: "#30363d" }, arrows: "to", smooth: false },
   }
 );
 
+// ---- deterministic tree layout ----------------------------------------------
+// Internet on top, router in the middle, devices spread on one row below.
+const ROLE_ORDER = { server: 0, workstation: 1, iot: 2, printer: 3, attacker: 4 };
+let layoutKey = "";
+
+function computeTreeLayout(data) {
+  const router = data.nodes.find(h => h.role === "router");
+  const ext = data.nodes.find(h => h.role === "external");
+  const leaves = data.nodes
+    .filter(h => h.role !== "router" && h.role !== "external")
+    .sort((a, b) => (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) || a.ip.localeCompare(b.ip));
+  const pos = {};
+  if (ext) pos[ext.ip] = { x: 0, y: -250 };
+  if (router) pos[router.ip] = { x: 0, y: 0 };
+  const n = leaves.length;
+  leaves.forEach((h, i) => { pos[h.ip] = { x: (i - (n - 1) / 2) * 180, y: 220 }; });
+  return pos;
+}
+
 function renderTopology(data) {
+  const pos = computeTreeLayout(data);
+  const key = Object.keys(pos).sort().join(",");
+  const layoutChanged = key !== layoutKey;
+
   const seen = new Set();
   for (const h of data.nodes) {
     const style = ROLE_STYLE[h.role] || ROLE_STYLE.workstation;
@@ -37,28 +60,56 @@ function renderTopology(data) {
       border: isBlocked ? "#f85149" : style.color,
       highlight: { background: style.color, border: "#ffffff" },
     };
-    if (nodes.get(h.ip)) {
-      nodes.update({ id: h.ip, color: nodeColor, opacity: isBlocked ? 0.5 : 1,
-                     borderWidth: isBlocked ? 3 : 2, font: { color: isBlocked ? "#8b949e" : "#c9d1d9" } });
-    } else {
+    const base = {
+      color: nodeColor,
+      opacity: isBlocked ? 0.5 : 1,
+      borderWidth: isBlocked ? 3 : 2,
+      font: { color: isBlocked ? "#8b949e" : "#c9d1d9" },
+    };
+    if (!nodes.get(h.ip)) {
       nodes.add({
         id: h.ip, label: `${h.hostname}\n${h.ip}`,
-        color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : 2,
         title: `${isBlocked ? "\u{1F6AB} BLOCKED" : style.label}\nMAC: ${h.mac || "n/a"}\nports: ${h.open_ports.length ? h.open_ports.join(", ") : "—"}\nselect + press B to block`,
-        shape: style.shape, size: h.role === "router" ? 18 : 12,
+        shape: style.shape,
+        size: h.role === "router" ? 20 : h.role === "external" ? 16 : 13,
+        ...(h.role === "external" ? { shapeProperties: { borderDashes: [4, 4] } } : {}),
+        x: pos[h.ip].x, y: pos[h.ip].y,
+        ...base,
       });
+    } else {
+      nodes.update({ id: h.ip, ...base });
     }
     seen.add(h.ip);
   }
   // prune disappeared hosts (demo reveals progressively, live churns)
   for (const n of nodes.get()) if (!seen.has(n.id)) nodes.remove(n.id);
 
-  const edgeIds = new Set(data.edges.map(e => `${e.from}|${e.to}`));
-  for (const e of data.edges) {
-    const id = `${e.from}|${e.to}`;
-    if (!edges.get(id)) edges.add({ id, from: e.from, to: e.to, dashes: true });
+  if (layoutChanged) {
+    layoutKey = key;
+    for (const [id, p] of Object.entries(pos)) {
+      if (nodes.get(id)) network.moveNode(id, p.x, p.y);
+    }
+    network.fit();
   }
-  for (const e of edges.get()) if (!edgeIds.has(e.id)) edges.remove(e.id);
+
+  // edges: solid = infrastructure link to the router; dashed w/ arrow = observed traffic flow
+  const seenEdges = new Set();
+  for (const e of data.edges) {
+    const isLink = e.kind === "link";
+    const id = (isLink ? "L|" : "T|") + e.from + "|" + e.to;
+    if (!edges.get(id)) {
+      edges.add({
+        id, from: e.from, to: e.to,
+        dashes: !isLink,
+        width: isLink ? 2.5 : 1.2,
+        arrows: isLink ? "" : { to: { enabled: true, scaleFactor: 0.45 } },
+        color: { color: isLink ? "#484f58" : "#6e7681" },
+        smooth: isLink ? false : { enabled: true, type: "continuous", roundness: 0.3 },
+      });
+    }
+    seenEdges.add(id);
+  }
+  for (const e of edges.get()) if (!seenEdges.has(e.id)) edges.remove(e.id);
 }
 
 // ---- side panel --------------------------------------------------------------
