@@ -2,6 +2,24 @@
 
 All notable changes to AegisNet are documented here (Keep-a-Changelog format).
 
+## [0.3.2] — 2026-10-20 · "network-agnostic"
+
+### Added
+- **Network auto-detection for live mode**: `arp_discovery()` now defaults to
+  the /24 the machine itself lives on (derived from its default route), then
+  falls back through common home/lab subnets until neighbours answer — no
+  hardcoded addressing. Override with `AEGIS_SUBNET`; oversized CIDRs are
+  capped to a /24 sweep so an ARP run can never flood a big network.
+- Live mode builds the real topology: the machine's **default gateway becomes
+  the router hub**, every discovered host links to it, and the monitoring host
+  itself joins the map, so the schema reflects any actual LAN.
+- `is_external()` uses the stdlib `ipaddress` global/private predicates
+  (RFC1918, loopback, link-local), replacing the hardcoded `10.` prefix check.
+
+### Fixed
+- Live-mode egress was never registered; it now adds the Internet uplink like
+  demo mode does.
+
 ## [0.3.1] — 2026-10-20 · "schema decluttering"
 
 ### Changed

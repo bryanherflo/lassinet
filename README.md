@@ -67,6 +67,7 @@ an attacker appear, attack scenarios detected by the ML engine, and auto-blocks 
 | `AEGIS_FW` | `mock` / `nftables` / `pfsense` | `mock` | firewall provider |
 | `AEGIS_AUTO_BLOCK` | `0` / `1` | `1` (demo), `0` (live) | auto-block high/critical sources |
 | `AEGIS_PORT` | int | `8000` | dashboard port |
+| `AEGIS_SUBNET` | CIDR | *auto-detect* | network to ARP-sweep in live mode; by default the scanner discovers the subnet the machine itself lives on (`10.x`, `172.16.x`, `192.168.x`… anything), then falls back to common home/lab defaults |
 
 **Live mode** (real traffic, opt-in — needs admin/root, `pip install scapy`,
 and ideally the real-data model `python ml-training/load_cicids.py`,
@@ -77,7 +78,9 @@ pip install scapy
 AEGIS_MODE=live python app.py
 ```
 
-Live mode performs an ARP sweep (device + MAC discovery) and aggregates sniffed
+Live mode performs an **auto-detected ARP sweep** — it starts on the subnet the
+machine itself lives in (any RFC1918/DHCP range), marks the real default
+gateway as the router hub, and aggregates sniffed
 packets into the *same* flow features the model was trained on — so detections
 and manual blocking behave exactly as in the demo.
 

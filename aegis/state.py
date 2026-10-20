@@ -1,9 +1,20 @@
 """Shared in-memory state (thread-safe)."""
 
+import ipaddress
 import threading
 import time
 from collections import deque
 from typing import Any
+
+
+def is_external(ip: str) -> bool:
+    """True when the address is a routable (public) destination — never for
+    RFC1918/loopback/link-local space. This keeps "egress to the Internet"
+    correct on *any* LAN: 10.x, 172.16.x, 192.168.x, IPv6 networks…"""
+    try:
+        return ipaddress.ip_address(ip).is_global
+    except ValueError:
+        return False
 
 
 class State:

@@ -3,6 +3,7 @@
 Run with:  pytest -q
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -73,6 +74,30 @@ def test_infrastructure_links_are_tagged() -> None:
     assert kinds == {"link", "traffic"}
     assert any(e["kind"] == "link" and e["from"] == "10.0.0.1" and e["to"] == "10.0.0.2"
                for e in edges)
+
+
+def test_is_external_is_network_agnostic() -> None:
+    from aegis.state import is_external
+
+    assert is_external("8.8.8.8")                  # public
+    assert is_external("185.199.108.153")          # public
+    assert is_external("2606:4700::1111")          # public IPv6
+    assert not is_external("10.0.0.9")             # RFC1918 10/8
+    assert not is_external("192.168.1.55")         # RFC1918 192.168/16
+    assert not is_external("172.16.3.4")           # RFC1918 172.16/12
+    assert not is_external("127.0.0.1")            # loopback
+    assert not is_external("169.254.3.7")          # link-local
+    assert not is_external("not-an-ip")            # garbage is never egress
+
+
+def test_default_gateway_never_crashes() -> None:
+    from aegis.live import default_gateway, HAS_SCAPY
+
+    gw = default_gateway()
+    if not HAS_SCAPY:
+        assert gw is None                          # no scapy -> graceful None
+    else:
+        assert gw is None or re.fullmatch(r"(\d{1,3}\.){3}\d{1,3}", gw)
 
 
 def test_egress_registers_internet_node_and_uplink() -> None:

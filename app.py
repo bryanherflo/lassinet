@@ -29,7 +29,7 @@ from pydantic import BaseModel
 
 from aegis.firewall import Firewall
 from aegis.ml import Detector
-from aegis.state import State
+from aegis.state import State, is_external
 from aegis.simulator import Simulator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -100,7 +100,7 @@ def demo_loop() -> None:
     flows = sim.flows()
     # the schema only draws the infrastructure tree (router <-> devices and the
     # Internet uplink); attack and egress context lives in the feeds/alerts
-    if any(not flow["dst"].startswith("10.") for flow in flows):
+    if any(is_external(flow["dst"]) for flow in flows):
         state.register_egress(router_ip)
     process_flows(flows)
     state.tick_rate()
@@ -125,17 +125,35 @@ _capture = None
 
 
 def live_source() -> None:
-    from aegis.live import LiveCapture, arp_discovery  # lazy import
+    from aegis.live import LiveCapture, arp_discovery, default_gateway, local_ip  # lazy import
 
     global _capture
     if _capture is None:
         _capture = LiveCapture()
         _capture.start_background()
-    for host in arp_discovery():
+    hosts = arp_discovery()
+    gateway_ip = default_gateway()
+    me = local_ip()
+    if me and me not in {h["ip"] for h in hosts}:
+        hosts.append({"ip": me, "mac": None, "hostname": "this host", "role": "workstation", "open_ports": []})
+    if gateway_ip and gateway_ip not in {h["ip"] for h in hosts}:
+        hosts.append({"ip": gateway_ip, "mac": None, "hostname": "gateway",
+                      "role": "router", "open_ports": []})
+    for host in hosts:
         fields = {k: v for k, v in host.items() if k != "ip"}
+        if gateway_ip:
+            if host["ip"] == gateway_ip:
+                # the real default gateway becomes the hub of the schema
+                fields["role"] = "router"
+                fields["hostname"] = "gateway"
+            elif host.get("role") != "router":
+                state.add_link(gateway_ip, host["ip"])
         state.upsert_host(host["ip"], **fields)
+    router_ip = next((ip for ip, h in state.hosts.items() if h["role"] == "router"), None)
     flows = _capture.drain_flows()
     if flows:
+        if any(is_external(flow["dst"]) for flow in flows):
+            state.register_egress(router_ip)
         process_flows(flows)
     state.tick_rate()
 
