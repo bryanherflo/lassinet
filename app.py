@@ -224,6 +224,25 @@ class BlockRequest(BaseModel):
     reason: str = "manual"
 
 
+class RenameRequest(BaseModel):
+    ip: str
+    name: str
+
+
+@app.post("/api/devices/rename")
+def rename_device(req: RenameRequest) -> dict:
+    name = req.name.strip()[:32]
+    if not name:
+        return {"ok": False, "error": "name must not be empty"}
+    if req.ip not in state.hosts:
+        return {"ok": False, "error": "device is not on the map yet — wait for discovery"}
+    from lassi.state import set_device_name
+    set_device_name(req.ip, name)          # persisted to data/device_names.json
+    host = state.hosts[req.ip]
+    host["hostname"] = name
+    return {"ok": True, "ip": req.ip, "name": name}
+
+
 @app.middleware("http")
 async def no_cache_dashboard(request, call_next):
     """Static dashboard assets must always revalidate — stale CSS/JS was

@@ -42,6 +42,48 @@ def audit(event: dict[str, Any]) -> None:
         pass
 
 
+# ---- human-friendly device names (editable from the dashboard, persisted) ----
+# Renamed devices keep their display name across restarts: the engine re-upserts
+# the discovered/simulator hostname every tick, so upsert_host always re-applies
+# the stored alias on top.
+ALIAS_PATH = Path(os.environ.get("LASSI_NAMEFILE", "data/device_names.json"))
+_alias_lock = threading.Lock()
+_aliases: dict[str, str] = {}
+
+
+def _load_aliases() -> None:
+    global _aliases
+    try:
+        if ALIAS_PATH.exists():
+            raw = json.loads(ALIAS_PATH.read_text(encoding="utf-8"))
+            _aliases = {str(k): str(v) for k, v in raw.items() if str(v).strip()}
+    except Exception:
+        _aliases = {}
+
+
+def _save_aliases() -> None:
+    try:
+        ALIAS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ALIAS_PATH.write_text(json.dumps(_aliases, indent=2, ensure_ascii=False),
+                              encoding="utf-8")
+    except Exception:
+        pass
+
+
+def set_device_name(ip: str, name: str) -> bool:
+    """Store (and persist) a display name for a device IP. Empty → rejected."""
+    name = (name or "").strip()[:32]
+    if not name or not ip:
+        return False
+    with _alias_lock:
+        _aliases[ip] = name
+        _save_aliases()
+    return True
+
+
+_load_aliases()
+
+
 class State:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -66,6 +108,8 @@ class State:
             )
             host["last_seen"] = time.time()
             host.update({k: v for k, v in fields.items() if v is not None})
+            if ip in _aliases:                               # user rename wins, always
+                host["hostname"] = _aliases[ip]
 
     def touch_edge(self, a: str, b: str) -> None:
         if a == b:  # self-flows are noise, never an edge

@@ -276,7 +276,7 @@ function renderTopology(data) {
     if (!nodes.get(h.ip)) {
       nodes.add({
         id: h.ip, label: `${h.hostname}\n${h.ip}`,
-        title: `${isBlocked ? "\u{1F6AB} BLOCKED" : style.label}\nMAC: ${h.mac || "n/a"}\nports: ${h.open_ports.length ? h.open_ports.join(", ") : "—"}\nselect + press B to block`,
+        title: `${isBlocked ? "\u{1F6AB} BLOCKED" : style.label}\nMAC: ${h.mac || "n/a"}\nports: ${h.open_ports.length ? h.open_ports.join(", ") : "—"}\ndouble-click to rename · select + press B to block`,
         shape: style.shape,
         size: h.role === "router" ? 20 : h.role === "external" ? 16 : 13,
         ...(h.role === "external" ? { shapeProperties: { borderDashes: [4, 4] } } : {}),
@@ -284,7 +284,9 @@ function renderTopology(data) {
         ...base,
       });
     } else {
-      nodes.update({ id: h.ip, ...base });
+      const label = `${h.hostname}\n${h.ip}`;
+      const changed = nodes.get(h.ip).label !== label;
+      nodes.update({ id: h.ip, ...(changed ? { label } : {}), ...base });
     }
     seen.add(h.ip);
   }
@@ -417,9 +419,17 @@ async function post(url, body) {
   refresh();
 }
 
-// key: B blocks the currently selected node
+// key: B blocks the currently selected node; double-click renames it
 let selected = null;
 network.on("selectNode", p => { selected = p.nodes[0]; });
+network.on("doubleClick", async p => {
+  const ip = p.nodes[0];
+  if (!ip) return;
+  const label = nodes.get(ip)?.label || "";
+  const current = label.split("\n")[0];
+  const name = window.prompt(`Name this device (${ip})`, current);
+  if (name && name.trim()) await post("/api/devices/rename", { ip, name: name.trim() });
+});
 window.addEventListener("keydown", ev => {
   if (ev.key.toLowerCase() === "b" && selected) {
     post("/api/firewall/block", { ip: selected, reason: "operator blocked selected node" });

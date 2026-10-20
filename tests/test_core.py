@@ -222,6 +222,24 @@ def test_audit_log_records_alerts_and_blocks(tmp_path, monkeypatch):
     assert alert["src"] == "1.2.3.4" and alert["ts"]
 
 
+def test_device_rename_is_persisted_and_survives_restarts(tmp_path, monkeypatch):
+    import lassi.state as st
+    monkeypatch.setattr(st, "ALIAS_PATH", tmp_path / "device_names.json")
+    st._load_aliases()                                # empty at first
+    state = st.State()
+    state.upsert_host("10.0.1.42", hostname="unknown", role="workstation")
+    assert st.set_device_name("10.0.1.42", "printer-lab-2")
+    state.upsert_host("10.0.1.42")                    # engine ticks re-apply the alias
+    assert state.hosts["10.0.1.42"]["hostname"] == "printer-lab-2"
+    assert (tmp_path / "device_names.json").exists()
+    st._aliases.clear()                               # simulate a process restart
+    st._load_aliases()
+    fresh = st.State()
+    fresh.upsert_host("10.0.1.42", hostname="unknown", role="workstation")
+    assert fresh.hosts["10.0.1.42"]["hostname"] == "printer-lab-2"   # alias wins
+    assert st.set_device_name("10.0.1.42", "") is False              # empty rejected
+
+
 def test_traffic_samples_feed_snapshot():
     from lassi.state import State
     st = State()

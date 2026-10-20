@@ -12,6 +12,9 @@ models/*.pkl
 # --- Local event log (JSONL audit trail written by the engine) ---
 logs/
 
+# --- User device renames (data/device_names.json, editable from the dashboard) ---
+data/
+
 # --- ML training data (downloaded datasets + feature cache) ---
 ml-training/data/
 

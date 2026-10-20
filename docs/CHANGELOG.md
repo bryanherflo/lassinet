@@ -2,6 +2,16 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.4] — 2026-10-20 · "call your devices by their name"
+
+### Added
+- **Rename devices from the dashboard**: double-click any node → the new name
+  applies instantly on the map and is persisted to `data/device_names.json`
+  (path via `LASSI_NAMEFILE`, gitignored), so names survive restarts.
+  The rename wins over the discovery/simulator hostname on every engine tick.
+  Endpoint: `POST /api/devices/rename` `{ip, name}` (max 32 chars, empty
+  rejected).
+
 ## [0.4.3] — 2026-10-20 · "a living network"
 
 ### Added
