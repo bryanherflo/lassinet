@@ -2,6 +2,16 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.10] — 2026-10-21 · "stop the two-second flicker"
+
+### Fixed
+- **The dashboard no longer looks like it vibrates every 2 seconds.** Every WebSocket snapshot rebuilt the alert feed, firewall list and system log from scratch, which replayed every card's `feed-pop` / `log-in` entrance animation on every tick (measured: 28 animation replays every 2 s). Those lists now use keyed DOM reconciliation: existing cards are reused, so only genuinely new rows animate. Hover state and keyboard focus also survive updates.
+- **No more layout jitter in the feed**: the first alert/log row used to jump horizontally by up to 9 px while its entrance animation replayed. Reusing the node keeps its geometry stable.
+- Blocking an alert source still replaces that alert card exactly once (its **Blocked** tag appears) and adds one animated firewall rule + one log row; unblocking removes the rule without touching the other cards.
+
+### Tests
+- 39/39 passing. Headless regression: 12 s with zero repeated animations and byte-identical layout boxes for header, stats, map, aside, feed and log across snapshots; block/unblock verified to animate only the affected new rows.
+
 ## [0.4.9] — 2026-10-21 · "know what every control does"
 
 ### Added

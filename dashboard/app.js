@@ -655,14 +655,86 @@ function fmtRule(r) {
   return div;
 }
 function fmtLogRow(row) { var div = document.createElement("div"); div.className = "log-line " + row.cls; div.title = row.time + "  " + row.msg; var t = document.createElement("span"); t.className = "t"; t.textContent = row.time; div.appendChild(t); div.appendChild(document.createTextNode(row.msg)); return div; }
-function renderLog(data) { var rows = []; for (var i = 0; i < data.alerts.length; i++) { var a = data.alerts[i]; if (a.attack === "auto_block") rows.push({ time: a.time, cls: "ok", msg: "AUTO-BLOCK fired " + a.src }); else { var conf = typeof a.confidence === "number" ? a.confidence.toFixed(2) : "?"; var sev = a.severity || "info"; rows.push({ time: a.time, cls: sev === "critical" || sev === "high" ? sev : "warn", msg: sev.toUpperCase().padEnd(8) + ' ' + attackLabel(a.attack) + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine ' + a.engine + ' conf ' + conf }); } } for (var j = 0; j < data.rules.length; j++) { var r = data.rules[j]; rows.push({ time: r.time, cls: r.action === "BLOCK" ? "fw" : "ok", msg: 'FW ' + r.action.padEnd(5) + ' ' + r.ip + ' \u2014 ' + r.reason }); } rows.sort(function(x, y) { return y.time.localeCompare(x.time); }); rows.length = Math.min(rows.length, 80); var log = document.getElementById("log"); log.replaceChildren.apply(log, rows.length ? rows.map(fmtLogRow) : [emptyState("waiting for events\u2026")]); setCount("log-count", rows.length); }
+function renderLog(data) {
+  var rows = [];
+  for (var i = 0; i < data.alerts.length; i++) {
+    var a = data.alerts[i];
+    if (a.attack === "auto_block") rows.push({ time: a.time, cls: "ok", msg: "AUTO-BLOCK fired " + a.src });
+    else {
+      var conf = typeof a.confidence === "number" ? a.confidence.toFixed(2) : "?";
+      var sev = a.severity || "info";
+      rows.push({ time: a.time, cls: sev === "critical" || sev === "high" ? sev : "warn",
+                  msg: sev.toUpperCase().padEnd(8) + ' ' + attackLabel(a.attack) + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine ' + a.engine + ' conf ' + conf });
+    }
+  }
+  for (var j = 0; j < data.rules.length; j++) {
+    var r = data.rules[j];
+    rows.push({ time: r.time, cls: r.action === "BLOCK" ? "fw" : "ok", msg: 'FW ' + r.action.padEnd(5) + ' ' + r.ip + ' \u2014 ' + r.reason });
+  }
+  rows.sort(function(x, y) { return y.time.localeCompare(x.time); });
+  rows.length = Math.min(rows.length, 80);
+  var log = document.getElementById("log");
+  renderKeyed(log, rows, function(row) { return rowKey([row.time, row.cls, row.msg]); },
+              fmtLogRow, "waiting for events\u2026");
+  setCount("log-count", rows.length);
+}
 function emptyState(msg) { var div = document.createElement("div"); div.className = "empty"; div.textContent = msg; return div; }
 function feedNote(msg) { var div = document.createElement("div"); div.className = "feed-note"; div.textContent = msg; return div; }
 function setCount(id, n) { var el = document.getElementById(id); if (el) el.textContent = n; }
+
+// Snapshot-safe list rendering: the WebSocket sends a full state every 2 s.
+// Rebuilding the feeds from scratch made every card replay its entrance
+// animation on every tick, which read as the page "vibrating". Reuse nodes by
+// content key and only insert genuinely new rows, so the animation means
+// "this item is new" again.
+function rowKey(parts) { return JSON.stringify(parts); }
+function reconcileChildren(container, next) {
+  var keep = new Set(next);
+  Array.prototype.slice.call(container.children).forEach(function(node) {
+    if (!keep.has(node)) node.remove();
+  });
+  var cursor = container.firstChild;
+  for (var i = 0; i < next.length; i++) {
+    var node = next[i];
+    if (node === cursor) { cursor = cursor.nextSibling; continue; }
+    container.insertBefore(node, cursor);
+  }
+}
+function renderKeyed(container, items, keyFn, makeFn, emptyMsg) {
+  if (!items.length) {
+    var empty = container.querySelector(".empty");
+    if (!empty || empty.textContent !== emptyMsg) container.replaceChildren(emptyState(emptyMsg));
+    return;
+  }
+  var pool = new Map();
+  Array.prototype.slice.call(container.children).forEach(function(node) {
+    var key = node.dataset && node.dataset.key;
+    if (!key) return;
+    if (!pool.has(key)) pool.set(key, []);
+    pool.get(key).push(node);
+  });
+  var seen = new Map();
+  var next = items.map(function(item) {
+    var base = keyFn(item);
+    var n = seen.get(base) || 0;
+    seen.set(base, n + 1);
+    var key = base + "#" + n;
+    var reuse = pool.get(key);
+    if (reuse && reuse.length) return reuse.shift();
+    var node = makeFn(item);
+    if (node && node.dataset) node.dataset.key = key;
+    return node;
+  });
+  reconcileChildren(container, next);
+}
 function renderFeeds(data) {
   var alertsEl = document.getElementById("alerts");
   var shown = data.alerts.slice(0, 30);
-  alertsEl.replaceChildren.apply(alertsEl, shown.length ? shown.map(fmtAlert) : [emptyState("no threats yet \u2014 watching\u2026")]);
+  renderKeyed(alertsEl, shown, function(a) {
+    return rowKey([a.time, a.attack, a.src, a.dst, a.severity, a.engine, a.confidence,
+                   canBlockIp(a.src) ? "blockable" : "infra",
+                   a.src && blockedHosts.has(a.src) ? "blocked" : "allowed"]);
+  }, fmtAlert, "no threats yet \u2014 watching\u2026");
   if (data.alerts.length > shown.length) alertsEl.appendChild(feedNote("showing latest 30 of " + data.alerts.length));
   var rulesEl = document.getElementById("rules");
   var activeRules = [];
@@ -677,9 +749,9 @@ function renderFeeds(data) {
       }
     });
   }
-  rulesEl.replaceChildren.apply(rulesEl, activeRules.length
-    ? activeRules.map(fmtRule)
-    : [emptyState("no active blocks \u2014 traffic is allowed")]);
+  renderKeyed(rulesEl, activeRules, function(r) {
+    return rowKey([r.ip, r.time, r.action, r.reason]);
+  }, fmtRule, "no active blocks \u2014 traffic is allowed");
   setCount("alerts-count", data.alerts.length);
   setCount("rules-count", activeRules.length);
 }
