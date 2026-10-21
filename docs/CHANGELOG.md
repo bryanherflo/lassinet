@@ -2,6 +2,21 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.15] — 2026-10-21 · "live mode must admit when it cannot see"
+
+### Fixed
+- **Missing `scapy` no longer leaves a fake live sensor.** The old `import lassi.live` presence check always succeeded (the module sets `HAS_SCAPY=False`), so the engine retried a broken capture forever while the badge said live. Startup now selects a source explicitly and falls back to demo with `demo (fallback: scapy missing)`; unknown `LASSI_MODE` values do the same with a clear label.
+- **Sniffer failures are visible.** `LiveCapture` records the exception from `sniff()` instead of letting its daemon thread die silently. The badge becomes `live (capture error)`, the engine stops ARP-sweeping, a `capture_error` audit event is written once, and `GET /health` returns `ok: false` plus `capture_error`/`capture_running`.
+- **SYN+ACK is no longer counted as a new SYN.** `syn_ratio` now counts only connection-opening SYN packets, not responder SYN+ACKs that could inflate a normal flow into a port-scan signal.
+- The live-mode badge tooltip now recognizes `live (...)` labels instead of only the exact string `live` (it previously described live mode as demo).
+
+### Tests
+- 50/50 passing. New coverage: source fallback selection, sniff-failure capture state, health reporting, SYN vs. SYN+ACK flags, and package-version/changelog consistency.
+
+### UI
+- The live-mode badge tooltip now understands `live (...)` labels, and the Help panel says only nftables currently enforces live blocks (OPNsense/pfSense is a placeholder).
+- Cache-busters bumped to `?v=3.17` in `dashboard/index.html`; hard-refresh with Ctrl+F5.
+
 ## [0.4.14] — 2026-10-21 · "never claim a block that did not happen"
 
 ### Fixed

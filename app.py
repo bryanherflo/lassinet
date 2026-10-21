@@ -173,6 +173,18 @@ def start_engine(source: Callable[[], None]) -> None:
 # Live-mode source (optional, requires scapy)
 # --------------------------------------------------------------------------
 _capture = None
+_capture_error_reported = False
+
+
+def _note_capture_error() -> None:
+    """Log a failed sniffer once and stop claiming normal live mode."""
+    global _capture_error_reported
+    if _capture is None or not _capture.error or _capture_error_reported:
+        return
+    _capture_error_reported = True
+    state.mode = "live (capture error)"
+    log.error("live capture stopped: %s", _capture.error)
+    audit({"event": "capture_error", "error": _capture.error})
 
 
 def live_source() -> None:
@@ -183,6 +195,11 @@ def live_source() -> None:
         # interface override for multi-network laptops (LASSI_IFACE), else default
         _capture = LiveCapture(interface=os.getenv("LASSI_IFACE"))
         _capture.start_background()
+    if _capture.error:
+        # Do not keep ARP-sweeping or pretending the sensor works after sniff
+        # failed (usually missing root/admin or a bad LASSI_IFACE).
+        _note_capture_error()
+        return
     hosts, gateway_ip = discover()
     me = local_ip()
     if me and me not in {h["ip"] for h in hosts}:
@@ -209,26 +226,52 @@ def live_source() -> None:
     state.tick_rate()
 
 
+def _source_for_mode(mode: str, has_scapy: bool) -> tuple[Callable[[], None], str]:
+    """Pick a source and an honest mode label before starting the engine.
+
+    `import lassi.live` succeeds even when scapy is missing (the module sets
+    HAS_SCAPY=False), so the old presence check let the app claim live mode
+    while every capture tick failed. Falling back to demo here keeps the UI
+    useful and makes the reason visible in the badge.
+    """
+    if mode == "demo":
+        return demo_loop, "demo (simulated)"
+    if mode == "live":
+        if has_scapy:
+            return live_source, "live (scapy)"
+        return demo_loop, "demo (fallback: scapy missing)"
+    return demo_loop, f"demo (fallback: unknown mode {mode!r})"
+
+
 # --------------------------------------------------------------------------
 # FastAPI
 # --------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if MODE == "demo":
+    try:
+        import lassi.live as live_module
+        has_scapy = live_module.HAS_SCAPY
+    except Exception:
+        log.exception("could not import lassi.live; falling back to demo mode")
+        has_scapy = False
+
+    source, mode_label = _source_for_mode(MODE, has_scapy)
+    state.mode = mode_label
+    if source is demo_loop:
         _train_demo_model_if_missing()
-        source = demo_loop
-    else:
-        try:
-            import lassi.live  # noqa: F401  (presence check; needs scapy + admin)
-            source = live_source
-        except ImportError:
-            log.error("LASSI_MODE=live requires scapy (`pip install scapy`) — "
-                      "falling back to demo mode")
-            source = demo_loop
+        if mode_label != "demo (simulated)":
+            # Requested live but fell back: use the demo model, not the live
+            # CICIDS model that may have been loaded from LASSI_MODE=live.
+            demo_path = MODELS_DIR / "demo_model.pkl"
+            if demo_path.exists():
+                detector.model = Detector(model_path=demo_path).model
+    if MODE != "demo" and mode_label != "live (scapy)":
+        log.error("LASSI_MODE=%s is not usable for live capture; %s", MODE, mode_label)
     start_engine(source)
-    log.info("LassiNet running in %s mode on %s:%d", MODE,
+    log.info("LassiNet running in %s on %s:%d", mode_label,
              getattr(app.state, "host", HOST), getattr(app.state, "port", PORT))
-    audit({"event": "startup", "mode": MODE,
+    audit({"event": "startup", "mode": mode_label,
+           "requested_mode": MODE,
            "firewall": fw.__class__.__name__,
            "model": state.model_metrics is not None})
     yield
@@ -327,9 +370,17 @@ def unblock(req: BlockRequest) -> dict:
 
 @app.get("/health")
 def health() -> dict:
-    """Liveness probe: engine is producing flows and the model is loaded."""
-    return {"ok": True, "mode": state.mode, "model": detector.model is not None,
-            "flows_total": state.stats["flows_total"]}
+    """Liveness probe: engine is producing flows and the model is loaded.
+
+    In live mode a failed sniffer makes `ok` false and exposes the reason;
+    the web process may still be up, but the sensor is not capturing.
+    """
+    capture = _capture if MODE == "live" else None
+    capture_error = getattr(capture, "error", None)
+    return {"ok": not capture_error, "mode": state.mode, "model": detector.model is not None,
+            "flows_total": state.stats["flows_total"],
+            "capture_running": bool(getattr(capture, "running", False)) if capture else None,
+            "capture_error": capture_error}
 
 
 @app.websocket("/ws")

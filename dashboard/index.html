@@ -9,7 +9,7 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.16">
+<link rel="stylesheet" href="style.css?v=3.17">
 <script src="vendor/vis-network.min.js"></script>
 <script>
   if (typeof vis === "undefined")
@@ -113,7 +113,7 @@
       <div class="help-block">
         <h4>What does Block do?</h4>
         <p><b>Block source</b> on a threat card adds a firewall rule for that alert's <b>source IP</b> — never the victim. <b>Block IP</b> on a device adds the same rule for that device. LassiNet marks it blocked, drops flows from it, stops counting and animating them, and records a <b>BLOCK</b> entry in Firewall rules. Alert history is kept.</p>
-        <p>In demo mode the rule is simulated (<b>mock</b> provider): nothing on your PC changes. In live mode the configured provider (nftables or OPNsense) applies it. <b>Unblock</b> — on a blocked device or in a rule — reverses it.</p>
+        <p>In demo mode the rule is simulated (<b>mock</b> provider): nothing on your PC changes. In live mode only <b>nftables</b> currently enforces blocks; the OPNsense/pfSense provider is a placeholder and reports an error instead of pretending to block. <b>Unblock</b> - on a blocked device or in a rule - reverses it.</p>
         <p class="help-tip">Demo tip: critical attacks are auto-blocked by default, so the simulation can go quiet. Unblock the attacker in Firewall rules to let it continue.</p>
       </div>
       <div class="help-grid">
@@ -148,6 +148,6 @@
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="app.js?v=3.16"></script>
+<script src="app.js?v=3.17"></script>
 </body>
 </html>

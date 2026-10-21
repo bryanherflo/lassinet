@@ -24,6 +24,33 @@ def test_health(client: TestClient) -> None:
     assert data["mode"].startswith("demo")
 
 
+def test_source_selection_falls_back_honestly() -> None:
+    source, label = lassi_app._source_for_mode("live", False)
+    assert source is lassi_app.demo_loop
+    assert "scapy missing" in label
+
+    source, label = lassi_app._source_for_mode("live", True)
+    assert source is lassi_app.live_source
+    assert label == "live (scapy)"
+
+    source, label = lassi_app._source_for_mode("weird", True)
+    assert source is lassi_app.demo_loop
+    assert "unknown mode" in label
+
+
+def test_health_reports_capture_failure(client: TestClient, monkeypatch) -> None:
+    class BrokenCapture:
+        error = "PermissionError: operation not permitted"
+        running = False
+
+    monkeypatch.setattr(lassi_app, "MODE", "live")
+    monkeypatch.setattr(lassi_app, "_capture", BrokenCapture())
+    data = client.get("/health").json()
+    assert data["ok"] is False
+    assert data["capture_running"] is False
+    assert "PermissionError" in data["capture_error"]
+
+
 def test_dashboard_served(client: TestClient) -> None:
     assert client.get("/").status_code == 200
     assert "LassiNet" in client.get("/").text

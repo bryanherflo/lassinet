@@ -824,8 +824,14 @@ function renderStats(data) {
     : data.nodes.filter(function(h) { return h.blocked; }).length;
   tweenStat("s-blocked", blockedNow);
   var modeEl = document.getElementById("mode-badge");
-  modeEl.textContent = "\u25CF " + (data.mode || "demo");
-  modeEl.title = data.mode === "live" ? "Live mode: reading real traffic from this machine" : "Demo mode: simulated traffic on a fictional 10.0.0.0/24 network \u2014 no real packets";
+  var mode = String(data.mode || "demo");
+  modeEl.textContent = "\u25CF " + mode;
+  var isLive = mode.indexOf("live") === 0;
+  modeEl.title = isLive
+    ? (mode.indexOf("capture error") >= 0
+        ? "Live mode: the packet capture stopped \u2014 check the server log or /health for the reason"
+        : "Live mode: reading real traffic from this machine")
+    : "Demo mode: simulated traffic on a fictional 10.0.0.0/24 network \u2014 no real packets";
   var m = data.model_metrics;
   var modelEl = document.getElementById("model-badge");
   modelEl.textContent = m ? "ML model \u00B7 " + Math.round(m.accuracy * 100) + "% \u00B7 " + m.dataset : "heuristic mode";

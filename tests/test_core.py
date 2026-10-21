@@ -18,6 +18,14 @@ from lassi.simulator import Simulator  # noqa: E402
 from lassi.state import State  # noqa: E402
 
 
+# ---- release hygiene -----------------------------------------------------------
+def test_package_version_has_a_changelog_entry() -> None:
+    import lassi
+
+    changelog = (ROOT / "docs" / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"## [{lassi.__version__}]" in changelog
+
+
 # ---- state --------------------------------------------------------------------
 def test_upsert_and_snapshot() -> None:
     st = State()
@@ -178,6 +186,34 @@ def test_live_flow_duration_is_elapsed_not_epoch() -> None:
     assert 11.0 <= flow["duration"] <= 13.0
     assert flow["pkt_rate"] == round(120 / flow["duration"], 2)
     assert cap.flows == {}
+
+
+def test_syn_ack_is_not_counted_as_a_new_syn() -> None:
+    from lassi.live import _is_syn
+
+    assert _is_syn(0x02) is True          # SYN
+    assert _is_syn(0x12) is False         # SYN+ACK from the responder
+    assert _is_syn(0x10) is False         # ACK
+    assert _is_syn(0x18) is False         # PSH+ACK
+
+
+def test_live_capture_records_sniff_failure(monkeypatch) -> None:
+    """A dead sniffer must not look like a healthy live sensor."""
+    from lassi.live import LiveCapture
+
+    cap = LiveCapture.__new__(LiveCapture)
+    cap.iface = None
+    cap.error = None
+    cap.running = False
+
+    def boom(**kwargs):
+        raise PermissionError("operation not permitted")
+
+    monkeypatch.setattr("lassi.live.sniff", boom)
+    cap._sniff_loop()
+    assert cap.running is False
+    assert cap.error is not None
+    assert "PermissionError" in cap.error and "not permitted" in cap.error
 
 
 def test_egress_registers_internet_node_and_uplink() -> None:

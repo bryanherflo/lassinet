@@ -135,6 +135,15 @@ def arp_discovery(cidr: str | None = None, timeout: int = 2) -> list[dict[str, A
     return discover(cidr, timeout)[0]
 
 
+def _is_syn(flags: int) -> bool:
+    """True for a connection-opening SYN, not a SYN+ACK from the responder.
+
+    Counting SYN+ACKs as SYNs inflated `syn_ratio` for server-side traffic and
+    could turn a normal response flow into a false port-scan signal.
+    """
+    return bool(flags & 0x02) and not bool(flags & 0x10)
+
+
 class LiveCapture:
     """Aggregates packets into per (src,dst,service-ish) flows and emits
     feature dicts compatible with lassi.ml.extract_features()."""
@@ -147,6 +156,9 @@ class LiveCapture:
         self.iface = interface
         self.flows: dict[tuple[str, str], dict[str, Any]] = {}
         self.started = time.time()
+        self.error: str | None = None
+        self.running = False
+        self.thread: Any = None
 
     def _on_packet(self, pkt: Any) -> None:
         from scapy.layers.inet import IP, TCP
@@ -165,16 +177,29 @@ class LiveCapture:
             t = pkt[TCP]
             f["_ports"].add(int(t.dport))
             f["dst_port_count"] = len(f["_ports"])
-            if int(t.flags) & 0x02:  # SYN
+            flags = int(t.flags)
+            if _is_syn(flags):
                 f["syns"] += 1
+            elif flags & 0x10:  # ACK (including SYN+ACK) from the responder
+                f["ack_or_synacks"] += 1
+
+    def _sniff_loop(self) -> None:
+        try:
+            sniff(iface=self.iface, prn=self._on_packet, store=False)
+        except Exception as exc:  # permissions, bad interface, driver error...
+            self.error = f"{type(exc).__name__}: {exc}"
+            log.exception("live capture stopped")
+        finally:
+            self.running = False
 
     def start_background(self) -> None:
         import threading
-        t = threading.Thread(
-            target=lambda: sniff(iface=self.iface, prn=self._on_packet, store=False),
-            daemon=True,
-        )
-        t.start()
+        if self.thread is not None and self.thread.is_alive():
+            return
+        self.error = None
+        self.running = True
+        self.thread = threading.Thread(target=self._sniff_loop, daemon=True)
+        self.thread.start()
         log.info("Live capture started on %s", self.iface or "default interface")
 
     def drain_flows(self) -> list[dict[str, Any]]:
