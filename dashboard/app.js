@@ -116,7 +116,7 @@ function computeTreeLayout(data) {
   var router = data.nodes.find(function(h) { return h.role === "router"; });
   var ext = data.nodes.find(function(h) { return h.role === "external"; });
   var leaves = data.nodes.filter(function(h) { return h.role !== "router" && h.role !== "external"; })
-    .sort(function(a, b) { return (ROLE_ORDER[a.role] || 9) - (ROLE_ORDER[b.role] || 9) || a.ip.localeCompare(b.ip); });
+    .sort(function(a, b) { return (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) || a.ip.localeCompare(b.ip); });
   var pos = {};
   if (ext) pos[ext.ip] = { x: 0, y: -280 };
   if (router) pos[router.ip] = { x: 0, y: 0 };
@@ -150,6 +150,7 @@ function seedConfirmedAttackers(data) {
 function newestSevereAlert(data) {
   for (var i = 0; i < data.alerts.length; i++) {
     var a = data.alerts[i];
+    if (a.attack === "auto_block") continue;
     if (blockedHosts.has(a.src) || blockedHosts.has(a.dst)) continue;
     if (a.severity === "critical" || a.severity === "high") return a;
   }
@@ -190,12 +191,25 @@ function updateFlashes(data, now) {
     if (initial) lastBannerKey = alertKey(initial);   // never banner old history on page load
     return;
   }
+  if (total < lastAttacks) {
+    // Server restarted and its counters reset; do not wait forever for the
+    // old total to catch up before flashing new attacks again.
+    lastAttacks = total;
+    lastBannerKey = null;
+    attackPaths.length = 0;
+  }
   var fresh = Math.max(0, total - lastAttacks);
   lastAttacks = total;
   while (attackPaths.length && attackPaths[0].until < now) attackPaths.shift();
   attackPaths = attackPaths.filter(function(p) { return !blockedHosts.has(p.src) && !blockedHosts.has(p.dst); });
-  for (var i = 0; i < fresh && i < data.alerts.length; i++) {
+  // The feed is newest-first and contains both detections and the auto-block
+  // confirmation card. Count only real detections, otherwise one confirmation
+  // at the front can hide the fresh attack below it.
+  var seenFresh = 0;
+  for (var i = 0; i < data.alerts.length && seenFresh < fresh; i++) {
     var a = data.alerts[i];
+    if (!a || a.attack === "auto_block") continue;
+    seenFresh++;
     if (blockedHosts.has(a.src) || blockedHosts.has(a.dst)) continue;   // dropped by the firewall
     if (a.src) flashUntil[a.src] = now + FLASH_MS;
     markAttackPath(data, a, now);
@@ -226,6 +240,7 @@ function showAttackBanner(alert) {
   var el = document.createElement("div");
   el.id = "attack-banner";
   el.className = "attack-banner " + sev;
+  el.dataset.src = alert.src || "";
   el.setAttribute("role", "alert");
   var blockAction = canBlockIp(alert.src)
     ? '<button class="banner-act" title="Drop traffic from ' + esc(alert.src) + ' at the firewall (reversible)">Block source ' + esc(alert.src) + '</button>'
@@ -622,7 +637,13 @@ window.addEventListener("keydown", function(ev) {
 
 function renderTopology(data) {
   var now = Date.now(); fxSync(data); updateFlashes(data, now);
-  var pos = computeTreeLayout(data); var key = Object.keys(pos).sort().join(","); var layoutChanged = key !== layoutKey;
+  if (attackBannerEl && attackBannerEl.dataset.src && blockedHosts.has(attackBannerEl.dataset.src)) hideAttackBanner();
+  var pos = computeTreeLayout(data);
+  // Role changes (e.g. a workstation becoming the gateway) change the sorted
+  // leaf order, so include the role in the layout key as well as the IPs.
+  var key = data.nodes.map(function(h) { return h.ip + ":" + h.role; }).sort().join(",") +
+    "|" + Object.keys(pos).sort().join(",");
+  var layoutChanged = key !== layoutKey;
   var seen = new Set();
   for (var i = 0; i < data.nodes.length; i++) {
     var h = data.nodes[i];
@@ -688,7 +709,7 @@ function fmtRule(r) {
     '<button class="act unblock" data-unblock="' + esc(r.ip) + '" title="Remove the firewall block for ' + esc(r.ip) + '">Unblock</button>';
   return div;
 }
-function fmtLogRow(row) { var div = document.createElement("div"); div.className = "log-line " + row.cls; div.title = row.time + "  " + row.msg; var t = document.createElement("span"); t.className = "t"; t.textContent = row.time; div.appendChild(t); div.appendChild(document.createTextNode(row.msg)); return div; }
+function fmtLogRow(row) { var div = document.createElement("div"); div.className = "log-line " + (row.cls || ""); div.title = row.time + "  " + row.msg; var t = document.createElement("span"); t.className = "t"; t.textContent = row.time; div.appendChild(t); div.appendChild(document.createTextNode(row.msg)); return div; }
 function renderLog(data) {
   var rows = [];
   for (var i = 0; i < data.alerts.length; i++) {
@@ -698,14 +719,14 @@ function renderLog(data) {
       var conf = typeof a.confidence === "number" ? a.confidence.toFixed(2) : "?";
       var sev = a.severity || "info";
       rows.push({ time: a.time, cls: sev === "critical" || sev === "high" ? sev : "warn",
-                  msg: sev.toUpperCase().padEnd(8) + ' ' + attackLabel(a.attack) + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine ' + a.engine + ' conf ' + conf });
+                  msg: sev.toUpperCase().padEnd(8) + ' ' + attackLabel(a.attack) + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine ' + (a.engine || "rules") + ' conf ' + conf });
     }
   }
   for (var j = 0; j < data.rules.length; j++) {
     var r = data.rules[j];
     rows.push({ time: r.time, cls: r.action === "BLOCK" ? "fw" : "ok", msg: 'FW ' + r.action.padEnd(5) + ' ' + r.ip + ' \u2014 ' + r.reason });
   }
-  rows.sort(function(x, y) { return y.time.localeCompare(x.time); });
+  rows.sort(function(x, y) { return String(y.time || "").localeCompare(String(x.time || "")); });
   rows.length = Math.min(rows.length, 80);
   var log = document.getElementById("log");
   renderKeyed(log, rows, function(row) { return rowKey([row.time, row.cls, row.msg]); },
@@ -815,10 +836,12 @@ async function post(url, body) {
 var statPrev = {};
 function tweenStat(id, target, fmt) { fmt = fmt || function(v) { return Math.round(v).toString(); }; var el = document.getElementById(id); if (!el) return; var from = statPrev[id] !== undefined ? statPrev[id] : target; statPrev[id] = target; if (from === target) { el.textContent = fmt(target); return; } el.classList.add("updating"); var t0 = performance.now(), dur = 400; var step = function(now) { var k = Math.min(1, (now - t0) / dur); var eased = 1 - Math.pow(1 - k, 3); el.textContent = fmt(from + (target - from) * eased); if (k < 1) statPrev[id + ":raf"] = requestAnimationFrame(step); else el.classList.remove("updating"); }; cancelAnimationFrame(statPrev[id + ":raf"]); statPrev[id + ":raf"] = requestAnimationFrame(step); }
 function renderStats(data) {
-  var s = data.stats;
+  var s = data.stats || {};
+  var flowsPerSec = Number(s.flows_per_sec);
+  if (!isFinite(flowsPerSec)) flowsPerSec = 0;
   tweenStat("s-devices", data.nodes.length);
-  tweenStat("s-flows", s.flows_per_sec, function(v) { return v.toFixed(1); });
-  tweenStat("s-alerts", s.attacks_total);
+  tweenStat("s-flows", flowsPerSec, function(v) { return v.toFixed(1); });
+  tweenStat("s-alerts", Number(s.attacks_total) || 0);
   var blockedNow = Array.isArray(data.blocked_ips)
     ? data.blocked_ips.length
     : data.nodes.filter(function(h) { return h.blocked; }).length;
@@ -831,11 +854,21 @@ function renderStats(data) {
     ? (mode.indexOf("capture error") >= 0
         ? "Live mode: the packet capture stopped \u2014 check the server log or /health for the reason"
         : "Live mode: reading real traffic from this machine")
-    : "Demo mode: simulated traffic on a fictional 10.0.0.0/24 network \u2014 no real packets";
+    : "Demo mode: simulated traffic on a fictional network \u2014 no real packets";
   var m = data.model_metrics;
   var modelEl = document.getElementById("model-badge");
-  modelEl.textContent = m ? "ML model \u00B7 " + Math.round(m.accuracy * 100) + "% \u00B7 " + m.dataset : "heuristic mode";
-  modelEl.title = m ? "RandomForest intrusion-detection model \u00B7 " + Math.round(m.accuracy * 100) + "% accuracy on the " + m.dataset + " dataset" : "No ML model loaded \u2014 rule-based detection only";
+  var accuracy = m ? Number(m.accuracy) : NaN;
+  if (m && isFinite(accuracy)) {
+    var dataset = m.dataset || "training";
+    modelEl.textContent = "ML model \u00B7 " + Math.round(accuracy * 100) + "% \u00B7 " + dataset;
+    modelEl.title = "RandomForest intrusion-detection model \u00B7 " + Math.round(accuracy * 100) + "% accuracy on the " + dataset + " dataset";
+  } else if (m) {
+    modelEl.textContent = "ML model";
+    modelEl.title = "Intrusion-detection model loaded (metrics unavailable)";
+  } else {
+    modelEl.textContent = "heuristic mode";
+    modelEl.title = "No ML model loaded \u2014 rule-based detection only";
+  }
 }
 var ICON_CHEVRON_UP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>';
 var ICON_CHEVRON_DOWN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
@@ -905,7 +938,7 @@ function apply(data) { renderTopology(data); renderFeeds(data); renderLog(data);
     var ws = new WebSocket(proto + "://" + location.host + "/ws");
     ws.onopen = function() { stopPolling(); setConnStatus("live"); console.log("[WS] connected"); };
     ws.onmessage = function(ev) { try { apply(JSON.parse(ev.data)); } catch(e) { console.warn("WS parse error", e); } };
-    ws.onerror = function(e) { setConnStatus("polling"); console.warn("[WS] error", e); };
+    ws.onerror = function(e) { setConnStatus("polling"); startPolling(); console.warn("[WS] error", e); };
     ws.onclose = function() { setConnStatus("polling"); console.log("[WS] closed, fallback to polling"); startPolling(); setTimeout(connect, 4000); };
   };
   setConnStatus("connecting");

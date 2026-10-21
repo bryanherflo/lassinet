@@ -34,8 +34,16 @@ def test_cache_busters_match() -> None:
     html = (DASH / "index.html").read_text(encoding="utf-8")
     css = re.search(r"style\.css\?v=([\w.]+)", html)
     js = re.search(r"app\.js\?v=([\w.]+)", html)
-    assert css and js, "index.html must load style.css and app.js with ?v= cache busters"
-    assert css.group(1) == js.group(1), "style.css and app.js must share the same ?v= value"
+    vendor = re.search(r"vendor/vis-network\.min\.js\?v=([\w.]+)", html)
+    assert css and js and vendor, "index.html must version every bundled asset"
+    assert css.group(1) == js.group(1) == vendor.group(1), \
+        "style.css, app.js and the bundled map library must share the same ?v= value"
+
+
+def test_dashboard_loads_the_bundled_map_library_only() -> None:
+    html = (DASH / "index.html").read_text(encoding="utf-8")
+    assert "vendor/vis-network.min.js" in html
+    assert "unpkg.com" not in html, "the dashboard must stay usable offline and without a CDN"
 
 
 def test_static_element_ids_exist() -> None:

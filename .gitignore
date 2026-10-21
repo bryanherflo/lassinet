@@ -8,6 +8,10 @@ env/
 
 # --- Model artifacts (weights reproducible via training scripts; metrics kept) ---
 models/*.pkl
+models/*.bak
+
+# --- Local debug captures / screenshots ---
+map_debug.png
 
 # --- Local event log (JSONL audit trail written by the engine) ---
 logs/

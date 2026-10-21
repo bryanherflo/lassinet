@@ -11,14 +11,25 @@ from pathlib import Path
 from typing import Any
 
 
+def canonical_ip(value: Any) -> str | None:
+    """Return the canonical text form of an IP, or None for garbage.\n\n    IPv4-mapped IPv6 addresses are folded to IPv4 so `::ffff:10.0.0.1` cannot\n    bypass a block or infrastructure rule stored for `10.0.0.1`.\n    """
+    try:
+        address = ipaddress.ip_address(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if address.version == 6 and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return str(address)
+
+
 def is_external(ip: str) -> bool:
     """True when the address is a routable (public) destination — never for
     RFC1918/loopback/link-local space. This keeps "egress to the Internet"
     correct on *any* LAN: 10.x, 172.16.x, 192.168.x, IPv6 networks…"""
-    try:
-        return ipaddress.ip_address(ip).is_global
-    except ValueError:
+    canonical = canonical_ip(ip)
+    if canonical is None:
         return False
+    return ipaddress.ip_address(canonical).is_global
 
 
 # ---- local event log --------------------------------------------------------
@@ -56,7 +67,17 @@ def _load_aliases() -> None:
     try:
         if ALIAS_PATH.exists():
             raw = json.loads(ALIAS_PATH.read_text(encoding="utf-8"))
-            _aliases = {str(k): str(v) for k, v in raw.items() if str(v).strip()}
+            if not isinstance(raw, dict):
+                raise ValueError("device names must be a JSON object")
+            aliases: dict[str, str] = {}
+            for key, value in raw.items():
+                ip = canonical_ip(key)
+                if value is None:
+                    continue
+                name = str(value).strip()[:32]
+                if ip is not None and name:
+                    aliases[ip] = name
+            _aliases = aliases
     except Exception:
         _aliases = {}
 
@@ -72,11 +93,12 @@ def _save_aliases() -> None:
 
 def set_device_name(ip: str, name: str) -> bool:
     """Store (and persist) a display name for a device IP. Empty → rejected."""
-    name = (name or "").strip()[:32]
-    if not name or not ip:
+    canonical = canonical_ip(ip)
+    name = str(name or "").strip()[:32]
+    if not name or canonical is None:
         return False
     with _alias_lock:
-        _aliases[ip] = name
+        _aliases[canonical] = name
         _save_aliases()
     return True
 
@@ -101,6 +123,10 @@ class State:
 
     # ---- hosts / topology -------------------------------------------------
     def upsert_host(self, ip: str, **fields: Any) -> None:
+        canonical = canonical_ip(ip)
+        if canonical is None:
+            return
+        ip = canonical
         with self._lock:
             host = self.hosts.setdefault(
                 ip, {"ip": ip, "mac": None, "hostname": ip, "role": "workstation",
@@ -114,8 +140,23 @@ class State:
                 host["blocked"] = False
             elif ip in self.blocked:                         # a rule may predate discovery
                 host["blocked"] = True
-            if ip in _aliases:                               # user rename wins, always
-                host["hostname"] = _aliases[ip]
+            with _alias_lock:
+                alias = _aliases.get(ip)
+            if alias:                                         # user rename wins, always
+                host["hostname"] = alias
+
+    def rename_host(self, ip: str, name: str) -> bool:
+        """Update a live host's display name under the state lock."""
+        canonical = canonical_ip(ip)
+        name = str(name or "").strip()[:32]
+        if canonical is None or not name:
+            return False
+        with self._lock:
+            host = self.hosts.get(canonical)
+            if host is None:
+                return False
+            host["hostname"] = name
+        return True
 
     def touch_edge(self, a: str, b: str) -> None:
         if a == b:  # self-flows are noise, never an edge
@@ -132,8 +173,10 @@ class State:
     def register_egress(self, router_ip: str | None) -> None:
         """Egress exists on the map only as the Internet node + router uplink;
         per-flow edges are deliberately not drawn (they braid the schema)."""
-        if router_ip is None:
+        canonical = canonical_ip(router_ip) if router_ip is not None else None
+        if canonical is None or canonical == "0.0.0.0":
             return
+        router_ip = canonical
         with self._lock:
             if "0.0.0.0" not in self.hosts:
                 self.hosts["0.0.0.0"] = {
@@ -146,6 +189,10 @@ class State:
     # ---- flows / alerts ----------------------------------------------------
     def add_flow(self, is_attack: bool | None = None, src: str = "", dst: str = "",
                  bytes: int = 0) -> None:
+        try:
+            nbytes = max(0, int(bytes or 0))
+        except (TypeError, ValueError):
+            nbytes = 0
         with self._lock:
             # A blocked source is dropped at the firewall: do not count it, do not
             # animate it, and do not let it inflate the attack counter. Border
@@ -157,7 +204,7 @@ class State:
             self._flow_window += 1
             if src and dst and src != dst:
                 self.traffic.append({"src": src, "dst": dst, "attack": bool(is_attack),
-                                     "bytes": int(bytes or 0)})
+                                     "bytes": nbytes})
             if is_attack:
                 self.stats["attacks_total"] += 1
 
@@ -167,24 +214,37 @@ class State:
             self.alerts.appendleft(alert)
         audit({"event": "alert", **alert})
 
-    def tick_rate(self) -> None:
+    def tick_rate(self, interval: float = 2.0) -> None:
+        """Publish flows/s for the last engine interval, then reset the window."""
+        try:
+            seconds = float(interval)
+        except (TypeError, ValueError):
+            seconds = 2.0
+        if not (seconds > 0):
+            seconds = 2.0
         with self._lock:
-            self.stats["flows_per_sec"] = round(self._flow_window / 2, 1)
+            self.stats["flows_per_sec"] = round(self._flow_window / seconds, 1)
             self._flow_window = 0
 
     # ---- firewall -----------------------------------------------------------
     def is_blocked(self, ip: str) -> bool:
+        canonical = canonical_ip(ip)
+        if canonical is None:
+            return False
         with self._lock:
-            return ip in self.blocked
+            return canonical in self.blocked
 
     def is_protected(self, ip: str) -> bool:
         """Infrastructure must never be blocked from the dashboard: dropping the
         edge router would cut the whole map, and 0.0.0.0 is the Internet
         placeholder rather than a real host."""
-        if ip == "0.0.0.0":
+        canonical = canonical_ip(ip)
+        if canonical is None:
+            return False
+        if canonical == "0.0.0.0":
             return True
         with self._lock:
-            host = self.hosts.get(ip)
+            host = self.hosts.get(canonical)
             return bool(host and host.get("role") in ("router", "external"))
 
     def block_host(self, ip: str, reason: str = "manual") -> bool:
@@ -194,35 +254,40 @@ class State:
         external source that never appears on the topology map, and it still
         deserves a firewall rule. Returns True only when a new rule was added.
         """
-        if not ip or ip == "0.0.0.0":
+        canonical = canonical_ip(ip)
+        if canonical is None or canonical == "0.0.0.0":
             return False
+        reason = (str(reason or "manual").strip() or "manual")[:120]
         with self._lock:
-            if ip in self.blocked:
+            if canonical in self.blocked:
                 return False
-            host = self.hosts.get(ip)
+            host = self.hosts.get(canonical)
             if host is not None and host.get("role") in ("router", "external"):
                 return False
-            self.blocked.add(ip)
+            self.blocked.add(canonical)
             if host is not None:
                 host["blocked"] = True
             self.stats["blocks_total"] += 1
-            self.rules.append({"ip": ip, "action": "BLOCK", "reason": reason,
+            self.rules.append({"ip": canonical, "action": "BLOCK", "reason": reason,
                                "time": time.strftime("%H:%M:%S")})
-        audit({"event": "block", "ip": ip, "reason": reason})
+        audit({"event": "block", "ip": canonical, "reason": reason})
         return True
 
     def unblock_host(self, ip: str) -> bool:
         """Remove an active BLOCK rule for `ip` (known host or not)."""
+        canonical = canonical_ip(ip)
+        if canonical is None:
+            return False
         with self._lock:
-            if ip not in self.blocked:
+            if canonical not in self.blocked:
                 return False
-            self.blocked.discard(ip)
-            host = self.hosts.get(ip)
+            self.blocked.discard(canonical)
+            host = self.hosts.get(canonical)
             if host is not None:
                 host["blocked"] = False
-            self.rules.append({"ip": ip, "action": "ALLOW", "reason": "manual unblock",
+            self.rules.append({"ip": canonical, "action": "ALLOW", "reason": "manual unblock",
                                "time": time.strftime("%H:%M:%S")})
-        audit({"event": "unblock", "ip": ip})
+        audit({"event": "unblock", "ip": canonical})
         return True
 
     # ---- snapshot for UI ----------------------------------------------------

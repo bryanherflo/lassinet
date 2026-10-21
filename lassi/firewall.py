@@ -17,35 +17,45 @@ import base64
 import ipaddress
 import json
 import logging
+import math
 import os
 import ssl
 import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
 log = logging.getLogger("lassi.firewall")
 
 
-def _family(ip: str) -> str:
+def _canonical_ip(value: Any) -> str | None:
     try:
-        return "ip6" if ipaddress.ip_address(ip).version == 6 else "ip"
-    except ValueError:
-        return "ip"
+        address = ipaddress.ip_address(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if address.version == 6 and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return str(address)
+
+
+def _family(ip: str) -> str:
+    return "ip6" if ipaddress.ip_address(ip).version == 6 else "ip"
 
 
 class Firewall:
     def __init__(self, provider: str | None = None) -> None:
-        self.provider = os.getenv("LASSI_FW", provider or "mock").lower()
+        self.provider = (os.getenv("LASSI_FW") or provider or "mock").strip().lower() or "mock"
         self.opnsense_url = os.getenv("OPNSENSE_URL", "").strip()
         self.opnsense_key = os.getenv("OPNSENSE_KEY", "").strip()
         self.opnsense_secret = os.getenv("OPNSENSE_SECRET", "").strip()
         self.opnsense_alias = os.getenv("OPNSENSE_ALIAS", "lassinet_blocked").strip()
-        self.opnsense_verify_tls = os.getenv("OPNSENSE_VERIFY_TLS", "1").lower() not in (
+        self.opnsense_verify_tls = os.getenv("OPNSENSE_VERIFY_TLS", "1").strip().lower() not in (
             "0", "false", "no", "off",
         )
         try:
-            self.opnsense_timeout = max(float(os.getenv("OPNSENSE_TIMEOUT", "5")), 1.0)
+            timeout = float(os.getenv("OPNSENSE_TIMEOUT", "5"))
+            self.opnsense_timeout = timeout if math.isfinite(timeout) and timeout >= 1.0 else 5.0
         except ValueError:
             self.opnsense_timeout = 5.0
         if self.provider not in ("mock", "nftables", "opnsense", "pfsense"):
@@ -59,8 +69,16 @@ class Firewall:
         so nftables matches `saddr` and OPNsense adds the IP to the block
         alias. Returns True only when the provider accepted the rule.
         """
+        canonical = _canonical_ip(ip)
+        if canonical is None:
+            log.error("refusing to block invalid IP %r", ip)
+            return False
+        ip = canonical
         if self.provider == "nftables":
-            return self._nft(["add", "rule", "inet", "lassinet", "drop", _family(ip), "saddr", ip])
+            # The base chain is named `drop`; the final `drop` is the verdict.
+            # Without it nft accepts a match-only rule and traffic is NOT dropped.
+            return self._nft(["add", "rule", "inet", "lassinet", "drop",
+                              _family(ip), "saddr", ip, "drop"])
         if self.provider == "opnsense":
             return self._opnsense_alias(ip, add=True)
         if self.provider == "pfsense":
@@ -79,6 +97,11 @@ class Firewall:
         report "unblocked" while the source was still dropped, so remove all
         matching handles and fail honestly if any command is rejected.
         """
+        canonical = _canonical_ip(ip)
+        if canonical is None:
+            log.error("refusing to unblock invalid IP %r", ip)
+            return False
+        ip = canonical
         if self.provider == "nftables":
             listing = self._nft_list()
             if listing is None:
@@ -131,11 +154,11 @@ class Firewall:
             if "drop" not in tokens or "saddr" not in tokens:
                 continue
             try:
-                ip = tokens[tokens.index("saddr") + 1]
-                ipaddress.ip_address(ip)
-            except (ValueError, IndexError):
+                ip = _canonical_ip(tokens[tokens.index("saddr") + 1])
+            except IndexError:
                 continue
-            blocked.add(ip)
+            if ip is not None:
+                blocked.add(ip)
         return blocked
 
     @staticmethod
@@ -147,10 +170,9 @@ class Firewall:
             if "drop" not in tokens or "saddr" not in tokens or "handle" not in tokens:
                 continue
             try:
-                src = tokens[tokens.index("saddr") + 1]
+                src = _canonical_ip(tokens[tokens.index("saddr") + 1])
                 handle = tokens[tokens.index("handle") + 1]
-                ipaddress.ip_address(src)
-            except (ValueError, IndexError):
+            except IndexError:
                 continue
             if src == ip and handle.isdigit() and handle not in handles:
                 handles.append(handle)

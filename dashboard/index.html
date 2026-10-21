@@ -9,12 +9,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.18">
-<script src="vendor/vis-network.min.js"></script>
-<script>
-  if (typeof vis === "undefined")
-    document.write('<script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"><\/script>');
-</script>
+<link rel="stylesheet" href="style.css?v=3.19">
+<script src="vendor/vis-network.min.js?v=3.19"></script>
 </head>
 <body>
 <header>
@@ -141,13 +137,13 @@
         <span><kbd>B</kbd> block</span><span><kbd>R</kbd> refit</span><span><kbd>M</kbd> map</span>
         <span><kbd>L</kbd> legend</span><span><kbd>D</kbd> dots</span><span><kbd>H</kbd> help</span><span><kbd>Esc</kbd> close</span>
       </div>
-      <p class="help-note">In demo mode LassiNet simulates traffic and attacks on a fictional 10.0.0.0/24 network — nothing is captured from your real network. In live mode the same map shows real devices and flows.</p>
+      <p class="help-note">In demo mode LassiNet simulates traffic and attacks on a fictional network — nothing is captured from your real network. In live mode the same map shows real devices and flows.</p>
     </div>
   </div>
 </div>
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="app.js?v=3.18"></script>
+<script src="app.js?v=3.19"></script>
 </body>
 </html>

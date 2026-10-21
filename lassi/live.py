@@ -5,10 +5,10 @@ Both modules emit the SAME flow dicts as the simulator, so the ML model
 is shared across modes.
 """
 
+import ipaddress
 import logging
 import os
 import time
-import ipaddress
 from typing import Any
 
 log = logging.getLogger("lassi.live")
@@ -23,14 +23,23 @@ except ImportError:
         raise RuntimeError("scapy is not installed — run `pip install scapy`")
 
 
+def _valid_ipv4(value: Any) -> str | None:
+    """Canonical IPv4 text, filtering scapy's 0.0.0.0/None placeholders."""
+    try:
+        address = ipaddress.ip_address(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    canonical = str(address)
+    return canonical if address.version == 4 and canonical != "0.0.0.0" else None
+
+
 def default_gateway() -> str | None:
     """The machine's actual default gateway (the live-mode 'router' hub)."""
     if not HAS_SCAPY:
         return None
     try:
         from scapy.all import conf  # type: ignore
-        gw = conf.route.route()[1]
-        return gw or None
+        return _valid_ipv4(conf.route.route()[1])
     except Exception:
         return None
 
@@ -41,8 +50,7 @@ def local_ip() -> str | None:
         return None
     try:
         from scapy.all import conf  # type: ignore
-        ip = conf.route.route()[2]
-        return ip or None
+        return _valid_ipv4(conf.route.route()[2])
     except Exception:
         return None
 
@@ -52,14 +60,11 @@ def _candidate_subnets() -> list[str]:
     the machine's own subnet when it can be derived from the default route,
     so the discovery adapts to whatever LAN it runs on."""
     guesses: list[str] = []
-    if HAS_SCAPY:
+    own_ip = local_ip()
+    if own_ip:
         try:
-            from scapy.all import conf  # type: ignore
-            local_ip = conf.route.route()[2]
-            if local_ip:
-                net = ipaddress.ip_network(f"{local_ip}/24", strict=False)
-                guesses.append(str(net))
-        except Exception:
+            guesses.append(str(ipaddress.ip_network(f"{own_ip}/24", strict=False)))
+        except ValueError:
             pass
     guesses += ["192.168.1.0/24", "192.168.0.0/24", "10.0.0.0/24"]
     seen: set[str] = set()
@@ -72,8 +77,14 @@ def _sweep(cidr: str, timeout: int = 2) -> list[dict[str, Any]]:
         raise RuntimeError("scapy is not installed — run `pip install scapy`")
     log.info("ARP discovery on %s", cidr)
     answered, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=cidr), timeout=timeout, verbose=0)
-    return [{"ip": received.psrc, "mac": received.hwsrc, "hostname": received.psrc,
-             "role": "workstation", "open_ports": []} for _, received in answered]
+    hosts: list[dict[str, Any]] = []
+    for _, received in (answered or []):
+        ip = _valid_ipv4(received.psrc)
+        if ip is None:
+            continue
+        hosts.append({"ip": ip, "mac": received.hwsrc, "hostname": ip,
+                      "role": "workstation", "open_ports": []})
+    return hosts
 
 
 def _gw_for(net: ipaddress.IPv4Network) -> str | None:
@@ -86,8 +97,7 @@ def _gw_for(net: ipaddress.IPv4Network) -> str | None:
     try:
         from scapy.all import conf  # type: ignore
         _dev, gw, iface_ip = conf.route.route(str(net))
-        gw_local = iface_ip or None
-        return (gw if gw and gw != "0.0.0.0" else gw_local) or None
+        return _valid_ipv4(gw) or _valid_ipv4(iface_ip)
     except Exception:
         return None
 
@@ -98,16 +108,27 @@ def discover(cidr: str | None = None, timeout: int = 2) -> tuple[list[dict[str, 
     Network auto-detection (works on *any* LAN, home or lab):
     1. explicit `cidr` argument wins,
     2. else `LASSI_SUBNET` env var,
-    3. else the /24 the machine itself lives in (derived from its default
-       route), whatever addressing it uses,
-    4. else common defaults are swept until one returns neighbours.
+    3. else the IPv4 /24 the machine itself lives in (derived from its default
+       route),
+    4. else common private defaults are swept until one returns neighbours.
     Returns (hosts, gateway_ip) — gateway in the SAME network as the sweep.
     """
     if cidr:
-        candidates: list[str] = [cidr]
+        candidates: list[str] = [str(cidr).strip()]
     else:
-        env = os.environ.get("LASSI_SUBNET")
-        candidates = [env] if env else _candidate_subnets()
+        env = (os.environ.get("LASSI_SUBNET") or "").strip()
+        if env:
+            try:
+                ipaddress.ip_network(env, strict=False)
+            except ValueError:
+                # An invalid override used to disable discovery silently.
+                # Keep the sensor useful and say why we ignored it.
+                log.warning("invalid LASSI_SUBNET %r; auto-detecting instead", env)
+                candidates = _candidate_subnets()
+            else:
+                candidates = [env]
+        else:
+            candidates = _candidate_subnets()
 
     hosts: list[dict[str, Any]] = []
     chosen: str | None = None
@@ -124,7 +145,12 @@ def discover(cidr: str | None = None, timeout: int = 2) -> tuple[list[dict[str, 
         # never sweep more than a /24 (an ARP storm on big nets is rude)
         scan = net if net.prefixlen >= 24 else ipaddress.ip_network(
             f"{c.rsplit('/', 1)[0]}/24", strict=False)
-        hosts = _sweep(str(scan), timeout)
+        try:
+            hosts = _sweep(str(scan), timeout)
+        except Exception:
+            # Try the next candidate instead of losing the whole discovery.
+            log.exception("ARP sweep failed on %s", scan)
+            continue
         if not hosts:
             continue
         chosen = str(scan)
@@ -215,14 +241,19 @@ class LiveCapture:
         self.error = None
         self.running = True
         self.thread = threading.Thread(target=self._sniff_loop, daemon=True)
-        self.thread.start()
+        try:
+            self.thread.start()
+        except Exception as exc:       # thread creation failure must be visible
+            self.running = False
+            self.error = f"{type(exc).__name__}: {exc}"
+            raise
         log.info("Live capture started on %s", self.iface or "default interface")
 
     def drain_flows(self) -> list[dict[str, Any]]:
         now = time.time()
         out: list[dict[str, Any]] = []
         for key, f in list(self.flows.items()):
-            started = f.get("start", now)
+            started = f.get("start") or now
             elapsed = max(now - started, 0.1)
             syns = f.get("syns", 0)
             total = max(f["pkts"], 1)

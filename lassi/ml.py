@@ -13,6 +13,7 @@ same structure, so the model works identically in both modes:
 """
 
 import logging
+import math
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,16 @@ import joblib
 import numpy as np
 
 log = logging.getLogger("lassi.ml")
+
+
+def _number(value: Any, default: float) -> float:
+    """Finite float or a safe default, so one bad field cannot kill a tick."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
+
 
 FEATURES = [
     "pkts", "bytes", "duration", "syn_ratio",
@@ -38,18 +49,18 @@ MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "lassi_model.pk
 
 
 def extract_features(flow: dict[str, Any]) -> list[float]:
-    """Extract 8 flow features for ML inference. Always returns valid floats."""
-    pkts = max(float(flow.get("pkts", 1)), 1.0)
-    bytes_ = float(flow.get("bytes", 0))
-    duration = max(float(flow.get("duration", 0.1)), 0.1)
+    """Extract 8 finite flow features for ML inference."""
+    pkts = max(_number(flow.get("pkts", 1), 1.0), 1.0)
+    bytes_ = max(_number(flow.get("bytes", 0), 0.0), 0.0)
+    duration = max(_number(flow.get("duration", 0.1), 0.1), 0.1)
     return [
-        float(flow.get("pkts", 0)),
+        _number(flow.get("pkts", 0), 0.0),
         bytes_,
         duration,
-        float(flow.get("syn_ratio", 0.0)),
-        float(flow.get("dst_port_count", 1)),
-        float(flow.get("mean_pkt_size", bytes_ / pkts if pkts > 0 else 0.0)),
-        float(flow.get("pkt_rate", pkts / duration)),
+        _number(flow.get("syn_ratio", 0.0), 0.0),
+        _number(flow.get("dst_port_count", 1), 1.0),
+        _number(flow.get("mean_pkt_size", bytes_ / pkts), bytes_ / pkts),
+        _number(flow.get("pkt_rate", pkts / duration), pkts / duration),
         bytes_ / pkts / 1000.0,   # KB per packet
     ]
 
@@ -64,9 +75,22 @@ class Detector:
         self._load_model()
 
     def _load_model(self) -> None:
+        # Never keep a previously loaded model after a failed reload: callers
+        # rely on `model is None` meaning "heuristics are active".
+        self.model = None
         try:
             bundle = joblib.load(self._model_path)
-            self.model = bundle["model"]
+            if not isinstance(bundle, dict) or "model" not in bundle:
+                raise ValueError("model bundle must be a dict with a 'model' entry")
+            features = bundle.get("features")
+            if features is not None and list(features) != FEATURES:
+                log.error("Model features do not match this build (%s != %s); "
+                          "using heuristic fallback", list(features), FEATURES)
+                return
+            model = bundle["model"]
+            if not hasattr(model, "predict"):
+                raise ValueError("model has no predict() method")
+            self.model = model
             log.info("ML model loaded from %s", self._model_path)
         except FileNotFoundError:
             log.warning("Model not found (%s) — using heuristic fallback.", self._model_path)
@@ -89,15 +113,18 @@ class Detector:
             X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
             labels = self.model.predict(X)
             probs = self.model.predict_proba(X).max(axis=1)
+            if len(labels) != len(flows) or len(probs) != len(flows):
+                raise ValueError("model returned a different number of predictions than flows")
             for flow, label, prob in zip(flows, labels, probs):
                 kind = ATTACK_TYPES.get(int(label), "unknown")
+                confidence = _number(prob, 0.0)
                 res = self._heuristic(flow)  # base fields
-                if prob >= 0.65 and kind != "benign":
+                if confidence >= 0.65 and kind != "benign":
                     res.update(severity=self._severity(kind), attack=kind,
-                               confidence=round(float(prob), 2), engine="ml")
+                               confidence=round(confidence, 2), engine="ml")
                 else:
                     res.update(severity="low" if kind == "benign" else "medium",
-                               attack=kind, confidence=round(float(prob), 2), engine="ml")
+                               attack=kind, confidence=round(confidence, 2), engine="ml")
                 results.append(res)
         except Exception:
             log.exception("ML inference failed — falling back to heuristics")
@@ -108,10 +135,11 @@ class Detector:
     @staticmethod
     def _heuristic(flow: dict[str, Any]) -> dict[str, Any]:
         """Rule-based fallback used when no model is trained yet."""
-        syn_ratio = float(flow.get("syn_ratio", 0))
-        dst_port_count = int(flow.get("dst_port_count", 0))
-        pkt_rate = float(flow.get("pkt_rate", 0))
-        pkts = int(flow.get("pkts", 0))
+        syn_ratio = _number(flow.get("syn_ratio", 0), 0.0)
+        dst_port_count = int(_number(flow.get("dst_port_count", 0), 0.0))
+        pkt_rate = _number(flow.get("pkt_rate", 0), 0.0)
+        pkts = int(_number(flow.get("pkts", 0), 0.0))
+        bytes_ = _number(flow.get("bytes", 0), 0.0)
 
         if syn_ratio > 0.9 and dst_port_count > 8:
             return {"severity": "high", "attack": "port_scan", "confidence": 0.9, "engine": "rules"}
@@ -119,7 +147,7 @@ class Detector:
             return {"severity": "high", "attack": "ddos", "confidence": 0.85, "engine": "rules"}
         if dst_port_count == 1 and pkts > 100 and syn_ratio > 0.8:
             return {"severity": "high", "attack": "brute_force", "confidence": 0.8, "engine": "rules"}
-        if pkts > 1000 and float(flow.get("bytes", 0)) > 5_000_000:
+        if pkts > 1000 and bytes_ > 5_000_000:
             return {"severity": "high", "attack": "data_exfiltration", "confidence": 0.75, "engine": "rules"}
         return {"severity": "low", "attack": "benign", "confidence": 0.6, "engine": "rules"}
 

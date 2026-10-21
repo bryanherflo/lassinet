@@ -62,5 +62,5 @@ docker run --rm -it --network lab b3ardino/attacker nmap -T5 -Pn -p- 172.17.0.2
   ```
   A base chain has one hook, so choose `input` (local host) or `forward`
   (traffic routed through the machine) according to what you want to protect.
-  On restart, LassiNet reads the existing `drop ... saddr` rules back into the
-  dashboard so active blocks are not hidden or duplicated.
+  On restart, LassiNet reads the existing `ip saddr ... drop` rules back into
+  the dashboard so active blocks are not hidden or duplicated.

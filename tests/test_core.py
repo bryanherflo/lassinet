@@ -3,6 +3,7 @@
 Run with:  pytest -q
 """
 
+import math
 import re
 import sys
 import time
@@ -33,6 +34,36 @@ def test_upsert_and_snapshot() -> None:
     snap = st.snapshot()
     assert snap["nodes"][0]["ip"] == "10.0.0.1"
     assert snap["nodes"][0]["role"] == "router"
+
+
+def test_state_canonicalizes_ips_and_rejects_garbage() -> None:
+    st = State()
+    st.upsert_host("2001:0db8::0001", hostname="v6", role="workstation")
+    assert list(st.hosts) == ["2001:db8::1"]
+    assert st.block_host("2001:0db8::0001") is True
+    assert st.is_blocked("2001:db8::1") is True
+    assert st.block_host("2001:db8::1") is False          # duplicate, not a new rule
+    assert st.unblock_host("2001:0db8::0001") is True
+    assert st.block_host("not-an-ip") is False
+    assert st.unblock_host("not-an-ip") is False
+    # IPv4-mapped IPv6 is the same host, not a second identity.
+    assert st.block_host("::ffff:10.0.0.9") is True
+    assert st.is_blocked("10.0.0.9") is True
+    assert st.unblock_host("10.0.0.9") is True
+
+
+def test_tick_rate_uses_the_real_interval() -> None:
+    st = State()
+    for _ in range(3):
+        st.add_flow(is_attack=False, src="10.0.0.2", dst="10.0.0.3")
+    st.tick_rate(1.5)
+    assert st.snapshot()["stats"]["flows_per_sec"] == 2.0
+
+
+def test_add_flow_ignores_unparseable_byte_counts() -> None:
+    st = State()
+    st.add_flow(is_attack=False, src="10.0.0.2", dst="10.0.0.3", bytes="oops")
+    assert st.snapshot()["traffic"][0]["bytes"] == 0
 
 
 def test_block_unblock_host() -> None:
@@ -240,6 +271,39 @@ def test_discover_ignores_ipv6_cidr(monkeypatch) -> None:
     assert live.discover("2001:db8::/64") == ([], None)
 
 
+def test_discover_recovers_from_invalid_subnet_override(monkeypatch) -> None:
+    import lassi.live as live
+
+    monkeypatch.setenv("LASSI_SUBNET", "not-a-cidr")
+    monkeypatch.setattr(live, "_candidate_subnets", lambda: ["10.0.0.0/24"])
+    monkeypatch.setattr(live, "_sweep", lambda cidr, timeout=2: [
+        {"ip": "10.0.0.2", "mac": "aa:bb:cc:dd:ee:ff", "hostname": "10.0.0.2",
+         "role": "workstation", "open_ports": []}
+    ])
+    monkeypatch.setattr(live, "_gw_for", lambda net: "10.0.0.1")
+    hosts, gateway = live.discover()
+    assert [h["ip"] for h in hosts] == ["10.0.0.2"]
+    assert gateway == "10.0.0.1"
+
+
+def test_discover_tries_next_candidate_after_sweep_error(monkeypatch) -> None:
+    import lassi.live as live
+
+    monkeypatch.setattr(live, "_candidate_subnets", lambda: ["10.0.0.0/24", "192.168.1.0/24"])
+
+    def sweep(cidr, timeout=2):
+        if cidr == "10.0.0.0/24":
+            raise OSError("interface down")
+        return [{"ip": "192.168.1.2", "mac": None, "hostname": "192.168.1.2",
+                 "role": "workstation", "open_ports": []}]
+
+    monkeypatch.setattr(live, "_sweep", sweep)
+    monkeypatch.setattr(live, "_gw_for", lambda net: "192.168.1.1")
+    hosts, gateway = live.discover()
+    assert [h["ip"] for h in hosts] == ["192.168.1.2"]
+    assert gateway == "192.168.1.1"
+
+
 def test_egress_registers_internet_node_and_uplink() -> None:
     st = State()
     st.upsert_host("10.0.0.3", hostname="pc", role="workstation")
@@ -290,9 +354,12 @@ def test_nft_rule_picks_ip_family(monkeypatch) -> None:
     fw = Firewall(provider="nftables")
     assert fw.block("10.0.0.9") is True
     assert fw.block("2001:db8::1") is True
-    # The dashboard blocks sources (attackers), so nft must match saddr.
+    # The dashboard blocks sources (attackers), so nft must match saddr and
+    # finish with the drop verdict (the chain itself is also named `drop`).
     assert {"ip", "saddr", "10.0.0.9"} <= set(captured[0])
     assert {"ip6", "saddr", "2001:db8::1"} <= set(captured[1])
+    assert all(args[-1] == "drop" for args in captured)
+    assert all(args.index("saddr") < len(args) - 1 for args in captured)
     assert all("daddr" not in args for args in captured)
 
 
@@ -487,6 +554,27 @@ def test_extract_features_shape() -> None:
     feats = extract_features(flow)
     assert len(feats) == 8
     assert all(isinstance(v, float) and v == v for v in feats)  # no NaNs
+
+
+def test_extract_features_survives_missing_or_bad_values() -> None:
+    feats = extract_features({
+        "pkts": None, "bytes": "bad", "duration": "nan",
+        "syn_ratio": None, "dst_port_count": None,
+        "mean_pkt_size": None, "pkt_rate": None,
+    })
+    assert len(feats) == 8
+    assert all(math.isfinite(v) for v in feats)
+
+
+def test_detector_rejects_a_model_with_mismatched_features(monkeypatch) -> None:
+    import lassi.ml as ml
+
+    monkeypatch.setattr(ml.joblib, "load",
+                        lambda path: {"model": object(), "features": ["pkts"]})
+    det = Detector(model_path=Path("ignored-model.pkl"))
+    assert det.model is None
+    verdict = det.predict([{"pkts": 1, "bytes": 1}])[0]
+    assert verdict["engine"] == "rules"
 
 
 def test_heuristic_detects_port_scan_without_model() -> None:

@@ -48,7 +48,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (65 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (78 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt
@@ -87,6 +87,10 @@ The badge at the top right of the map shows the live stream state: `live` while 
 | `LASSI_IFACE` | interface name | *default* | pin sniffing interface for multi-network laptops |
 | `LASSI_LOGFILE` | path | `logs/events.jsonl` | local JSONL event log: every alert, block and startup appended as one line |
 | `LASSI_NAMEFILE` | path | `data/device_names.json` | where user-given device names (double-click on a node) are persisted across restarts |
+
+`.env` files are loaded automatically when `python-dotenv` is installed (it is in `requirements.txt`); existing environment variables win. Start from `.env.example`.
+
+> **Exposure warning:** LassiNet binds to `127.0.0.1` by default and has **no user authentication**. If you set `LASSI_HOST=0.0.0.0`, put it behind a trusted reverse proxy/VPN or firewall — anyone who can reach the port can block IPs through the API.
 
 **Live mode** (real traffic, opt-in — needs admin/root, `pip install scapy`, and ideally the real-data model `python ml-training/load_cicids.py`, otherwise the rule-based engine is used):
 
@@ -176,7 +180,7 @@ LassiNet is an **educational project**: discovery, capture, and blocking must on
 
 ## 🗺️ Roadmap
 
-- [x] Unit + API tests (`pytest`, 39 tests) with GitHub Actions CI
+- [x] Unit + API tests (`pytest`) with GitHub Actions CI
 - [ ] Zeek/Argus feed instead of hand-rolled flow aggregation
 - [ ] Host-shield agents (report process/service inventory)
 - [ ] Alert → playbook chain (block + re-scan + report generation)

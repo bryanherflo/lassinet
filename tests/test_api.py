@@ -24,6 +24,20 @@ def test_health(client: TestClient) -> None:
     assert data["mode"].startswith("demo")
 
 
+def test_simulated_mode_never_uses_a_real_firewall(monkeypatch) -> None:
+    monkeypatch.setattr(lassi_app.fw, "provider", "nftables")
+    lassi_app._use_mock_for_simulated_mode()
+    assert lassi_app.fw.provider == "mock"
+
+
+def test_metrics_are_hidden_when_the_model_is_not_loaded(monkeypatch) -> None:
+    previous = lassi_app.state.model_metrics
+    monkeypatch.setattr(lassi_app.detector, "model", None)
+    lassi_app._load_metrics("demo")
+    assert lassi_app.state.model_metrics is None
+    lassi_app.state.model_metrics = previous       # keep later tests independent
+
+
 def test_source_selection_falls_back_honestly() -> None:
     source, label = lassi_app._source_for_mode("live", False)
     assert source is lassi_app.demo_loop
@@ -178,6 +192,44 @@ def test_logs_skip_corrupt_lines(client: TestClient, tmp_path, monkeypatch) -> N
     assert all(isinstance(e, dict) for e in events)
 
 
+def test_logs_endpoint_returns_only_the_requested_tail(client: TestClient, tmp_path, monkeypatch) -> None:
+    import lassi.state as state_module
+
+    logfile = tmp_path / "events.jsonl"
+    logfile.write_text("".join(
+        '{"event":"line-%d"}\n' % i for i in range(10)
+    ), encoding="utf-8")
+    monkeypatch.setattr(state_module, "EVENTS_LOG_PATH", logfile)
+    events = client.get("/api/logs", params={"limit": 3}).json()["events"]
+    assert [e["event"] for e in events] == ["line-7", "line-8", "line-9"]
+
+
+def test_invalid_flow_never_reaches_the_firewall(client: TestClient, monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeFirewall:
+        provider = "mock"
+
+        def block(self, ip: str, reason: str = "manual") -> bool:
+            calls.append(ip)
+            return True
+
+        def unblock(self, ip: str) -> bool:
+            return True
+
+    class HighDetector:
+        def predict(self, flows):
+            return [{"severity": "critical", "attack": "ddos",
+                     "confidence": 0.99, "engine": "rules"} for _ in flows]
+
+    monkeypatch.setattr(lassi_app, "fw", FakeFirewall())
+    monkeypatch.setattr(lassi_app, "detector", HighDetector())
+    monkeypatch.setattr(lassi_app, "AUTO_BLOCK", True)
+    lassi_app.process_flows([{"src": "", "dst": "10.0.0.2", "bytes": 10},
+                             {"src": "not-an-ip", "dst": "10.0.0.2", "bytes": 10}])
+    assert calls == []
+
+
 def test_block_normalizes_ipv6(client: TestClient) -> None:
     raw = "2001:0db8::0001"
     canonical = "2001:db8::1"
@@ -190,8 +242,14 @@ def test_block_normalizes_ipv6(client: TestClient) -> None:
 
 
 def test_dashboard_served(client: TestClient) -> None:
-    assert client.get("/").status_code == 200
-    assert "LassiNet" in client.get("/").text
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "LassiNet" in response.text
+    assert "no-cache" in response.headers["cache-control"]
+
+
+def test_api_state_is_not_cached(client: TestClient) -> None:
+    assert client.get("/api/state").headers["cache-control"] == "no-store"
 
 
 def test_state_shape(client: TestClient) -> None:

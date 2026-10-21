@@ -2,6 +2,29 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.18] — 2026-10-21 · "exhaustive review pass"
+
+### Fixed
+- **nftables now installs a real drop verdict.** The old command targeted the chain named `drop` but omitted the final `drop` statement, so nft accepted a match-only rule and traffic was not actually blocked. The command now ends with the verdict and a regression test checks the order.
+- **Demo mode can never touch a real firewall.** If `LASSI_FW=nftables|opnsense` is left set while running demo — or while live falls back to demo because scapy is missing — the app forces the mock provider and logs why. Simulated 10.0.0.x attacks therefore cannot create real rules.
+- **Concurrent block requests can no longer create duplicate firewall rules.** API calls and engine auto-blocks now share one check→provider→state lock; invalid source/destination addresses are dropped before they reach the detector/block path.
+- **The dashboard map now sorts servers first.** `server` has order `0`, and `0 || 9` silently treated it as unknown; the layout uses nullish fallback instead.
+- **The WebSocket fallback now actually refreshes.** On a socket error the dashboard starts `/api/state` polling (previously it only changed the status label and could sit stale until `close`).
+- **Attack flashes stay aligned with new detections.** Auto-block confirmation cards are skipped when matching fresh attacks, and a server restart (counter reset) no longer stops future flashes. A banner disappears when its source becomes blocked.
+- **Model metrics follow the active model.** When `LASSI_MODE=live` falls back to demo (missing scapy), the dashboard now loads `demo_metrics.json` instead of showing stale live metrics.
+- **`/api/logs` reads only a bounded tail** instead of loading a potentially huge `events.jsonl` into memory on every poll.
+- **Model and feature validation.** A model bundle with mismatched features or no `predict()` is rejected with a heuristic fallback; failed reloads clear the old model; missing/NaN/Inf flow values cannot raise.
+- **IPs are canonicalized and validated in state and firewall providers**, including persisted device-name keys; `0.0.0.0`, `None`, and malformed addresses are rejected consistently.
+- **Live discovery is more resilient:** an invalid `LASSI_SUBNET` falls back to auto-detection, a failed ARP sweep tries the next candidate, and scapy's `0.0.0.0` placeholders are filtered from gateway/local addresses.
+- **Configuration is normalized:** `.env` is loaded when `python-dotenv` is present, `LASSI_MODE`/`LASSI_FW` are stripped, invalid ports fall back to 8000, and non-finite discovery/timeout values are ignored.
+- **The dashboard no longer has a CDN fallback**: only the bundled `vendor/vis-network.min.js` is loaded, matching the offline/no-CDN promise.
+
+### Tests
+- 78/78 passing. New regressions cover the nftables verdict, demo/real-firewall isolation, IP canonicalization, rate timing, bad byte counts, invalid-subnet fallback, sweep-failure fallback, malformed feature inputs, mismatched model bundles, bounded log tailing, and rejecting malformed flows before the firewall. Repo hygiene removed a tracked debug screenshot and a stale model backup; the simulator now uses a local RNG instead of reseeding Python's global generator.
+
+### UI
+- Cache-busters bumped to `?v=3.19` (CSS, JS, bundled map library); hard-refresh with Ctrl+F5.
+
 ## [0.4.17] — 2026-10-21 · "honest failure paths"
 
 ### Fixed
