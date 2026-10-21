@@ -7,27 +7,27 @@ const ROLE_STYLE = {
   workstation: { color: "#3fb950", label: "Workstation",   shape: "circularImage", icon: "\u{1F4BB}" },
   iot:         { color: "#d29922", label: "IoT",           shape: "circularImage", icon: "\u{1F4E1}" },
   printer:     { color: "#8b949e", label: "Printer",       shape: "circularImage", icon: "\u{1F5A8}\uFE0F" },
-  attacker:    { color: "#f85149", label: "Attacker",      shape: "star" },
+  attacker:    { color: "#f85149", label: "Attacker",      shape: "circularImage", icon: "\u{1F480}" },
+  unknown:     { color: "#8b949e", label: "Unknown",       shape: "circularImage", icon: "\u2753" },
   external:    { color: "#58a6ff", label: "Internet",      shape: "circularImage", icon: "\u2601\uFE0F" },
+  trusted:     { color: "#3fb950", label: "Trusted",       shape: "circularImage", icon: "\u{1F4BB}" },
 };
 
-function iconURI(ch, fill = "#161b22") {
-  const svg =
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">'
-    + `<circle cx="24" cy="24" r="23" fill="${fill}"/>`
-    + `<text x="24" y="31" font-size="23" text-anchor="middle"`
-    + ` font-family="'Segoe UI Emoji','Apple Color Emoji',sans-serif">${ch}</text></svg>`;
+function iconURI(ch, fill) {
+  fill = fill || "#161b22";
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">' +
+    '<circle cx="24" cy="24" r="23" fill="' + fill + '"/>' +
+    '<text x="24" y="31" font-size="23" text-anchor="middle" font-family="\'Segoe UI Emoji\',\'Apple Color Emoji\',sans-serif">' + ch + '</text></svg>';
   return "data:image/svg+xml," + encodeURIComponent(svg);
 }
 
-const SEV_ICONS = { critical: "\u{1F6A8}", high: "\u26A0\uFE0F", medium: "\u26D3\uFE0F", info: "\u2705" };
+var SEV_ICONS = { critical: "\u{1F6A8}", high: "\u26A0\uFE0F", medium: "\u26D3\uFE0F", info: "\u2705" };
 
-// ---- topology map -----------------------------------------------------------
-const nodes = new vis.DataSet([]);
-const edges = new vis.DataSet([]);
-const network = new vis.Network(
+var nodes = new vis.DataSet([]);
+var edges = new vis.DataSet([]);
+var network = new vis.Network(
   document.getElementById("map"),
-  { nodes, edges },
+  { nodes: nodes, edges: edges },
   {
     autoResize: true,
     physics: { enabled: false },
@@ -38,68 +38,101 @@ const network = new vis.Network(
   }
 );
 
-// ---- deterministic tree layout ----------------------------------------------
-const ROLE_ORDER = { server: 0, workstation: 1, iot: 2, printer: 3, attacker: 4 };
-let layoutKey = "";
+var confirmedAttackers = new Set();
+var trustedDevices = new Set();
+var suspiciousDevices = new Set();
+
+var ROLE_ORDER = { server: 0, workstation: 1, iot: 2, printer: 3, attacker: 4, unknown: 5, trusted: 6 };
+var layoutKey = "";
 
 function computeTreeLayout(data) {
-  const router = data.nodes.find(h => h.role === "router");
-  const ext = data.nodes.find(h => h.role === "external");
-  const leaves = data.nodes
-    .filter(h => h.role !== "router" && h.role !== "external")
-    .sort((a, b) => (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) || a.ip.localeCompare(b.ip));
-  const pos = {};
-  if (ext) pos[ext.ip] = { x: 0, y: -260 };
+  var router = data.nodes.find(function(h) { return h.role === "router"; });
+  var ext = data.nodes.find(function(h) { return h.role === "external"; });
+  var leaves = data.nodes.filter(function(h) { return h.role !== "router" && h.role !== "external"; })
+    .sort(function(a, b) { return (ROLE_ORDER[a.role] || 9) - (ROLE_ORDER[b.role] || 9) || a.ip.localeCompare(b.ip); });
+  var pos = {};
+  if (ext) pos[ext.ip] = { x: 0, y: -280 };
   if (router) pos[router.ip] = { x: 0, y: 0 };
-  const n = leaves.length;
-  // Dynamic spacing based on container width and node count
-  const containerWidth = document.getElementById("map")?.clientWidth || 800;
-  const spacing = Math.max(140, Math.min(240, containerWidth / Math.max(n * 0.8, 3)));
-  leaves.forEach((h, i) => { pos[h.ip] = { x: (i - (n - 1) / 2) * spacing, y: 240 }; });
+  var n = leaves.length;
+  var containerWidth = (document.getElementById("map") ? document.getElementById("map").clientWidth : 800);
+  var spacing = Math.max(160, Math.min(280, containerWidth / Math.max(n * 0.7, 3)));
+  leaves.forEach(function(h, i) { pos[h.ip] = { x: (i - (n - 1) / 2) * spacing, y: 260 }; });
   return pos;
 }
 
-// ---- attack feedback: node flash + malicious "packet" dots over the wires ----
-let lastAttacks = -1;
-const flashUntil = {};
-const attackPaths = [];
-const FLASH_MS = 6000;
+var lastAttacks = -1;
+var flashUntil = {};
+var attackPaths = [];
+var FLASH_MS = 8000;
 
 function markAttackPath(data, a, now) {
-  const router = data.nodes.find(h => h.role === "router");
+  var router = data.nodes.find(function(h) { return h.role === "router"; });
   if (!router || !a.src) return;
-  const hostIps = new Set(data.nodes.map(h => h.ip));
-  let victim = a.dst;
-  if (!hostIps.has(victim)) victim = (data.nodes.find(h => h.role === "external") || {}).ip;
+  var hostIps = new Set(data.nodes.map(function(h) { return h.ip; }));
+  var victim = a.dst;
+  if (!hostIps.has(victim)) victim = (data.nodes.find(function(h) { return h.role === "external"; }) || {}).ip;
   if (!victim || victim === a.src) return;
-  const links = new Set(data.edges.filter(e => e.kind === "link").map(e => e.from + "|" + e.to));
-  const seg = (u, v) => (links.has(u + "|" + v) || links.has(v + "|" + u)) ? [u, v] : null;
-  const s1 = seg(a.src, router.ip);
-  const s2 = seg(router.ip, victim);
+  var links = new Set(data.edges.filter(function(e) { return e.kind === "link"; }).map(function(e) { return e.from + "|" + e.to; }));
+  var seg = function(u, v) { return (links.has(u + "|" + v) || links.has(v + "|" + u)) ? [u, v] : null; };
+  var s1 = seg(a.src, router.ip);
+  var s2 = seg(router.ip, victim);
   if (s1 && s2) {
-    const key = s1[0] + ">" + s1[1] + "|" + s2[0] + ">" + s2[1];
-    if (!attackPaths.some(p => p.until > now && p.key === key)) {
-      attackPaths.push({ key, born: now, until: now + FLASH_MS, segments: [s1, s2] });
+    var key = s1[0] + ">" + s1[1] + "|" + s2[0] + ">" + s2[1];
+    var exists = attackPaths.some(function(p) { return p.until > now && p.key === key; });
+    if (!exists) attackPaths.push({ key: key, born: now, until: now + FLASH_MS, segments: [s1, s2], severity: a.severity });
+    if (!confirmedAttackers.has(a.src) && !trustedDevices.has(a.src)) {
+      confirmedAttackers.add(a.src);
+      upgradeToAttacker(a.src);
     }
   }
 }
 
+function upgradeToAttacker(ip) {
+  var node = nodes.get(ip);
+  if (!node) return;
+  var style = ROLE_STYLE.attacker;
+  nodes.update({
+    id: ip, role: "attacker", shape: style.shape, image: iconURI(style.icon),
+    color: { background: style.color, border: "#f85149", highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } },
+    borderWidth: 3,
+    shadow: { enabled: true, color: "#f8514988", size: 14, x: 0, y: 3 },
+    title: "ATTACKER CONFIRMADO\nMAC: " + (node.mac || "n/a") + "\nports: " + (node.open_ports && node.open_ports.length ? node.open_ports.join(", ") : "\u2014") + "\nright-click to mark trusted/suspicious"
+  });
+}
+
 function updateFlashes(data, now) {
-  const total = data.stats.attacks_total;
+  var total = data.stats.attacks_total;
   if (lastAttacks < 0) { lastAttacks = total; return; }
-  const fresh = Math.max(0, total - lastAttacks);
+  var fresh = Math.max(0, total - lastAttacks);
   lastAttacks = total;
   while (attackPaths.length && attackPaths[0].until < now) attackPaths.shift();
-  for (const a of data.alerts.slice(0, fresh)) {
+  for (var i = 0; i < fresh && i < data.alerts.length; i++) {
+    var a = data.alerts[i];
     if (a.src) flashUntil[a.src] = now + FLASH_MS;
     markAttackPath(data, a, now);
+    if (a.severity === "critical" || a.severity === "high") showAttackBanner(a);
   }
 }
 
-// ---- malicious packet animation (overlay canvas) -------------------------------
-const fxHost = document.getElementById("map");
+var attackBannerEl = null;
+function showAttackBanner(alert) {
+  if (attackBannerEl) attackBannerEl.remove();
+  attackBannerEl = document.createElement("div");
+  attackBannerEl.id = "attack-banner";
+  attackBannerEl.className = "attack-banner " + (alert.severity || "high");
+  var icon = SEV_ICONS[alert.severity] || "\u26A0\uFE0F";
+  attackBannerEl.innerHTML = '<div class="banner-content"><span class="banner-icon">' + icon + '</span><div class="banner-text"><strong>ATAQUE DETECTADO: ' + alert.attack.toUpperCase() + '</strong><span>' + alert.src + ' \u2192 ' + alert.dst + ' \u00B7 Confianza: ' + alert.confidence + ' \u00B7 Motor: ' + alert.engine + '</span></div><button class="banner-act" data-ip="' + alert.src + '">Bloquear ' + alert.src + '</button></div>';
+  document.body.appendChild(attackBannerEl);
+  setTimeout(function() { if (attackBannerEl) attackBannerEl.remove(); attackBannerEl = null; }, 10000);
+  attackBannerEl.querySelector(".banner-act").onclick = function() {
+    post("/api/firewall/block", { ip: alert.src, reason: "operator blocked from attack banner" });
+    attackBannerEl.remove(); attackBannerEl = null;
+  };
+}
+
+var fxHost = document.getElementById("map");
 fxHost.style.position = "relative";
-const fx = document.createElement("canvas");
+var fx = document.createElement("canvas");
 fx.style.position = "absolute";
 fx.style.inset = "0";
 fx.style.width = "100%";
@@ -107,39 +140,27 @@ fx.style.height = "100%";
 fx.style.pointerEvents = "none";
 fx.style.zIndex = "5";
 fxHost.appendChild(fx);
-const fctx = fx.getContext("2d");
+var fctx = fx.getContext("2d");
 
 function sizeFx() {
-  const rect = fxHost.getBoundingClientRect();
+  var rect = fxHost.getBoundingClientRect();
   fx.width = Math.max(1, Math.floor(rect.width));
   fx.height = Math.max(1, Math.floor(rect.height));
 }
 new ResizeObserver(sizeFx).observe(fxHost);
 sizeFx();
 
-const SPEED = 160;
-const BALLS = 5;
-const BALL_R = 5;
-const RED = "#f85149";
-const AMBIENT_MAX = 16;
-const SPAWN_MS = 100;
-
-let fxRouter = null, fxExt = null, fxLinks = new Set(), fxHostIds = new Set(), fxRoles = new Map(),
-    trafficSamples = [];
-const ambientDots = [];
-let lastSpawn = 0;
-
-const FLOW_COLORS = {
-  router: "#a371f7", server: "#58a6ff", external: "#58a6ff",
-  workstation: "#3fb950", iot: "#d29922", printer: "#8b949e", attacker: "#f85149",
-};
+var SPEED = 180, BALLS = 6, BALL_R = 6, AMBIENT_MAX = 18, SPAWN_MS = 80;
+var fxRouter = null, fxExt = null, fxLinks = new Set(), fxHostIds = new Set(), fxRoles = new Map(), trafficSamples = [];
+var ambientDots = []; var lastSpawn = 0;
+var FLOW_COLORS = { router: "#a371f7", server: "#58a6ff", external: "#58a6ff", workstation: "#3fb950", iot: "#d29922", printer: "#8b949e", attacker: "#f85149", unknown: "#8b949e", trusted: "#3fb950" };
 
 function fxSync(data) {
-  fxRouter = (data.nodes.find(h => h.role === "router") || {}).ip || null;
-  fxExt = (data.nodes.find(h => h.role === "external") || {}).ip || null;
-  fxHostIds = new Set(data.nodes.map(h => h.ip));
-  fxRoles = new Map(data.nodes.map(h => [h.ip, h.role]));
-  fxLinks = new Set(data.edges.filter(e => e.kind === "link").map(e => e.from + "|" + e.to));
+  fxRouter = (data.nodes.find(function(h) { return h.role === "router"; }) || {}).ip || null;
+  fxExt = (data.nodes.find(function(h) { return h.role === "external"; }) || {}).ip || null;
+  fxHostIds = new Set(data.nodes.map(function(h) { return h.ip; }));
+  fxRoles = new Map(data.nodes.map(function(h) { return [h.ip, h.role]; }));
+  fxLinks = new Set(data.edges.filter(function(e) { return e.kind === "link"; }).map(function(e) { return e.from + "|" + e.to; }));
   trafficSamples = Array.isArray(data.traffic) ? data.traffic : [];
 }
 
@@ -147,147 +168,57 @@ function spawnAmbient(now) {
   if (!trafficSamples.length || ambientDots.length >= AMBIENT_MAX) return;
   if (now - lastSpawn < SPAWN_MS) return;
   lastSpawn = now;
-  const s = trafficSamples[Math.floor(Math.random() * trafficSamples.length)];
+  var s = trafficSamples[Math.floor(Math.random() * trafficSamples.length)];
   if (!s || s.attack || s.src === s.dst) return;
   if (!fxHostIds.has(s.src) || !fxRouter) return;
-  const src = s.src;
-  const dst = fxHostIds.has(s.dst) ? s.dst : fxExt;
+  var src = s.src, dst = fxHostIds.has(s.dst) ? s.dst : fxExt;
   if (!dst || src === dst) return;
-  const link = (u, v) => (fxLinks.has(u + "|" + v) || fxLinks.has(v + "|" + u)) ? [u, v] : null;
-  const raw = src === fxRouter ? [link(src, dst)] : [link(src, fxRouter), link(fxRouter, dst)];
-  const segments = raw.filter(Boolean);
+  var link = function(u, v) { return (fxLinks.has(u + "|" + v) || fxLinks.has(v + "|" + u)) ? [u, v] : null; };
+  var raw = src === fxRouter ? [link(src, dst)] : [link(src, fxRouter), link(fxRouter, dst)];
+  var segments = raw.filter(Boolean);
   if (!segments.length) return;
-  const bytes = Math.max(0, +s.bytes || 0);
-  const radius = 2.2 + Math.min(1.5, Math.log10(1 + bytes / 600));
-  ambientDots.push({ born: now, until: now + 900 + Math.random() * 1100, segments, kind: "ambient", radius });
+  var bytes = Math.max(0, +s.bytes || 0);
+  var radius = 2.2 + Math.min(1.5, Math.log10(1 + bytes / 600));
+  ambientDots.push({ born: now, until: now + 900 + Math.random() * 1100, segments: segments, kind: "ambient", radius: radius });
 }
 
-function nodeDOMPos(ip) {
-  const p = network.getPositions([ip])[ip];
-  return p ? network.canvasToDOM(p) : null;
-}
+function nodeDOMPos(ip) { var p = network.getPositions([ip])[ip]; return p ? network.canvasToDOM(p) : null; }
 
-function drawGlowDot(x, y, r, col, a, glow) {
-  if (r <= 0 || a <= 0) return;
-  fctx.globalAlpha = a;
-  fctx.beginPath();
-  fctx.arc(x, y, r, 0, Math.PI * 2);
-  fctx.fillStyle = col;
-  if (glow > 0) { fctx.shadowColor = col; fctx.shadowBlur = glow; }
-  fctx.fill();
-  fctx.shadowBlur = 0;
-  fctx.globalAlpha = 1;
-}
+function drawGlowDot(x, y, r, col, a, glow) { if (r <= 0 || a <= 0) return; fctx.globalAlpha = a; fctx.beginPath(); fctx.arc(x, y, r, 0, Math.PI * 2); fctx.fillStyle = col; if (glow > 0) { fctx.shadowColor = col; fctx.shadowBlur = glow; } fctx.fill(); fctx.shadowBlur = 0; fctx.globalAlpha = 1; }
 
 function drawRider(p, now) {
-  const idx = p.segments.map(seg => nodeDOMPos(seg[0]));
+  var idx = p.segments.map(function(seg) { return nodeDOMPos(seg[0]); });
   idx.push(nodeDOMPos(p.segments[p.segments.length - 1][1]));
-  if (idx.some(q => !q)) return;
-  const legs = [];
-  let total = 0;
-  for (let i = 0; i < idx.length - 1; i++) {
-    const L = Math.hypot(idx[i + 1].x - idx[i].x, idx[i + 1].y - idx[i].y);
-    legs.push(L); total += L;
-  }
+  if (idx.some(function(q) { return !q; })) return;
+  var legs = []; var total = 0;
+  for (var i = 0; i < idx.length - 1; i++) { var L = Math.hypot(idx[i+1].x - idx[i].x, idx[i+1].y - idx[i].y); legs.push(L); total += L; }
   if (total <= 0) return;
-  const xyAt = d => {
-    let rest = Math.max(0, Math.min(d, total));
-    for (let k = 0; k < legs.length; k++) {
-      if (rest <= legs[k]) {
-        const t = legs[k] > 0 ? rest / legs[k] : 0;
-        return [idx[k].x + (idx[k + 1].x - idx[k].x) * t, idx[k].y + (idx[k + 1].y - idx[k].y) * t];
-      }
-      rest -= legs[k];
-    }
-    const last = idx[idx.length - 1];
-    return [last.x, last.y];
-  };
-
-  const fade = Math.min(1, (now - p.born) / 300, Math.max(0, (p.until - now) / 600));
-
-  if (p.kind === "ambient") {
-    const col = FLOW_COLORS[fxRoles.get(p.segments[0][0])] || "#8b949e";
-    const R = p.radius || 2.6;
-    const ph = Math.min(1, (now - p.born) / (p.until - p.born));
-    for (let g = 2; g >= 0; g--) {
-      const [x, y] = xyAt(Math.max(0, ph - g * 0.08) * total);
-      drawGlowDot(x, y, Math.max(0.6, g === 0 ? R : R * (0.55 - g * 0.1)),
-                  col, fade * (g === 0 ? 0.9 : 0.25 / g), g === 0 ? 8 : 0);
-    }
-    return;
-  }
-
-  const d0 = (now / 1000) * SPEED;
-  for (let i = 0; i < BALLS; i++) {
-    const d = (d0 + (i * total) / BALLS) % total;
-    for (let g = 3; g >= 0; g--) {
-      const dd = ((d - g * 14) % total + total) % total;
-      const [x, y] = xyAt(dd);
-      drawGlowDot(x, y, g === 0 ? BALL_R : Math.max(0.8, BALL_R * (0.55 - g * 0.07)),
-                  RED, fade * (g === 0 ? 1 : 0.22 / g), g === 0 ? 16 : 0);
-    }
-  }
+  var xyAt = function(d) { var rest = Math.max(0, Math.min(d, total)); for (var k = 0; k < legs.length; k++) { if (rest <= legs[k]) { var t = legs[k] > 0 ? rest / legs[k] : 0; return [idx[k].x + (idx[k+1].x - idx[k].x) * t, idx[k].y + (idx[k+1].y - idx[k].y) * t]; } rest -= legs[k]; } var last = idx[idx.length - 1]; return [last.x, last.y]; };
+  var fade = Math.min(1, (now - p.born) / 300, Math.max(0, (p.until - now) / 600));
+  if (p.kind === "ambient") { var col = FLOW_COLORS[fxRoles.get(p.segments[0][0])] || "#8b949e"; var R = p.radius || 2.6; var ph = Math.min(1, (now - p.born) / (p.until - p.born)); for (var g = 2; g >= 0; g--) { var xy = xyAt(Math.max(0, ph - g * 0.08) * total); drawGlowDot(xy[0], xy[1], Math.max(0.6, g === 0 ? R : R * (0.55 - g * 0.1)), col, fade * (g === 0 ? 0.9 : 0.25 / g), g === 0 ? 8 : 0); } return; }
+  var severity = p.severity || "high";
+  var severityColor = severity === "critical" ? "#ff0040" : severity === "high" ? "#f85149" : "#ff8c00";
+  var d0 = (now / 1000) * SPEED;
+  for (var i = 0; i < BALLS; i++) { var d = (d0 + (i * total) / BALLS) % total; for (var g = 4; g >= 0; g--) { var dd = ((d - g * 12) % total + total) % total; var xy = xyAt(dd); drawGlowDot(xy[0], xy[1], g === 0 ? BALL_R : Math.max(1, BALL_R * (0.5 - g * 0.07)), severityColor, fade * (g === 0 ? 1 : 0.2 / g), g === 0 ? 20 : 0); } }
 }
 
-// ---- dashed type-lanes: each family of devices gets a tinted dashed fence ------
-const GROUP_ROLES = new Set(["server", "workstation", "iot", "printer", "attacker"]);
-
+var GROUP_ROLES = new Set(["server", "workstation", "iot", "printer", "attacker", "unknown", "trusted"]);
 function drawGroupBoxes() {
   if (!fxRoles.size) return;
-  const pos = network.getPositions();
-  const groups = new Map();
-  for (const [ip, role] of fxRoles) {
-    if (!GROUP_ROLES.has(role) || !pos[ip]) continue;
-    const d = network.canvasToDOM(pos[ip]);
-    if (!groups.has(role)) groups.set(role, []);
-    groups.get(role).push(d);
-  }
-  for (const [role, pts] of groups) {
-    const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
-    const x0 = Math.min(...xs) - 52, x1 = Math.max(...xs) + 52;
-    const y0 = Math.min(...ys) - 36, y1 = Math.max(...ys) + 48;
-    const col = (ROLE_STYLE[role] || ROLE_STYLE.workstation).color;
-    fctx.beginPath();
-    if (fctx.roundRect) {
-      fctx.roundRect(x0, y0, x1 - x0, y1 - y0, 16);
-    } else {
-      fctx.rect(x0, y0, x1 - x0, y1 - y0);
-    }
-    fctx.fillStyle = col + "0d";
-    fctx.fill();
-    fctx.strokeStyle = col + "35";
-    fctx.lineWidth = 1.5;
-    fctx.setLineDash([6, 6]);
-    fctx.stroke();
-    fctx.setLineDash([]);
-  }
+  var pos = network.getPositions(); var groups = new Map();
+  fxRoles.forEach(function(role, ip) { if (!GROUP_ROLES.has(role) || !pos[ip]) return; var d = network.canvasToDOM(pos[ip]); if (!groups.has(role)) groups.set(role, []); groups.get(role).push(d); });
+  groups.forEach(function(pts, role) { var xs = pts.map(function(p) { return p.x; }), ys = pts.map(function(p) { return p.y; }); var x0 = Math.min.apply(null, xs) - 60, x1 = Math.max.apply(null, xs) + 60; var y0 = Math.min.apply(null, ys) - 40, y1 = Math.max.apply(null, ys) + 55; var col = (ROLE_STYLE[role] || ROLE_STYLE.workstation).color; fctx.beginPath(); if (fctx.roundRect) fctx.roundRect(x0, y0, x1 - x0, y1 - y0, 18); else fctx.rect(x0, y0, x1 - x0, y1 - y0); fctx.fillStyle = col + "0d"; fctx.fill(); fctx.strokeStyle = col + "35"; fctx.lineWidth = 1.5; fctx.setLineDash([6, 6]); fctx.stroke(); fctx.setLineDash([]); });
 }
 
-// ---- node selection highlight (drawn on overlay) ----
-let selectedNodeIp = null;
-let selectionPulse = 0;
-
+var selectedNodeIp = null, selectionPulse = 0;
 function drawSelectionHighlight(now) {
   if (!selectedNodeIp) return;
-  const pos = network.getPositions([selectedNodeIp])[selectedNodeIp];
-  if (!pos) return;
-  const dom = network.canvasToDOM(pos);
-  if (!dom) return;
+  var pos = network.getPositions([selectedNodeIp])[selectedNodeIp]; if (!pos) return;
+  var dom = network.canvasToDOM(pos); if (!dom) return;
   selectionPulse = (selectionPulse + 0.08) % (Math.PI * 2);
-  const pulseScale = 1 + 0.15 * Math.sin(selectionPulse);
-  const baseR = 24 * pulseScale;
-  fctx.beginPath();
-  fctx.arc(dom.x, dom.y, baseR, 0, Math.PI * 2);
-  fctx.strokeStyle = "#58a6ff";
-  fctx.lineWidth = 2.5;
-  fctx.setLineDash([8, 6]);
-  fctx.stroke();
-  fctx.setLineDash([]);
-  fctx.beginPath();
-  fctx.arc(dom.x, dom.y, baseR * 0.7, 0, Math.PI * 2);
-  fctx.strokeStyle = "rgba(88,166,255,0.3)";
-  fctx.lineWidth = 1;
-  fctx.stroke();
+  var pulseScale = 1 + 0.18 * Math.sin(selectionPulse); var baseR = 28 * pulseScale;
+  fctx.beginPath(); fctx.arc(dom.x, dom.y, baseR, 0, Math.PI * 2); fctx.strokeStyle = "#58a6ff"; fctx.lineWidth = 3; fctx.setLineDash([10, 8]); fctx.stroke(); fctx.setLineDash([]);
+  fctx.beginPath(); fctx.arc(dom.x, dom.y, baseR * 0.65, 0, Math.PI * 2); fctx.strokeStyle = "rgba(88,166,255,0.25)"; fctx.lineWidth = 1.5; fctx.stroke();
 }
 
 function drawAttackFx(now) {
@@ -296,316 +227,87 @@ function drawAttackFx(now) {
   spawnAmbient(now);
   fctx.clearRect(0, 0, fx.width, fx.height);
   drawGroupBoxes();
-  for (const p of attackPaths) drawRider({ ...p, kind: "attack" }, now);
-  for (const p of ambientDots) drawRider(p, now);
+  for (var i = 0; i < attackPaths.length; i++) drawRider(Object.assign({}, attackPaths[i], { kind: "attack" }), now);
+  for (var j = 0; j < ambientDots.length; j++) drawRider(ambientDots[j], now);
   drawSelectionHighlight(now);
 }
+(function tick() { drawAttackFx(Date.now()); requestAnimationFrame(tick); })();
 
-(function tick() {
-  drawAttackFx(Date.now());
-  requestAnimationFrame(tick);
-})();
+var hint = document.createElement("div"); hint.id = "hint"; hint.textContent = "drag to pan \u00B7 wheel to zoom \u00B7 select node + B to block \u00B7 double-click to rename \u00B7 R to refit \u00B7 M to minimize \u00B7 L for legend \u00B7 right-click node for trust menu"; fxHost.appendChild(hint);
 
-// ---- interaction hint (topmost overlay, above the fx canvas) -------------------
-const hint = document.createElement("div");
-hint.id = "hint";
-hint.textContent = "drag to pan · wheel to zoom · select a node + press B to block · double-click to rename";
-fxHost.appendChild(hint);
+network.on("selectNode", function(p) { selectedNodeIp = p.nodes[0] || null; });
+network.on("deselectNode", function() { selectedNodeIp = null; });
+network.on("oncontext", function(params) { params.event.preventDefault(); var ip = params.nodes[0]; if (!ip) return; showTrustMenu(params.event, ip); });
 
-// ---- network event handlers for selection tracking ----
-network.on("selectNode", p => { selectedNodeIp = p.nodes[0] || null; });
-network.on("deselectNode", () => { selectedNodeIp = null; });
+function showTrustMenu(event, ip) {
+  var existing = document.getElementById("trust-menu"); if (existing) existing.remove();
+  var node = nodes.get(ip); if (!node) return;
+  var menu = document.createElement("div"); menu.id = "trust-menu"; menu.className = "trust-menu"; menu.style.left = event.clientX + "px"; menu.style.top = event.clientY + "px";
+  var isTrusted = trustedDevices.has(ip), isSuspicious = suspiciousDevices.has(ip), isAttacker = confirmedAttackers.has(ip), currentRole = node.role || "unknown";
+  menu.innerHTML = '<div class="trust-menu-header">' + node.hostname + ' (' + ip + ')</div><div class="trust-menu-role">Rol actual: <strong>' + (ROLE_STYLE[currentRole] ? ROLE_STYLE[currentRole].label : currentRole) + '</strong></div><hr style="border-color: var(--border); margin: 8px 0;"><button class="trust-btn ' + (isTrusted ? 'active' : '') + '" data-action="trust" ' + (isAttacker ? 'disabled' : '') + '>' + (isTrusted ? '\u2713' : '\u2610') + ' Marcar como conocido/confiable</button><button class="trust-btn ' + (isSuspicious ? 'active' : '') + '" data-action="suspicious" ' + (isAttacker ? 'disabled' : '') + '>' + (isSuspicious ? '\u2713' : '\u2610') + ' Marcar como sospechoso</button><button class="trust-btn" data-action="clear" ' + (!isTrusted && !isSuspicious ? 'disabled' : '') + '>Limpiar marca</button><hr style="border-color: var(--border); margin: 8px 0;"><button class="trust-btn danger" data-action="block">\u{1F6AB} Bloquear en firewall</button>';
+  document.body.appendChild(menu);
+  requestAnimationFrame(function() { var rect = menu.getBoundingClientRect(); if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 10) + "px"; if (rect.bottom > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 10) + "px"; });
+  menu.querySelectorAll(".trust-btn").forEach(function(btn) { btn.onclick = function() { handleTrustAction(ip, btn.dataset.action, menu); }; });
+  setTimeout(function() { document.addEventListener("click", function closeMenu(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("click", closeMenu); } }); }, 0);
+}
 
-// ---- double-click to rename ----
-network.on("doubleClick", async p => {
-  const ip = p.nodes[0];
-  if (!ip) return;
-  const label = nodes.get(ip)?.label || "";
-  const current = label.split("\n")[0];
-  const name = window.prompt(`Name this device (${ip})`, current);
-  if (name && name.trim()) await post("/api/devices/rename", { ip, name: name.trim() });
-});
+function handleTrustAction(ip, action, menu) {
+  var node = nodes.get(ip); if (!node) return;
+  switch (action) {
+    case "trust": if (trustedDevices.has(ip)) { trustedDevices.delete(ip); revertToOriginalRole(ip); } else { trustedDevices.add(ip); suspiciousDevices.delete(ip); markAsTrusted(ip); } break;
+    case "suspicious": if (suspiciousDevices.has(ip)) { suspiciousDevices.delete(ip); revertToOriginalRole(ip); } else { suspiciousDevices.add(ip); trustedDevices.delete(ip); markAsSuspicious(ip); } break;
+    case "clear": trustedDevices.delete(ip); suspiciousDevices.delete(ip); revertToOriginalRole(ip); break;
+    case "block": post("/api/firewall/block", { ip: ip, reason: "operator blocked from trust menu" }); break;
+  } menu.remove();
+}
 
-// ---- keyboard shortcuts ----
-window.addEventListener("keydown", ev => {
-  if (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA") return;
-  if (ev.key.toLowerCase() === "b" && selectedNodeIp) {
-    post("/api/firewall/block", { ip: selectedNodeIp, reason: "operator blocked selected node" });
-  }
-  if (ev.key === "Escape") {
-    network.unselectAll();
-  }
-  if (ev.key === "r" || ev.key === "R") {
-    network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } });
-  }
-});
+function markAsTrusted(ip) { var style = ROLE_STYLE.trusted; nodes.update({ id: ip, role: "trusted", shape: style.shape, image: iconURI(style.icon), color: { background: style.color, border: style.color, highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } }, borderWidth: 2, shadow: { enabled: true, color: "#3fb95066", size: 12, x: 0, y: 3 }, title: "CONFIABLE (marcado por usuario)\nMAC: " + (nodes.get(ip)?.mac || "n/a") + "\nright-click to change" }); }
+function markAsSuspicious(ip) { var style = ROLE_STYLE.unknown; nodes.update({ id: ip, role: "unknown", shape: style.shape, image: iconURI(style.icon), color: { background: style.color, border: "#d29922", highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } }, borderWidth: 3, shadow: { enabled: true, color: "#d2992288", size: 14, x: 0, y: 3 }, title: "SOSPECHOSO (marcado por usuario)\nMAC: " + (nodes.get(ip)?.mac || "n/a") + "\nright-click to change" }); }
+function revertToOriginalRole(ip) { var node = nodes.get(ip); if (!node) return; if (confirmedAttackers.has(ip)) { upgradeToAttacker(ip); return; } var style = ROLE_STYLE.workstation; nodes.update({ id: ip, role: "workstation", shape: style.shape, image: iconURI(style.icon), color: { background: style.color, border: style.color, highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } }, borderWidth: 2, shadow: { enabled: true, color: "#00000066", size: 10, x: 0, y: 3 }, title: style.label + "\nMAC: " + (node.mac || "n/a") + "\nports: " + (node.open_ports && node.open_ports.length ? node.open_ports.join(", ") : "\u2014") + "\nright-click to mark trusted/suspicious" }); }
+
+network.on("doubleClick", function(p) { var ip = p.nodes[0]; if (!ip) return; var label = nodes.get(ip)?.label || ""; var current = label.split("\n")[0]; var name = window.prompt("Name this device (" + ip + ")", current); if (name && name.trim()) post("/api/devices/rename", { ip: ip, name: name.trim() }); });
+
+window.addEventListener("keydown", function(ev) { if (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA") return; if (ev.key.toLowerCase() === "b" && selectedNodeIp) post("/api/firewall/block", { ip: selectedNodeIp, reason: "operator blocked selected node" }); if (ev.key === "Escape") { network.unselectAll(); var menu = document.getElementById("trust-menu"); if (menu) menu.remove(); } if (ev.key === "r" || ev.key === "R") network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); if (ev.key === "m" || ev.key === "M") toggleMapMinimize(); if (ev.key === "l" || ev.key === "L") toggleLegend(); });
 
 function renderTopology(data) {
-  const now = Date.now();
-  updateFlashes(data, now);
-  fxSync(data);
-  const pos = computeTreeLayout(data);
-  const key = Object.keys(pos).sort().join(",");
-  const layoutChanged = key !== layoutKey;
-
-  const seen = new Set();
-  for (const h of data.nodes) {
-    const style = ROLE_STYLE[h.role] || ROLE_STYLE.workstation;
-    const isBlocked = h.blocked;
-    const flashing = !isBlocked && (flashUntil[h.ip] || 0) > now;
-    const nodeColor = {
-      background: style.color,
-      border: isBlocked || flashing ? "#f85149" : style.color,
-      highlight: { background: style.color, border: "#ffffff" },
-      hover: { background: style.color, border: "#ffffff" },
-    };
-    const base = {
-      color: nodeColor,
-      opacity: isBlocked ? 0.5 : 1,
-      borderWidth: isBlocked ? 3 : flashing ? 4 : 2,
-      font: { color: isBlocked ? "#8b949e" : "#c9d1d9", size: 12, face: "Segoe UI" },
-      shadow: {
-        enabled: true,
-        color: isBlocked ? "#f8514966" : flashing ? "#f8514988" : "#00000066",
-        size: isBlocked ? 18 : flashing ? 14 : 10, x: 0, y: 3,
-      },
-      shapeProperties: {
-        useBorderWithImage: true,
-        borderDashes: h.role === "external" ? [4, 4] : false,
-      },
-    };
-    if (!nodes.get(h.ip)) {
-      const nodeData = {
-        id: h.ip, label: `${h.hostname}\n${h.ip}`,
-        title: `${isBlocked ? "\u{1F6AB} BLOCKED" : style.label}\nMAC: ${h.mac || "n/a"}\nports: ${h.open_ports.length ? h.open_ports.join(", ") : "\u2014"}\ndouble-click to rename · select + press B to block`,
-        shape: style.shape,
-        size: h.role === "router" ? 22 : h.role === "external" ? 20 : 16,
-        ...(style.shape === "circularImage" ? { image: iconURI(style.icon) } : {}),
-        x: pos[h.ip].x, y: pos[h.ip].y,
-        ...base,
-      };
-      nodes.add(nodeData);
-    } else {
-      const label = `${h.hostname}\n${h.ip}`;
-      const changed = nodes.get(h.ip).label !== label;
-      nodes.update({ id: h.ip, ...(changed ? { label } : {}), ...base });
-    }
-    seen.add(h.ip);
-  }
-  for (const n of nodes.get()) if (!seen.has(n.id)) nodes.remove(n.id);
-
-  if (layoutChanged) {
-    layoutKey = key;
-    for (const [id, p] of Object.entries(pos)) {
-      if (nodes.get(id)) network.moveNode(id, p.x, p.y);
-    }
-    network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } });
-  }
-
-  // edges: solid = infrastructure link to the router; dashed w/ arrow = observed traffic flow
-  const seenEdges = new Set();
-  for (const e of data.edges) {
-    const isLink = e.kind === "link";
-    const id = (isLink ? "L|" : "T|") + e.from + "|" + e.to;
-    if (!edges.get(id)) {
-      edges.add({
-        id, from: e.from, to: e.to,
-        dashes: !isLink,
-        width: isLink ? 2.8 : 1.4,
-        arrows: isLink ? "" : { to: { enabled: true, scaleFactor: 0.5, type: "arrow" } },
-        color: { color: isLink ? "#484f58" : "#6e7681", highlight: "#58a6ff", hover: "#58a6ff" },
-        smooth: isLink ? false : { enabled: true, type: "continuous", roundness: 0.3 },
-        selectionWidth: 3,
-      });
-    }
-    seenEdges.add(id);
-  }
-  for (const e of edges.get()) if (!seenEdges.has(e.id)) edges.remove(e.id);
+  var now = Date.now(); updateFlashes(data, now); fxSync(data);
+  var pos = computeTreeLayout(data); var key = Object.keys(pos).sort().join(","); var layoutChanged = key !== layoutKey;
+  var seen = new Set();
+  for (var i = 0; i < data.nodes.length; i++) {
+    var h = data.nodes[i];
+    var displayRole = h.role;
+    if (confirmedAttackers.has(h.ip)) displayRole = "attacker";
+    else if (trustedDevices.has(h.ip)) displayRole = "trusted";
+    else if (suspiciousDevices.has(h.ip)) displayRole = "unknown";
+    else if (h.role === "attacker") displayRole = "unknown";
+    var style = ROLE_STYLE[displayRole] || ROLE_STYLE.workstation;
+    var isBlocked = h.blocked, flashing = !isBlocked && (flashUntil[h.ip] || 0) > now;
+    var isAttacker = displayRole === "attacker", isUnknown = displayRole === "unknown", isTrusted = displayRole === "trusted";
+    var nodeColor = { background: style.color, border: isBlocked || flashing ? "#f85149" : (isUnknown ? "#d29922" : (isTrusted ? style.color : style.color)), highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } };
+    var base = { color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : flashing ? 4 : (isAttacker ? 3 : (isUnknown ? 3 : 2)), font: { color: isBlocked ? "#8b949e" : "#c9d1d9", size: 12, face: "Segoe UI" }, shadow: { enabled: true, color: isBlocked ? "#f8514966" : flashing ? "#f8514988" : (isAttacker ? "#f8514944" : (isUnknown ? "#d2992244" : (isTrusted ? "#3fb95044" : "#00000066"))), size: isBlocked ? 20 : flashing ? 16 : (isAttacker ? 14 : (isUnknown ? 12 : 10)), x: 0, y: 3 }, shapeProperties: { useBorderWithImage: true, borderDashes: h.role === "external" ? [4, 4] : false } };
+    var title = ""; if (isAttacker) title = "ATTACKER CONFIRMADO"; else if (isTrusted) title = "CONFIABLE (usuario)"; else if (isUnknown) title = "DESCONOCIDO / SOSPECHOSO"; else if (isBlocked) title = "\u{1F6AB} BLOQUEADO"; else title = style.label; title += "\nMAC: " + (h.mac || "n/a") + "\nports: " + (h.open_ports && h.open_ports.length ? h.open_ports.join(", ") : "\u2014") + "\ndouble-click to rename \u00B7 select + B to block \u00B7 right-click for trust menu";
+    if (!nodes.get(h.ip)) { var nodeData = { id: h.ip, label: h.hostname + "\n" + h.ip, title: title, shape: style.shape, size: h.role === "router" ? 24 : h.role === "external" ? 22 : (isAttacker ? 20 : (isUnknown ? 18 : 18)), x: pos[h.ip].x, y: pos[h.ip].y }; if (style.shape === "circularImage") nodeData.image = iconURI(style.icon); for (var k in base) nodeData[k] = base[k]; nodes.add(nodeData); } else { var label = h.hostname + "\n" + h.ip; var changed = nodes.get(h.ip).label !== label; var existing = nodes.get(h.ip); var userOverridden = confirmedAttackers.has(h.ip) || trustedDevices.has(h.ip) || suspiciousDevices.has(h.ip); if (!userOverridden || existing.role !== displayRole) { var updateObj = { id: h.ip, role: displayRole, title: title, shape: style.shape, image: iconURI(style.icon) }; if (changed) updateObj.label = label; for (var k2 in base) updateObj[k2] = base[k2]; nodes.update(updateObj); } else if (changed) nodes.update({ id: h.ip, label: label }); } seen.add(h.ip);
+  } for (var ni = 0; ni < nodes.get().length; ni++) if (!seen.has(nodes.get()[ni].id)) nodes.remove(nodes.get()[ni].id);
+  if (layoutChanged) { layoutKey = key; for (var id in pos) if (nodes.get(id)) network.moveNode(id, pos[id].x, pos[id].y); network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); }
+  var seenEdges = new Set(); for (var ei = 0; ei < data.edges.length; ei++) { var e = data.edges[ei]; var isLink = e.kind === "link"; var id = (isLink ? "L|" : "T|") + e.from + "|" + e.to; if (!edges.get(id)) { edges.add({ id: id, from: e.from, to: e.to, dashes: !isLink, width: isLink ? 3 : 1.6, arrows: isLink ? "" : { to: { enabled: true, scaleFactor: 0.5, type: "arrow" } }, color: { color: isLink ? "#484f58" : "#6e7681", highlight: "#58a6ff", hover: "#58a6ff" }, smooth: isLink ? false : { enabled: true, type: "continuous", roundness: 0.3 }, selectionWidth: 3 }); } seenEdges.add(id); } edges.get().forEach(function(e) { if (!seenEdges.has(e.id)) edges.remove(e.id); }); }
 }
 
-// ---- side panel --------------------------------------------------------------
-function fmtAlert(a) {
-  const div = document.createElement("div");
-  const icon = SEV_ICONS[a.severity] || "\u2139\uFE0F";
-  const sev = (a.severity || "info").toLowerCase();
-  const engineTag = a.engine === "rules" ? 'rules' : 'ml';
-  div.className = "alert " + sev;
-  div.innerHTML = `
-    <div class="top">
-      <b>${icon} ${a.attack}</b>
-      <span class="sev-badge">${sev.toUpperCase()}</span>
-    </div>
-    <div class="meta">${a.time} \u00B7 ${a.src} \u2192 ${a.dst} \u00B7 engine: <span class="engine-tag ${engineTag}">${engineTag}</span> \u00B7 conf: ${a.confidence}</div>
-    ${sev !== "info" && a.src ? `<button class="act" data-ip="${a.src}">Block ${a.src}</button>` : ""}`;
-  return div;
-}
-
-function fmtRule(r) {
-  const div = document.createElement("div");
-  div.className = "rule";
-  const allow = r.action === "ALLOW";
-  div.innerHTML = `
-    <div class="top"><span class="ip">${r.ip}</span><span>${allow ? "\u2713 ALLOW" : "\u26D4 BLOCK"}</span></div>
-    <div class="meta">${r.time} \u00B7 ${r.reason}</div>
-    ${allow ? "" : `<button class="act unblock" data-unblock="${r.ip}">Remove rule</button>`}`;
-  return div;
-}
-
-// ---- system log panel: everything that happened, newest first ----------------
-function fmtLogRow(row) {
-  const div = document.createElement("div");
-  div.className = "log-line " + row.cls;
-  const t = document.createElement("span");
-  t.className = "t";
-  t.textContent = row.time;
-  div.appendChild(t);
-  div.appendChild(document.createTextNode(row.msg));
-  return div;
-}
-
-function renderLog(data) {
-  const rows = [];
-  for (const a of data.alerts) {
-    if (a.attack === "auto_block") {
-      rows.push({ time: a.time, cls: "ok", msg: `AUTO-BLOCK fired ${a.src}` });
-    } else {
-      const conf = typeof a.confidence === "number" ? a.confidence.toFixed(2) : "?";
-      const sev = a.severity || "info";
-      rows.push({
-        time: a.time,
-        cls: sev === "critical" || sev === "high" ? sev : "warn",
-        msg: `${sev.toUpperCase().padEnd(8)} ${a.attack} \u00B7 ${a.src} \u2192 ${a.dst} \u00B7 engine ${a.engine} conf ${conf}`,
-      });
-    }
-  }
-  for (const r of data.rules) {
-    rows.push({
-      time: r.time,
-      cls: r.action === "BLOCK" ? "fw" : "ok",
-      msg: `FW ${r.action.padEnd(5)} ${r.ip} \u2014 ${r.reason}`,
-    });
-  }
-  rows.sort((x, y) => y.time.localeCompare(x.time));
-  rows.length = Math.min(rows.length, 80);
-  const log = document.getElementById("log");
-  log.replaceChildren(
-    ...rows.length ? rows.map(fmtLogRow) : [emptyState("waiting for events\u2026")]
-  );
-}
-
-function emptyState(msg) {
-  const div = document.createElement("div");
-  div.className = "empty";
-  div.textContent = msg;
-  return div;
-}
-
-function renderFeeds(data) {
-  const alerts = document.getElementById("alerts");
-  alerts.replaceChildren(
-    ...data.alerts.length ? data.alerts.map(fmtAlert) : [emptyState("no threats yet \u2014 watching\u2026")]
-  );
-  const rules = document.getElementById("rules");
-  rules.replaceChildren(
-    ...data.rules.length ? data.rules.map(fmtRule) : [emptyState("no firewall rules yet")]
-  );
-}
-
-// ---- actions -------------------------------------------------------------------
-document.getElementById("alerts").addEventListener("click", onAction);
-document.getElementById("rules").addEventListener("click", onAction);
-
-function onAction(ev) {
-  const block = ev.target.closest("[data-ip]");
-  const unblock = ev.target.closest("[data-unblock]");
-  if (block) post("/api/firewall/block", { ip: block.dataset.ip, reason: "operator blocked from UI" });
-  if (unblock) post("/api/firewall/unblock", { ip: unblock.dataset.unblock });
-}
-
-async function post(url, body) {
-  try {
-    await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    refresh();
-  } catch (e) {
-    console.error("API call failed:", e);
-  }
-}
-
-// ---- stats / badges -------------------------------------------------------------
-const statPrev = {};
-
-function tweenStat(id, target, fmt = v => Math.round(v).toString()) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  const from = statPrev[id] ?? target;
-  statPrev[id] = target;
-  if (from === target) { el.textContent = fmt(target); return; }
-  el.classList.add("updating");
-  const t0 = performance.now(), dur = 400;
-  const step = now => {
-    const k = Math.min(1, (now - t0) / dur);
-    const eased = 1 - Math.pow(1 - k, 3);
-    el.textContent = fmt(from + (target - from) * eased);
-    if (k < 1) statPrev[id + ":raf"] = requestAnimationFrame(step);
-    else el.classList.remove("updating");
-  };
-  cancelAnimationFrame(statPrev[id + ":raf"]);
-  statPrev[id + ":raf"] = requestAnimationFrame(step);
-}
-
-function renderStats(data) {
-  const s = data.stats;
-  tweenStat("s-devices", data.nodes.length);
-  tweenStat("s-flows", s.flows_per_sec, v => v.toFixed(1));
-  tweenStat("s-alerts", s.attacks_total);
-  tweenStat("s-blocked", s.blocks_total);
-  document.getElementById("mode-badge").textContent = "\u25CF " + (data.mode || "demo");
-  const m = data.model_metrics;
-  document.getElementById("model-badge").textContent =
-    m ? `ML rf \u00B7 acc ${Math.round(m.accuracy * 100)}% \u00B7 ${m.dataset}` : "heuristic mode";
-}
-
-// ---- data loop: WebSocket w/ polling fallback -----------------------------------
-let pollTimer = null;
-function startPolling() {
-  if (pollTimer) return;
-  pollTimer = setInterval(refresh, 2000);
-}
-function stopPolling() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
-
-async function refresh() {
-  try {
-    const res = await fetch("/api/state");
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    apply(await res.json());
-  } catch (e) {
-    console.warn("refresh failed:", e);
-  }
-}
-
-function apply(data) {
-  renderTopology(data);
-  renderFeeds(data);
-  renderLog(data);
-  renderStats(data);
-}
-
-// Initialize on load
-(async () => {
-  await refresh().catch(() => {});
-  if (typeof WebSocket === "undefined") {
-    startPolling();
-  } else {
-    const connect = () => {
-      const proto = location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${proto}://${location.host}/ws`);
-      ws.onopen = () => { stopPolling(); console.log("[WS] connected"); };
-      ws.onmessage = ev => { try { apply(JSON.parse(ev.data)); } catch(e) { console.warn("WS parse error", e); } };
-      ws.onerror = e => console.warn("[WS] error", e);
-      ws.onclose = () => { console.log("[WS] closed, fallback to polling"); startPolling(); setTimeout(connect, 4000); };
-    };
-    connect();
-  }
-})();
+function fmtAlert(a) { var div = document.createElement("div"); var icon = SEV_ICONS[a.severity] || "\u2139\uFE0F"; var sev = (a.severity || "info").toLowerCase(); var engineTag = a.engine === "rules" ? 'rules' : 'ml'; div.className = "alert " + sev; div.innerHTML = '<div class="top"><b>' + icon + ' ' + a.attack + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span></div><div class="meta">' + a.time + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine: <span class="engine-tag ' + engineTag + '">' + engineTag + '</span> \u00B7 conf: ' + a.confidence + '</div>' + (sev !== "info" && a.src ? '<button class="act" data-ip="' + a.src + '">Block ' + a.src + '</button>' : ''); return div; }
+function fmtRule(r) { var div = document.createElement("div"); div.className = "rule"; var allow = r.action === "ALLOW"; div.innerHTML = '<div class="top"><span class="ip">' + r.ip + '</span><span>' + (allow ? "\u2713 ALLOW" : "\u26D4 BLOCK") + '</span></div><div class="meta">' + r.time + ' \u00B7 ' + r.reason + '</div>' + (allow ? '' : '<button class="act unblock" data-unblock="' + r.ip + '">Remove rule</button>'); return div; }
+function fmtLogRow(row) { var div = document.createElement("div"); div.className = "log-line " + row.cls; var t = document.createElement("span"); t.className = "t"; t.textContent = row.time; div.appendChild(t); div.appendChild(document.createTextNode(row.msg)); return div; }
+function renderLog(data) { var rows = []; for (var i = 0; i < data.alerts.length; i++) { var a = data.alerts[i]; if (a.attack === "auto_block") rows.push({ time: a.time, cls: "ok", msg: "AUTO-BLOCK fired " + a.src }); else { var conf = typeof a.confidence === "number" ? a.confidence.toFixed(2) : "?"; var sev = a.severity || "info"; rows.push({ time: a.time, cls: sev === "critical" || sev === "high" ? sev : "warn", msg: sev.toUpperCase().padEnd(8) + ' ' + a.attack + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine ' + a.engine + ' conf ' + conf }); } } for (var j = 0; j < data.rules.length; j++) { var r = data.rules[j]; rows.push({ time: r.time, cls: r.action === "BLOCK" ? "fw" : "ok", msg: 'FW ' + r.action.padEnd(5) + ' ' + r.ip + ' \u2014 ' + r.reason }); } rows.sort(function(x, y) { return y.time.localeCompare(x.time); }); rows.length = Math.min(rows.length, 80); var log = document.getElementById("log"); log.replaceChildren.apply(log, rows.length ? rows.map(fmtLogRow) : [emptyState("waiting for events\u2026")]); }
+function emptyState(msg) { var div = document.createElement("div"); div.className = "empty"; div.textContent = msg; return div; }
+function renderFeeds(data) { document.getElementById("alerts").replaceChildren.apply(document.getElementById("alerts"), data.alerts.length ? data.alerts.map(fmtAlert) : [emptyState("no threats yet \u2014 watching\u2026")]); document.getElementById("rules").replaceChildren.apply(document.getElementById("rules"), data.rules.length ? data.rules.map(fmtRule) : [emptyState("no firewall rules yet")]); }
+document.getElementById("alerts").addEventListener("click", onAction); document.getElementById("rules").addEventListener("click", onAction);
+function onAction(ev) { var block = ev.target.closest("[data-ip]"); var unblock = ev.target.closest("[data-unblock]"); if (block) post("/api/firewall/block", { ip: block.dataset.ip, reason: "operator blocked from UI" }); if (unblock) post("/api/firewall/unblock", { ip: unblock.dataset.unblock }); }
+async function post(url, body) { try { await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); refresh(); } catch (e) { console.error("API call failed:", e); } }
+var statPrev = {};
+function tweenStat(id, target, fmt) { fmt = fmt || function(v) { return Math.round(v).toString(); }; var el = document.getElementById(id); if (!el) return; var from = statPrev[id] !== undefined ? statPrev[id] : target; statPrev[id] = target; if (from === target) { el.textContent = fmt(target); return; } el.classList.add("updating"); var t0 = performance.now(), dur = 400; var step = function(now) { var k = Math.min(1, (now - t0) / dur); var eased = 1 - Math.pow(1 - k, 3); el.textContent = fmt(from + (target - from) * eased); if (k < 1) statPrev[id + ":raf"] = requestAnimationFrame(step); else el.classList.remove("updating"); }; cancelAnimationFrame(statPrev[id + ":raf"]); statPrev[id + ":raf"] = requestAnimationFrame(step); }
+function renderStats(data) { var s = data.stats; tweenStat("s-devices", data.nodes.length); tweenStat("s-flows", s.flows_per_sec, function(v) { return v.toFixed(1); }); tweenStat("s-alerts", s.attacks_total); tweenStat("s-blocked", s.blocks_total); document.getElementById("mode-badge").textContent = "\u25CF " + (data.mode || "demo"); document.getElementById("map-status").textContent = data.mode || "demo"; var m = data.model_metrics; document.getElementById("model-badge").textContent = m ? 'ML rf \u00B7 acc ' + Math.round(m.accuracy * 100) + '% \u00B7 ' + m.dataset : "heuristic mode"; }
+function toggleMapMinimize() { var container = document.getElementById("map-container"); var map = document.getElementById("map"); var btn = document.getElementById("btn-toggle-map"); var minimized = container.classList.toggle("minimized"); map.classList.toggle("minimized"); btn.innerHTML = minimized ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>' : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>'; btn.title = minimized ? "Expandir mapa (M)" : "Minimizar mapa (M)"; btn.setAttribute("aria-label", minimized ? "Expandir mapa" : "Minimizar mapa"); setTimeout(function() { network.redraw(); }, 300); }
+function toggleLegend() { var legend = document.getElementById("legend"); var btn = document.getElementById("btn-toggle-legend"); var collapsed = legend.classList.toggle("collapsed"); btn.innerHTML = collapsed ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 9h6v6H9z"/></svg>' : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>'; btn.title = collapsed ? "Mostrar leyenda (L)" : "Ocultar leyenda (L)"; }
+function fitMap() { network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); }
+var pollTimer = null; function startPolling() { if (pollTimer) return; pollTimer = setInterval(refresh, 2000); } function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+async function refresh() { try { var res = await fetch("/api/state"); if (!res.ok) throw new Error("HTTP " + res.status); apply(await res.json()); } catch (e) { console.warn("refresh failed:", e); } }
+function apply(data) { renderTopology(data); renderFeeds(data); renderLog(data); renderStats(data); }
+(function() { refresh().catch(function() {}); document.getElementById("btn-toggle-map").onclick = toggleMapMinimize; document.getElementById("btn-toggle-legend").onclick = toggleLegend; document.getElementById("btn-fit-map").onclick = fitMap; document.getElementById("btn-legend-close").onclick = function() { document.getElementById("legend").classList.add("collapsed"); document.getElementById("btn-toggle-legend").click(); }; if (typeof WebSocket === "undefined") startPolling(); else { var connect = function() { var proto = location.protocol === "https:" ? "wss" : "ws"; var ws = new WebSocket(proto + "://" + location.host + "/ws"); ws.onopen = function() { stopPolling(); console.log("[WS] connected"); }; ws.onmessage = function(ev) { try { apply(JSON.parse(ev.data)); } catch(e) { console.warn("WS parse error", e); } }; ws.onerror = function(e) { console.warn("[WS] error", e); }; ws.onclose = function() { console.log("[WS] closed, fallback to polling"); startPolling(); setTimeout(connect, 4000); }; }; connect(); } })();
