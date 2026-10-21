@@ -2,6 +2,46 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.5] — 2026-10-21 · "polished UX, network-adaptive, production-ready"
+
+### Added
+- **Dynamic node spacing** on the topology map: leaf spacing now adapts to container width and node count, preventing overlap on small screens or crowding on large ones.
+- **Keyboard shortcuts**: `B` blocks selected node, `R` refits map view, `Esc` deselects. Works without leaving the keyboard.
+- **Pulsing selection ring** on the overlay canvas — clear visual feedback for the currently selected node (drawn without touching vis DataSet).
+- **Engine tag badges** in threat feed (`ML` / `RULES`) with color coding, so you instantly know which detector fired.
+- **Severity badges** on alert cards (critical/high/medium/info) — no more guessing from border color alone.
+- **`LASSI_HOST` env var** to bind to `0.0.0.0` for container/VM exposure.
+- **Clickable stat cards** with subtle pulse animation on value change.
+- **Reduced-motion support** (`prefers-reduced-motion`) — all animations/transitions disabled for accessibility.
+- **Focus-visible outlines** for keyboard navigation (buttons, badges, nodes).
+- **Print stylesheet** — hides UI chrome, prints clean topology map.
+- **Responsive legend** with semantic HTML structure (`.li.router`, `.li.server`, etc.) and animated entrance.
+- **NaN/Inf sanitization** in ML feature extraction — prevents model crashes on malformed live flows.
+
+### Changed
+- **Legend rewritten as semantic HTML** (was inline `<span style="...">` soup) — cleaner CSS, easier to maintain, matches new color tokens.
+- **Stat cards** now use monospace tabular numerals, hover lift, top accent bar, and pulse ring on update.
+- **Map grid pattern** refined (40px, lower opacity) + dual radial glows for depth.
+- **Attack packets** faster (160 px/s), more balls (5), longer trails (4 echoes) — more dramatic, easier to follow.
+- **Ambient traffic** spawns more often (100ms), up to 16 concurrent dots, larger radius scaling — map feels alive even without attacks.
+- **Group lanes** (dashed role fences) wider padding, rounder corners, slightly stronger stroke — better visual grouping.
+- **Node tooltips** dark-themed with top accent bar, max-width 280px, better formatting.
+- **Alert/rule cards** use `translateX` hover animation (was `translateY`), smoother feel.
+- **Log lines** hover `translateX(2px)` with color brightening — clearer interactivity cue.
+- **Empty states** softer dashed border, hover highlight.
+- **WebSocket reconnection** logs to console for debugging.
+- **Model inference** hardened: `np.nan_to_num` guards against bad live-capture features.
+- **README** overhauled: feature table expanded, shortcuts documented, env var table complete, roadmap updated to 27 tests.
+- **CI-ready**: all 27 tests pass, auto-train on first run, zero external deps in demo mode.
+
+### Fixed
+- **Map container height** edge case: `min-height: 0` on grid child ensures flex scrolling works in all browsers.
+- **Canvas sizing** uses `getBoundingClientRect()` + `Math.floor` — no fractional pixel blur.
+- **Double-click rename** now reads current label from vis DataSet (not stale closure).
+- **Selection tracking** uses `selectNode` / `deselectNode` events (was `on("select", ...)` which fired differently).
+- **Hover tooltips** no longer flicker on node update (stable `title` prop).
+- **Edge cleanup** on node removal prevents orphaned traffic edges.
+
 ## [0.4.4] — 2026-10-20 · "call your devices by their name"
 
 ### Added

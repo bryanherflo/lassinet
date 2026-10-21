@@ -31,7 +31,7 @@ OFF = {
 }
 
 # public egress destinations — valid from *any* private LAN
-EXTERNAL_TARGETS = ["8.8.8.8", "1.1.1.1"]
+EXTERNAL_TARGETS = ["8.8.8.8", "1.1.1.1", "9.9.9.9", "185.199.108.153"]
 
 ATTACKS = ["port_scan", "brute_force", "ddos", "data_exfiltration"]
 
@@ -75,16 +75,19 @@ class Simulator:
         attack = random.random() < 0.35
         flows: list[dict[str, Any]] = []
 
+        # Normal traffic: internal hosts talking to server/router/external
+        internal_hosts = [self.ip["router"], self.ip["finance"], self.ip["hr"], self.ip["camera"]]
         for _ in range(25):
-            src = random.choice([self.ip["router"], self.ip["finance"], self.ip["hr"], self.ip["camera"]])
+            src = random.choice(internal_hosts)
             dst = random.choice([self.ip["web"], self.ip["router"], *EXTERNAL_TARGETS])
             if src == dst:   # a host talking to itself is not a flow
                 continue
+            pkts = random.randint(4, 40)
             flows.append({
-                "src": src, "dst": dst, "pkts": random.randint(4, 40),
+                "src": src, "dst": dst, "pkts": pkts,
                 "bytes": random.randint(400, 30_000), "duration": round(random.uniform(0.5, 30), 2),
                 "syn_ratio": round(random.uniform(0.02, 0.2), 2), "dst_port_count": random.randint(1, 2),
-                "mean_pkt_size": random.randint(500, 1400), "pkt_rate": 0.0,
+                "mean_pkt_size": random.randint(500, 1400), "pkt_rate": round(pkts / random.uniform(0.5, 30), 2),
                 "label": 0,
             })
 
@@ -96,30 +99,39 @@ class Simulator:
         ip, web, hr = self.ip["attacker"], self.ip["web"], self.ip["hr"]
         label = LABELS[kind]
         if kind == "port_scan":
+            pkts = random.randint(60, 160)
             return [{
-                "src": ip, "dst": web, "pkts": random.randint(60, 160), "bytes": 70 * 100,
+                "src": ip, "dst": web, "pkts": pkts, "bytes": 70 * pkts,
                 "duration": round(random.uniform(3, 12), 2), "syn_ratio": 0.98,
                 "dst_port_count": random.randint(15, 90), "mean_pkt_size": 68,
-                "pkt_rate": 18.0, "label": label,
+                "pkt_rate": round(pkts / random.uniform(3, 12), 2), "label": label,
             }]
         if kind == "brute_force":
+            pkts = random.randint(250, 500)
+            dur = round(random.uniform(20, 90), 2)
             return [{
-                "src": ip, "dst": web, "pkts": random.randint(250, 500), "bytes": 300 * 200,
-                "duration": round(random.uniform(20, 90), 2), "syn_ratio": 0.9,
-                "dst_port_count": 1, "mean_pkt_size": 220, "pkt_rate": 12.0, "label": label,
+                "src": ip, "dst": web, "pkts": pkts, "bytes": 300 * pkts,
+                "duration": dur, "syn_ratio": 0.9,
+                "dst_port_count": 1, "mean_pkt_size": 220,
+                "pkt_rate": round(pkts / dur, 2), "label": label,
             }]
         if kind == "ddos":
+            pkts = random.randint(2000, 6000)
+            dur = round(random.uniform(5, 15), 2)
             return [{
-                "src": ip, "dst": web, "pkts": random.randint(2000, 6000),
-                "bytes": 60 * 3000, "duration": round(random.uniform(5, 15), 2),
+                "src": ip, "dst": web, "pkts": pkts,
+                "bytes": 60 * pkts, "duration": dur,
                 "syn_ratio": 0.95, "dst_port_count": 1, "mean_pkt_size": 58,
-                "pkt_rate": 400.0, "label": label,
+                "pkt_rate": round(pkts / dur, 2), "label": label,
             }]
         # exfiltration: big uploads from an internal host to an external server
+        pkts = random.randint(1500, 4000)
+        dur = round(random.uniform(120, 600), 2)
         return [{
             "src": hr,
             "dst": f"185.{random.randint(1, 254)}.{random.randint(1, 254)}.{random.randint(1, 254)}",
-            "pkts": random.randint(1500, 4000), "bytes": random.randint(8_000_000, 40_000_000),
-            "duration": round(random.uniform(120, 600), 2), "syn_ratio": 0.05,
-            "dst_port_count": 1, "mean_pkt_size": 1300, "pkt_rate": 9.0, "label": label,
+            "pkts": pkts, "bytes": random.randint(8_000_000, 40_000_000),
+            "duration": dur, "syn_ratio": 0.05,
+            "dst_port_count": 1, "mean_pkt_size": 1300,
+            "pkt_rate": round(pkts / dur, 2), "label": label,
         }]
