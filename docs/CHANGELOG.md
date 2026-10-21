@@ -2,6 +2,17 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.11] — 2026-10-21 · "a gateway that looks like one"
+
+### Changed
+- **The router is no longer a flat purple hexagon.** It is now a purpose-drawn circular gateway icon: dark violet core, gradient rim, router glyph with signal arcs and status LEDs, a stronger glow, and a slightly larger node so it clearly anchors the map. The icon is an inline SVG, so the zero-build/no-external-assets rule still holds.
+- The gateway label (`edge-gw` / IP) now clears the node instead of crowding the shape. Device labels use slightly larger type with a dark outline, which keeps them readable over the grid and links.
+- Dashboard assets are cache-busted to `?v=3.16`; hard-refresh once with **Ctrl+F5**.
+
+### Tests
+- 39/39 passing. Headless interaction audit at 1600 px and 760 px (toolbar, help, selection, block/unblock, trust menu, feed, rules, banner, rename, keyboard, unknown IP, protected router/Internet) plus a dedicated 390 px pass: zero console errors and no horizontal overflow.
+- Router-specific check: circular shape, custom SVG image, protected action bar, `B` rejection, and no Block/Unblock entry in its trust menu.
+
 ## [0.4.10] — 2026-10-21 · "stop the two-second flicker"
 
 ### Fixed

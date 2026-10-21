@@ -2,7 +2,7 @@
 "use strict";
 
 const ROLE_STYLE = {
-  router:      { color: "#a371f7", label: "Router",        shape: "hexagon" },
+  router:      { color: "#b18cff", label: "Router",        shape: "circularImage", icon: "__router__" },
   server:      { color: "#58a6ff", label: "Server",        shape: "circularImage", icon: "\u{1F5A5}\uFE0F" },
   workstation: { color: "#3fb950", label: "Workstation",   shape: "circularImage", icon: "\u{1F4BB}" },
   iot:         { color: "#d29922", label: "IoT",           shape: "circularImage", icon: "\u{1F4E1}" },
@@ -13,12 +13,46 @@ const ROLE_STYLE = {
   trusted:     { color: "#3fb950", label: "Trusted",       shape: "circularImage", icon: "\u{1F4BB}" },
 };
 
+// A purpose-drawn gateway glyph reads better than a flat hexagon and keeps the
+// same circular language as every other device. Rendered as an inline SVG so
+// the dashboard still ships with no build step and no external assets.
+var ROUTER_ICON = null;
+function routerIconURI() {
+  if (ROUTER_ICON) return ROUTER_ICON;
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+    '<defs>' +
+      '<radialGradient id="bg" cx="34%" cy="24%" r="88%">' +
+        '<stop offset="0" stop-color="#44306f"/><stop offset=".55" stop-color="#21183a"/><stop offset="1" stop-color="#0e0c18"/>' +
+      '</radialGradient>' +
+      '<linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">' +
+        '<stop stop-color="#d7c7ff"/><stop offset=".5" stop-color="#9b6dff"/><stop offset="1" stop-color="#58a6ff"/>' +
+      '</linearGradient>' +
+    '</defs>' +
+    '<circle cx="32" cy="32" r="30" fill="url(#bg)"/>' +
+    '<circle cx="32" cy="32" r="29" fill="none" stroke="url(#rim)" stroke-width="1.6" opacity=".95"/>' +
+    '<g fill="none" stroke="#eee8ff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<rect x="19" y="38" width="26" height="10.5" rx="3.2"/>' +
+      '<path d="M24.5 38v-4.2M39.5 38v-4.2"/>' +
+      '<path d="M22.5 28.2c5.2-4.4 13.8-4.4 19 0"/>' +
+      '<path d="M26.6 32.5c3.1-2.6 7.7-2.6 10.8 0" opacity=".82"/>' +
+    '</g>' +
+    '<circle cx="32" cy="34" r="1.7" fill="#d7c7ff"/>' +
+    '<circle cx="24" cy="43.6" r="1.15" fill="#58a6ff"/>' +
+    '<circle cx="27.5" cy="43.6" r="1.15" fill="#b18cff"/>' +
+    '</svg>';
+  return (ROUTER_ICON = "data:image/svg+xml," + encodeURIComponent(svg));
+}
+
+var ICON_CACHE = {};
 function iconURI(ch, fill) {
   fill = fill || "#161b22";
+  if (ch === "__router__") return routerIconURI();
+  var key = ch + "|" + fill;
+  if (ICON_CACHE[key]) return ICON_CACHE[key];
   var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">' +
     '<circle cx="24" cy="24" r="23" fill="' + fill + '"/>' +
     '<text x="24" y="31" font-size="23" text-anchor="middle" font-family="\'Segoe UI Emoji\',\'Apple Color Emoji\',sans-serif">' + ch + '</text></svg>';
-  return "data:image/svg+xml," + encodeURIComponent(svg);
+  return (ICON_CACHE[key] = "data:image/svg+xml," + encodeURIComponent(svg));
 }
 
 // Escape untrusted strings (hostnames, IPs coming from the capture) before
@@ -601,10 +635,10 @@ function renderTopology(data) {
     var isBlocked = h.blocked, flashing = !isBlocked && (flashUntil[h.ip] || 0) > now;
     var isAttacker = displayRole === "attacker", isUnknown = displayRole === "unknown", isTrusted = displayRole === "trusted";
     var nodeColor = { background: style.color, border: isBlocked || flashing ? "#f85149" : (isUnknown ? "#d29922" : (isTrusted ? style.color : style.color)), highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } };
-    var base = { color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : flashing ? 4 : (isAttacker ? 3 : (isUnknown ? 3 : 2)), font: { color: isBlocked ? "#8b949e" : "#c9d1d9", size: 12, face: "Segoe UI" }, shadow: { enabled: true, color: isBlocked ? "#f8514966" : flashing ? "#f8514988" : (isAttacker ? "#f8514944" : (isUnknown ? "#d2992244" : (isTrusted ? "#3fb95044" : "#00000066"))), size: isBlocked ? 20 : flashing ? 16 : (isAttacker ? 14 : (isUnknown ? 12 : 10)), x: 0, y: 3 }, shapeProperties: { useBorderWithImage: true, borderDashes: h.role === "external" ? [4, 4] : false } };
+    var base = { color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : flashing ? 4 : (h.role === "router" || isAttacker || isUnknown ? 3 : 2), font: { color: isBlocked ? "#8b949e" : "#d7dee8", size: 14, face: "Segoe UI", strokeWidth: 3, strokeColor: "#0b0f14", vadjust: 4 }, shadow: { enabled: true, color: isBlocked ? "#f8514966" : flashing ? "#f8514988" : (h.role === "router" ? "#8b5cf688" : (isAttacker ? "#f8514944" : (isUnknown ? "#d2992244" : (isTrusted ? "#3fb95044" : "#00000066")))), size: isBlocked ? 20 : flashing ? 16 : (h.role === "router" ? 18 : (isAttacker ? 14 : (isUnknown ? 12 : 10))), x: 0, y: 3 }, shapeProperties: { useBorderWithImage: true, borderDashes: h.role === "external" ? [4, 4] : false } };
     var headline = isBlocked ? "\u{1F6AB} BLOCKED" : (isAttacker ? "ATTACKER (confirmed)" : isTrusted ? "TRUSTED (marked by user)" : isUnknown ? "SUSPICIOUS / UNKNOWN" : style.label);
     var title = nodeInfoTitle({ mac: h.mac, openPorts: h.open_ports || [], hostRole: h.role }, headline);
-    var nodeSize = h.role === "router" ? 24 : h.role === "external" ? 22 : (isAttacker ? 20 : 18);
+    var nodeSize = h.role === "router" ? 27 : h.role === "external" ? 23 : (isAttacker ? 20 : 18);
     if (!nodes.get(h.ip)) {
       var nodeData = { id: h.ip, label: h.hostname + "\n" + h.ip, title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, openPorts: h.open_ports || [], shape: style.shape, size: nodeSize, x: pos[h.ip].x, y: pos[h.ip].y };
       if (style.shape === "circularImage") nodeData.image = iconURI(style.icon);
