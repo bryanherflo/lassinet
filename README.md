@@ -29,7 +29,7 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 | 📡 **Traffic capture** | Flow aggregation from a real sniffer (scapy) or a built-in simulator. Works on any subnet (10.x, 172.16.x, 192.168.x, custom CIDR via `LASSI_DEMO_NET` / `LASSI_SUBNET`). |
 | 🧠 **ML IDS** | RandomForest classifying flows into *benign / port_scan / brute_force / ddos / data_exfiltration*. Per-mode models (synthetic for demo, CICIDS2017 for live). Rule-based fallback when model missing. |
 | 🚨 **Threat feed** | Severity-ranked alerts with confidence, detection engine (`ml` vs `rules`), timestamps and readable attack names. Each alert has a one-click **Block source** action; high/critical hits also raise a dismissible banner. |
-| 🧱 **Firewall control** | Read + write rules: `mock` (default), `nftables` (Linux), OPNsense/pfSense API. Blocks are **source-only**, can target an unknown external IP, and are reversible with Unblock. Auto-block on critical alerts (SOAR-style); blocked sources are dropped from the flow counters and packet animation. |
+| 🧱 **Firewall control** | `mock` (default), `nftables` (Linux; real enforcement), and an OPNsense/pfSense integration point (documented placeholder). Blocks are **source-only**, can target an unknown external IP, and are reversible with Unblock. Auto-block on critical alerts (SOAR-style); blocked sources are dropped from the flow counters and packet animation. |
 | 🤖 **Auto-response** | Optional auto-block of high/critical sources. Configurable via `LASSI_AUTO_BLOCK`. |
 | 📜 **System log + audit trail** | Colour-coded event stream in UI **and** local JSONL log (`logs/events.jsonl`, tail via `GET /api/logs?limit=N`). The Firewall panel shows active blocks only; the log keeps the full BLOCK/ALLOW history. |
 | ⚡ **Zero config** | `pip install` → `python app.py` → open `http://localhost:8000`. Demo mode needs no privileges. Map library bundled locally — no CDN, no build step, works offline. |
@@ -48,7 +48,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (39 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (40 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt
@@ -59,7 +59,7 @@ Open **http://localhost:8000** — within seconds you will see devices joining t
 
 **About the packet dots on the map** (and honesty about what they show): the travelling dots are *not* decoration — they are rendered **only** from the engine's real flow stream. Every dot corresponds to an actual flow (source, destination, byte size, verdict) that passed through the detection pipeline. In **demo mode** that network is simulated (the badge says *"demo (simulated)"*: the simulator generates the flows, but they still go through the same ML detection → alert → firewall path as real packets). In **live mode** (`LASSI_MODE=live`) the same pipeline feeds the dots from **physically sniffed packets**, so the traffic you see is the traffic on your wire.
 
-**What Block does:** every block is **source-only**. `Block source <IP>` on an alert, or `Block IP` on a device, adds a firewall rule for that IP (never the victim), marks the device as blocked, and stops counting or animating traffic **from** it. In demo mode the rule is simulated (`mock` provider) — nothing on your PC changes. In live mode the configured provider (nftables or OPNsense) applies it. `Unblock` reverses it. The router and the Internet placeholder are protected and can never be blocked.
+**What Block does:** every block is **source-only**. `Block source <IP>` on an alert, or `Block IP` on a device, adds a firewall rule for that IP (never the victim), marks the device as blocked, and stops counting or animating traffic **from** it. In demo mode the rule is simulated (`mock` provider) — nothing on your PC changes. In live mode only the **nftables** provider currently enforces the rule (Linux, root, and a pre-created table/chain); `mock` only logs, and the OPNsense/pfSense integration is a documented placeholder. `Unblock` reverses it. The router and the Internet placeholder are protected and can never be blocked.
 
 **Shortcuts:**
 - Click a node → action bar (Block/Unblock, Actions…, close)
@@ -77,7 +77,7 @@ The badge at the top right of the map shows the live stream state: `live` while 
 | Env var | Values | Default | Meaning |
 |---|---|---|---|
 | `LASSI_MODE` | `demo` / `live` | `demo` | simulated network vs real ARP discovery + sniffing |
-| `LASSI_FW` | `mock` / `nftables` / `pfsense` | `mock` | firewall provider |
+| `LASSI_FW` | `mock` / `nftables` / `pfsense` | `mock` | firewall provider; only `nftables` enforces rules, `pfsense` is a placeholder |
 | `LASSI_AUTO_BLOCK` | `0` / `1` | `1` (demo), `0` (live) | auto-block high/critical sources |
 | `LASSI_HOST` | IP | `127.0.0.1` | bind address |
 | `LASSI_PORT` | int | `8000` | dashboard port |
@@ -94,7 +94,9 @@ pip install scapy
 LASSI_MODE=live python app.py
 ```
 
-Live mode performs an **auto-detected ARP sweep** — it starts on the subnet the machine itself lives in (any RFC1918/DHCP range), marks the real default gateway as the router hub, and aggregates sniffed packets into the *same* flow features the model was trained on — so detections and manual blocking behave exactly as in the demo.
+Live mode performs an **auto-detected ARP sweep** — it starts on the subnet the machine itself lives in (any RFC1918/DHCP range), marks the real default gateway as the router hub, and aggregates sniffed packets into the *same* flow features the model was trained on. Detections follow the same pipeline as the demo; manual blocks call the configured provider.
+
+**Live-mode limits:** it sees only traffic that reaches the capture interface. On a switched LAN, use a SPAN/mirror port or run it on the gateway; it is not a promiscuous whole-network sensor by default. The live model should be validated on your own traffic, and this project is a lab/demo sensor, not a production IPS. The OPNsense/pfSense provider still needs a real implementation before it can enforce blocks.
 
 ## 🔬 Training on a real dataset
 

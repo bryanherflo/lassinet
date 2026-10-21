@@ -2,6 +2,15 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.13] — 2026-10-21 · "say what live mode really does"
+
+### Docs
+- **README now matches the code.** It no longer implies that OPNsense/pfSense applies blocks: only `nftables` currently enforces rules, `mock` only logs, and the OPNsense/pfSense integration is a documented placeholder.
+- Added live-mode limitations: capture only sees traffic that reaches the interface; a switched LAN needs SPAN/mirror or gateway deployment; the model needs validation on real traffic; the project is a lab/demo sensor, not a production IPS.
+
+### Tests
+- 40/40 passing (docs-only change).
+
 ## [0.4.12] — 2026-10-21 · "live timing that tells the truth"
 
 ### Fixed
