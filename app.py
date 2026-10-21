@@ -213,7 +213,8 @@ async def lifespan(app: FastAPI):
                       "falling back to demo mode")
             source = demo_loop
     start_engine(source)
-    log.info("LassiNet running in %s mode on %s:%d", MODE, HOST, PORT)
+    log.info("LassiNet running in %s mode on %s:%d", MODE,
+             getattr(app.state, "host", HOST), getattr(app.state, "port", PORT))
     audit({"event": "startup", "mode": MODE,
            "firewall": fw.__class__.__name__,
            "model": state.model_metrics is not None})
@@ -321,6 +322,7 @@ if __name__ == "__main__":
     ap.add_argument("--host", default=HOST)
     ap.add_argument("--port", type=int, default=PORT)
     args = ap.parse_args()
+    app.state.host = args.host
     app.state.port = args.port
     uvicorn.run(app, host=args.host, port=args.port, log_level="info",
                 access_log=False)  # keep ops logs clean (health probes poll every ~2s)

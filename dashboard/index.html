@@ -9,7 +9,7 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.9">
+<link rel="stylesheet" href="style.css?v=3.10">
 <script src="vendor/vis-network.min.js"></script>
 <script>
   if (typeof vis === "undefined")
@@ -25,42 +25,6 @@
   </div>
 </header>
 
-<div id="map-container">
-  <div id="map-toolbar">
-    <button id="btn-toggle-map" class="toolbar-btn" title="Minimizar mapa (M)" aria-label="Minimizar mapa">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>
-    </button>
-    <button id="btn-toggle-legend" class="toolbar-btn" title="Mostrar/ocultar leyenda (L)" aria-label="Toggle legend">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>
-    </button>
-    <button id="btn-fit-map" class="toolbar-btn" title="Ajustar vista (R)" aria-label="Fit map view">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-    </button>
-    <span id="map-status" class="map-status">demo (simulated)</span>
-  </div>
-
-  <div id="map"></div>
-
-  <div id="legend">
-    <div class="legend-header">
-      <span>Leyenda</span>
-      <button id="btn-legend-close" class="legend-close" aria-label="Cerrar leyenda">×</button>
-    </div>
-    <div class="legend-content">
-      <div class="li router"><span class="dot"></span><span>Router</span></div>
-      <div class="li external"><span class="dot"></span><span>Internet</span></div>
-      <div class="li server"><span class="dot"></span><span>Server</span></div>
-      <div class="li workstation"><span class="dot"></span><span>Workstation</span></div>
-      <div class="li iot"><span class="dot"></span><span>IoT</span></div>
-      <div class="li printer"><span class="dot"></span><span>Printer</span></div>
-      <div class="li attacker"><span class="dot">★</span><span>Attacker</span></div>
-      <div class="li blocked"><span class="dot"></span><span>Blocked</span></div>
-    </div>
-  </div>
-
-  <div id="hint">drag to pan · wheel to zoom · select node + B to block · double-click to rename · R to refit · M to minimize · L for legend</div>
-</div>
-
 <section class="stats">
   <div class="stat"><div class="value" id="s-devices">0</div><div class="label">🖥️ devices</div></div>
   <div class="stat"><div class="value" id="s-flows">0</div><div class="label">⚡ flows/s</div></div>
@@ -69,7 +33,45 @@
 </section>
 
 <main>
-  <div id="map-wrapper"></div>
+  <div id="map-container">
+    <div id="map-toolbar">
+      <div class="toolbar-group">
+        <button id="btn-toggle-map" class="toolbar-btn" title="Minimize map (M)" aria-label="Minimize map" aria-expanded="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>
+        </button>
+        <button id="btn-toggle-legend" class="toolbar-btn" title="Hide legend (L)" aria-label="Hide legend" aria-expanded="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+        </button>
+        <button id="btn-fit-map" class="toolbar-btn" title="Fit map view (R)" aria-label="Fit map view">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4"/></svg>
+        </button>
+      </div>
+      <span id="map-status" class="map-status">connecting…</span>
+    </div>
+
+    <div id="map"></div>
+
+    <div id="legend">
+      <div class="legend-header">
+        <span>Legend</span>
+        <button id="btn-legend-close" class="legend-close" aria-label="Close legend">×</button>
+      </div>
+      <div class="legend-content">
+        <div class="li router"><span class="dot"></span><span>Router</span></div>
+        <div class="li external"><span class="dot"></span><span>Internet</span></div>
+        <div class="li server"><span class="dot"></span><span>Server</span></div>
+        <div class="li workstation"><span class="dot"></span><span>Workstation</span></div>
+        <div class="li iot"><span class="dot"></span><span>IoT</span></div>
+        <div class="li printer"><span class="dot"></span><span>Printer</span></div>
+        <div class="li attacker"><span class="dot">★</span><span>Attacker</span></div>
+        <div class="li trusted"><span class="dot"></span><span>Trusted</span></div>
+        <div class="li suspicious"><span class="dot">?</span><span>Suspicious</span></div>
+        <div class="li blocked"><span class="dot"></span><span>Blocked</span></div>
+      </div>
+    </div>
+
+    <div id="hint">drag to pan · wheel to zoom · select + B to block · double-click to rename · right-click for trust menu · R refit · M map · L legend</div>
+  </div>
 
   <aside>
     <h2>&#128679; Threat feed</h2>
@@ -81,6 +83,6 @@
   </aside>
 </main>
 
-<script src="app.js?v=3.9"></script>
+<script src="app.js?v=3.10"></script>
 </body>
 </html>

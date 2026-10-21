@@ -21,6 +21,14 @@ function iconURI(ch, fill) {
   return "data:image/svg+xml," + encodeURIComponent(svg);
 }
 
+// Escape untrusted strings (hostnames, IPs coming from the capture) before
+// interpolating them into innerHTML.
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function(c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+
 var SEV_ICONS = { critical: "\u{1F6A8}", high: "\u26A0\uFE0F", medium: "\u26D3\uFE0F", info: "\u2705" };
 
 var nodes = new vis.DataSet([]);
@@ -64,6 +72,29 @@ var lastAttacks = -1;
 var flashUntil = {};
 var attackPaths = [];
 var FLASH_MS = 8000;
+var lastBannerKey = null;
+
+function alertKey(a) {
+  return [a.time, a.attack, a.severity, a.src, a.dst, a.confidence].join("|");
+}
+
+// On the first snapshot, keep known attacker sources as attackers instead of
+// demoting them to "unknown" until the next alert arrives.
+function seedConfirmedAttackers(data) {
+  data.alerts.forEach(function(a) {
+    if (a.src && (a.severity === "critical" || a.severity === "high") && !trustedDevices.has(a.src)) {
+      confirmedAttackers.add(a.src);
+    }
+  });
+}
+
+function newestSevereAlert(data) {
+  for (var i = 0; i < data.alerts.length; i++) {
+    var a = data.alerts[i];
+    if (a.severity === "critical" || a.severity === "high") return a;
+  }
+  return null;
+}
 
 function markAttackPath(data, a, now) {
   var router = data.nodes.find(function(h) { return h.role === "router"; });
@@ -87,22 +118,17 @@ function markAttackPath(data, a, now) {
   }
 }
 
-function upgradeToAttacker(ip) {
-  var node = nodes.get(ip);
-  if (!node) return;
-  var style = ROLE_STYLE.attacker;
-  nodes.update({
-    id: ip, role: "attacker", shape: style.shape, image: iconURI(style.icon),
-    color: { background: style.color, border: "#f85149", highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } },
-    borderWidth: 3,
-    shadow: { enabled: true, color: "#f8514988", size: 14, x: 0, y: 3 },
-    title: "ATTACKER CONFIRMADO\nMAC: " + (node.mac || "n/a") + "\nports: " + (node.open_ports && node.open_ports.length ? node.open_ports.join(", ") : "\u2014") + "\nright-click to mark trusted/suspicious"
-  });
-}
+function upgradeToAttacker(ip) { applyNodeRole(ip, "attacker", "ATTACKER (confirmed)"); }
 
 function updateFlashes(data, now) {
   var total = data.stats.attacks_total;
-  if (lastAttacks < 0) { lastAttacks = total; return; }
+  if (lastAttacks < 0) {
+    lastAttacks = total;
+    seedConfirmedAttackers(data);
+    var initial = newestSevereAlert(data);
+    if (initial) lastBannerKey = alertKey(initial);   // never banner old history on page load
+    return;
+  }
   var fresh = Math.max(0, total - lastAttacks);
   lastAttacks = total;
   while (attackPaths.length && attackPaths[0].until < now) attackPaths.shift();
@@ -110,24 +136,47 @@ function updateFlashes(data, now) {
     var a = data.alerts[i];
     if (a.src) flashUntil[a.src] = now + FLASH_MS;
     markAttackPath(data, a, now);
-    if (a.severity === "critical" || a.severity === "high") showAttackBanner(a);
+  }
+  // Banner policy: only for a genuinely new high/critical detection - never for
+  // history replayed by the attack-animation loop, and only one at a time.
+  var severe = newestSevereAlert(data);
+  if (severe) {
+    var key = alertKey(severe);
+    if (key !== lastBannerKey) {
+      lastBannerKey = key;
+      if (!attackBannerEl) showAttackBanner(severe);
+    }
   }
 }
 
-var attackBannerEl = null;
+var attackBannerEl = null, attackBannerTimer = null;
+function hideAttackBanner() {
+  if (attackBannerTimer) { clearTimeout(attackBannerTimer); attackBannerTimer = null; }
+  if (attackBannerEl) { attackBannerEl.remove(); attackBannerEl = null; }
+}
+
 function showAttackBanner(alert) {
-  if (attackBannerEl) attackBannerEl.remove();
-  attackBannerEl = document.createElement("div");
-  attackBannerEl.id = "attack-banner";
-  attackBannerEl.className = "attack-banner " + (alert.severity || "high");
-  var icon = SEV_ICONS[alert.severity] || "\u26A0\uFE0F";
-  attackBannerEl.innerHTML = '<div class="banner-content"><span class="banner-icon">' + icon + '</span><div class="banner-text"><strong>ATAQUE DETECTADO: ' + alert.attack.toUpperCase() + '</strong><span>' + alert.src + ' \u2192 ' + alert.dst + ' \u00B7 Confianza: ' + alert.confidence + ' \u00B7 Motor: ' + alert.engine + '</span></div><button class="banner-act" data-ip="' + alert.src + '">Bloquear ' + alert.src + '</button></div>';
-  document.body.appendChild(attackBannerEl);
-  setTimeout(function() { if (attackBannerEl) attackBannerEl.remove(); attackBannerEl = null; }, 10000);
-  attackBannerEl.querySelector(".banner-act").onclick = function() {
+  hideAttackBanner();
+  var sev = alert.severity || "high";
+  var icon = SEV_ICONS[sev] || "\u26A0\uFE0F";
+  var conf = typeof alert.confidence === "number" ? alert.confidence.toFixed(2) : (alert.confidence || "?");
+  var el = document.createElement("div");
+  el.id = "attack-banner";
+  el.className = "attack-banner " + sev;
+  el.setAttribute("role", "alert");
+  el.innerHTML = '<div class="banner-content"><span class="banner-icon">' + icon + '</span>' +
+    '<div class="banner-text"><strong>' + esc(String(alert.attack || "attack").replace(/_/g, " ")) + ' detected</strong>' +
+    '<span>' + esc(alert.src) + ' \u2192 ' + esc(alert.dst) + ' \u00B7 confidence ' + esc(conf) + ' \u00B7 engine ' + esc(alert.engine || "ml") + '</span></div>' +
+    '<button class="banner-act">Block ' + esc(alert.src) + '</button>' +
+    '<button class="banner-close" aria-label="Dismiss alert" title="Dismiss">\u00D7</button></div>';
+  document.body.appendChild(el);
+  attackBannerEl = el;
+  el.querySelector(".banner-close").onclick = hideAttackBanner;
+  el.querySelector(".banner-act").onclick = function() {
     post("/api/firewall/block", { ip: alert.src, reason: "operator blocked from attack banner" });
-    attackBannerEl.remove(); attackBannerEl = null;
+    hideAttackBanner();
   };
+  attackBannerTimer = setTimeout(hideAttackBanner, 10000);
 }
 
 var fxHost = document.getElementById("map");
@@ -233,41 +282,111 @@ function drawAttackFx(now) {
 }
 (function tick() { drawAttackFx(Date.now()); requestAnimationFrame(tick); })();
 
-var hint = document.createElement("div"); hint.id = "hint"; hint.textContent = "drag to pan \u00B7 wheel to zoom \u00B7 select node + B to block \u00B7 double-click to rename \u00B7 R to refit \u00B7 M to minimize \u00B7 L for legend \u00B7 right-click node for trust menu"; fxHost.appendChild(hint);
-
 network.on("selectNode", function(p) { selectedNodeIp = p.nodes[0] || null; });
 network.on("deselectNode", function() { selectedNodeIp = null; });
-network.on("oncontext", function(params) { params.event.preventDefault(); var ip = params.nodes[0]; if (!ip) return; showTrustMenu(params.event, ip); });
+
+// Right-click anywhere on the map: open the trust menu only when a node is hit.
+// Listening on the container (instead of vis' oncontext) gives us a reliable
+// clientX/clientY for positioning and lets us stop the native browser menu.
+fxHost.addEventListener("contextmenu", function(ev) {
+  ev.preventDefault();
+  var rect = fxHost.getBoundingClientRect();
+  var ip = network.getNodeAt({ x: ev.clientX - rect.left, y: ev.clientY - rect.top });
+  if (ip) showTrustMenu(ev, ip); else closeTrustMenu();
+});
+
+function closeTrustMenu() { var m = document.getElementById("trust-menu"); if (m) m.remove(); }
 
 function showTrustMenu(event, ip) {
-  var existing = document.getElementById("trust-menu"); if (existing) existing.remove();
+  closeTrustMenu();
   var node = nodes.get(ip); if (!node) return;
-  var menu = document.createElement("div"); menu.id = "trust-menu"; menu.className = "trust-menu"; menu.style.left = event.clientX + "px"; menu.style.top = event.clientY + "px";
-  var isTrusted = trustedDevices.has(ip), isSuspicious = suspiciousDevices.has(ip), isAttacker = confirmedAttackers.has(ip), currentRole = node.role || "unknown";
-  menu.innerHTML = '<div class="trust-menu-header">' + node.hostname + ' (' + ip + ')</div><div class="trust-menu-role">Rol actual: <strong>' + (ROLE_STYLE[currentRole] ? ROLE_STYLE[currentRole].label : currentRole) + '</strong></div><hr style="border-color: var(--border); margin: 8px 0;"><button class="trust-btn ' + (isTrusted ? 'active' : '') + '" data-action="trust" ' + (isAttacker ? 'disabled' : '') + '>' + (isTrusted ? '\u2713' : '\u2610') + ' Marcar como conocido/confiable</button><button class="trust-btn ' + (isSuspicious ? 'active' : '') + '" data-action="suspicious" ' + (isAttacker ? 'disabled' : '') + '>' + (isSuspicious ? '\u2713' : '\u2610') + ' Marcar como sospechoso</button><button class="trust-btn" data-action="clear" ' + (!isTrusted && !isSuspicious ? 'disabled' : '') + '>Limpiar marca</button><hr style="border-color: var(--border); margin: 8px 0;"><button class="trust-btn danger" data-action="block">\u{1F6AB} Bloquear en firewall</button>';
+  var isTrusted = trustedDevices.has(ip), isSuspicious = suspiciousDevices.has(ip), isAttacker = confirmedAttackers.has(ip);
+  var currentRole = node.role || "unknown";
+  var markable = currentRole !== "router" && currentRole !== "external";
+  var hostname = node.hostname || String(node.label || ip).split("\n")[0];
+  var roleLabel = ROLE_STYLE[currentRole] ? ROLE_STYLE[currentRole].label : currentRole;
+  var rows = '';
+  if (markable) {
+    rows += '<button class="trust-btn' + (isTrusted ? ' active' : '') + '" data-action="trust"' + (isAttacker ? ' disabled' : '') + '>' +
+      (isTrusted ? '\u2713' : '\u2610') + ' Mark as trusted</button>' +
+      '<button class="trust-btn' + (isSuspicious ? ' active' : '') + '" data-action="suspicious"' + (isAttacker ? ' disabled' : '') + '>' +
+      (isSuspicious ? '\u2713' : '\u2610') + ' Mark as suspicious</button>' +
+      '<button class="trust-btn" data-action="clear"' + (!isTrusted && !isSuspicious ? ' disabled' : '') + '>Clear mark</button>';
+  } else {
+    rows += '<div class="trust-menu-note">Infrastructure node \u2014 trust marks are not available.</div>';
+  }
+  if (currentRole !== "router") rows += '<button class="trust-btn danger" data-action="block">\u{1F6AB} Block in firewall</button>';
+
+  var menu = document.createElement("div");
+  menu.id = "trust-menu"; menu.className = "trust-menu"; menu.setAttribute("role", "menu");
+  menu.innerHTML = '<div class="trust-menu-header">' + esc(hostname) + ' <span class="trust-menu-ip">' + esc(ip) + '</span></div>' +
+    '<div class="trust-menu-role">Current role: <strong>' + esc(roleLabel) + '</strong></div>' + rows;
   document.body.appendChild(menu);
-  requestAnimationFrame(function() { var rect = menu.getBoundingClientRect(); if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 10) + "px"; if (rect.bottom > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 10) + "px"; });
-  menu.querySelectorAll(".trust-btn").forEach(function(btn) { btn.onclick = function() { handleTrustAction(ip, btn.dataset.action, menu); }; });
+
+  // keep the menu inside the viewport (offsetWidth/Height ignore the pop animation scale)
+  var left = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 12);
+  var top = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 12);
+  menu.style.left = Math.max(10, left) + "px";
+  menu.style.top = Math.max(10, top) + "px";
+
+  menu.querySelectorAll(".trust-btn").forEach(function(btn) { btn.setAttribute("role", "menuitem"); btn.onclick = function() { handleTrustAction(ip, btn.dataset.action); }; });
   setTimeout(function() { document.addEventListener("click", function closeMenu(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("click", closeMenu); } }); }, 0);
 }
 
-function handleTrustAction(ip, action, menu) {
-  var node = nodes.get(ip); if (!node) return;
+function handleTrustAction(ip, action) {
   switch (action) {
     case "trust": if (trustedDevices.has(ip)) { trustedDevices.delete(ip); revertToOriginalRole(ip); } else { trustedDevices.add(ip); suspiciousDevices.delete(ip); markAsTrusted(ip); } break;
     case "suspicious": if (suspiciousDevices.has(ip)) { suspiciousDevices.delete(ip); revertToOriginalRole(ip); } else { suspiciousDevices.add(ip); trustedDevices.delete(ip); markAsSuspicious(ip); } break;
     case "clear": trustedDevices.delete(ip); suspiciousDevices.delete(ip); revertToOriginalRole(ip); break;
     case "block": post("/api/firewall/block", { ip: ip, reason: "operator blocked from trust menu" }); break;
-  } menu.remove();
+  }
+  closeTrustMenu();
 }
 
-function markAsTrusted(ip) { var style = ROLE_STYLE.trusted; nodes.update({ id: ip, role: "trusted", shape: style.shape, image: iconURI(style.icon), color: { background: style.color, border: style.color, highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } }, borderWidth: 2, shadow: { enabled: true, color: "#3fb95066", size: 12, x: 0, y: 3 }, title: "CONFIABLE (marcado por usuario)\nMAC: " + (nodes.get(ip)?.mac || "n/a") + "\nright-click to change" }); }
-function markAsSuspicious(ip) { var style = ROLE_STYLE.unknown; nodes.update({ id: ip, role: "unknown", shape: style.shape, image: iconURI(style.icon), color: { background: style.color, border: "#d29922", highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } }, borderWidth: 3, shadow: { enabled: true, color: "#d2992288", size: 14, x: 0, y: 3 }, title: "SOSPECHOSO (marcado por usuario)\nMAC: " + (nodes.get(ip)?.mac || "n/a") + "\nright-click to change" }); }
-function revertToOriginalRole(ip) { var node = nodes.get(ip); if (!node) return; if (confirmedAttackers.has(ip)) { upgradeToAttacker(ip); return; } var style = ROLE_STYLE.workstation; nodes.update({ id: ip, role: "workstation", shape: style.shape, image: iconURI(style.icon), color: { background: style.color, border: style.color, highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } }, borderWidth: 2, shadow: { enabled: true, color: "#00000066", size: 10, x: 0, y: 3 }, title: style.label + "\nMAC: " + (node.mac || "n/a") + "\nports: " + (node.open_ports && node.open_ports.length ? node.open_ports.join(", ") : "\u2014") + "\nright-click to mark trusted/suspicious" }); }
+function nodeInfoTitle(node, headline) {
+  var ports = node.openPorts && node.openPorts.length ? node.openPorts.join(", ") : "\u2014";
+  return headline + "\nMAC: " + (node.mac || "n/a") + "\nports: " + ports +
+    "\ndouble-click to rename \u00B7 select + B to block \u00B7 right-click for trust menu";
+}
+
+function applyNodeRole(ip, role, headline) {
+  var node = nodes.get(ip); if (!node) return;
+  var style = ROLE_STYLE[role] || ROLE_STYLE.workstation;
+  var isSuspicious = role === "unknown", isTrusted = role === "trusted", isAttacker = role === "attacker";
+  var border = isSuspicious ? "#d29922" : (isAttacker ? "#f85149" : style.color);
+  var accent = isSuspicious ? "#d2992288" : (isAttacker ? "#f8514988" : (isTrusted ? "#3fb95066" : "#00000066"));
+  nodes.update({
+    id: ip, role: role, shape: style.shape, image: iconURI(style.icon),
+    color: { background: style.color, border: border, highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } },
+    borderWidth: isSuspicious || isAttacker ? 3 : 2,
+    shadow: { enabled: true, color: accent, size: isSuspicious || isAttacker ? 14 : 10, x: 0, y: 3 },
+    title: nodeInfoTitle(node, headline)
+  });
+}
+
+function markAsTrusted(ip) { applyNodeRole(ip, "trusted", "TRUSTED (marked by user)"); }
+function markAsSuspicious(ip) { applyNodeRole(ip, "unknown", "SUSPICIOUS (marked by user)"); }
+function revertToOriginalRole(ip) {
+  var node = nodes.get(ip); if (!node) return;
+  if (confirmedAttackers.has(ip)) { upgradeToAttacker(ip); return; }
+  var role = node.hostRole || "workstation";
+  if (role === "attacker") role = "unknown";
+  var label = ROLE_STYLE[role] ? ROLE_STYLE[role].label : "Workstation";
+  applyNodeRole(ip, role, label + (role === "unknown" ? " (unverified traffic)" : ""));
+}
 
 network.on("doubleClick", function(p) { var ip = p.nodes[0]; if (!ip) return; var label = nodes.get(ip)?.label || ""; var current = label.split("\n")[0]; var name = window.prompt("Name this device (" + ip + ")", current); if (name && name.trim()) post("/api/devices/rename", { ip: ip, name: name.trim() }); });
 
-window.addEventListener("keydown", function(ev) { if (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA") return; if (ev.key.toLowerCase() === "b" && selectedNodeIp) post("/api/firewall/block", { ip: selectedNodeIp, reason: "operator blocked selected node" }); if (ev.key === "Escape") { network.unselectAll(); var menu = document.getElementById("trust-menu"); if (menu) menu.remove(); } if (ev.key === "r" || ev.key === "R") network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); if (ev.key === "m" || ev.key === "M") toggleMapMinimize(); if (ev.key === "l" || ev.key === "L") toggleLegend(); });
+window.addEventListener("keydown", function(ev) {
+  if (ev.target && (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA" || ev.target.isContentEditable)) return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  var key = ev.key.toLowerCase();
+  if (key === "b" && selectedNodeIp) post("/api/firewall/block", { ip: selectedNodeIp, reason: "operator blocked selected node" });
+  else if (ev.key === "Escape") { network.unselectAll(); closeTrustMenu(); hideAttackBanner(); }
+  else if (key === "r") network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } });
+  else if (key === "m") toggleMapMinimize();
+  else if (key === "l") toggleLegend();
+});
 
 function renderTopology(data) {
   var now = Date.now(); updateFlashes(data, now); fxSync(data);
@@ -285,12 +404,30 @@ function renderTopology(data) {
     var isAttacker = displayRole === "attacker", isUnknown = displayRole === "unknown", isTrusted = displayRole === "trusted";
     var nodeColor = { background: style.color, border: isBlocked || flashing ? "#f85149" : (isUnknown ? "#d29922" : (isTrusted ? style.color : style.color)), highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } };
     var base = { color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : flashing ? 4 : (isAttacker ? 3 : (isUnknown ? 3 : 2)), font: { color: isBlocked ? "#8b949e" : "#c9d1d9", size: 12, face: "Segoe UI" }, shadow: { enabled: true, color: isBlocked ? "#f8514966" : flashing ? "#f8514988" : (isAttacker ? "#f8514944" : (isUnknown ? "#d2992244" : (isTrusted ? "#3fb95044" : "#00000066"))), size: isBlocked ? 20 : flashing ? 16 : (isAttacker ? 14 : (isUnknown ? 12 : 10)), x: 0, y: 3 }, shapeProperties: { useBorderWithImage: true, borderDashes: h.role === "external" ? [4, 4] : false } };
-    var title = ""; if (isAttacker) title = "ATTACKER CONFIRMADO"; else if (isTrusted) title = "CONFIABLE (usuario)"; else if (isUnknown) title = "DESCONOCIDO / SOSPECHOSO"; else if (isBlocked) title = "\u{1F6AB} BLOQUEADO"; else title = style.label; title += "\nMAC: " + (h.mac || "n/a") + "\nports: " + (h.open_ports && h.open_ports.length ? h.open_ports.join(", ") : "\u2014") + "\ndouble-click to rename \u00B7 select + B to block \u00B7 right-click for trust menu";
-    if (!nodes.get(h.ip)) { var nodeData = { id: h.ip, label: h.hostname + "\n" + h.ip, title: title, shape: style.shape, size: h.role === "router" ? 24 : h.role === "external" ? 22 : (isAttacker ? 20 : (isUnknown ? 18 : 18)), x: pos[h.ip].x, y: pos[h.ip].y }; if (style.shape === "circularImage") nodeData.image = iconURI(style.icon); for (var k in base) nodeData[k] = base[k]; nodes.add(nodeData); } else { var label = h.hostname + "\n" + h.ip; var changed = nodes.get(h.ip).label !== label; var existing = nodes.get(h.ip); var userOverridden = confirmedAttackers.has(h.ip) || trustedDevices.has(h.ip) || suspiciousDevices.has(h.ip); if (!userOverridden || existing.role !== displayRole) { var updateObj = { id: h.ip, role: displayRole, title: title, shape: style.shape, image: iconURI(style.icon) }; if (changed) updateObj.label = label; for (var k2 in base) updateObj[k2] = base[k2]; nodes.update(updateObj); } else if (changed) nodes.update({ id: h.ip, label: label }); } seen.add(h.ip);
+    var headline = isBlocked ? "\u{1F6AB} BLOCKED" : (isAttacker ? "ATTACKER (confirmed)" : isTrusted ? "TRUSTED (marked by user)" : isUnknown ? "SUSPICIOUS / UNKNOWN" : style.label);
+    var title = nodeInfoTitle({ mac: h.mac, openPorts: h.open_ports || [] }, headline);
+    var nodeSize = h.role === "router" ? 24 : h.role === "external" ? 22 : (isAttacker ? 20 : 18);
+    if (!nodes.get(h.ip)) {
+      var nodeData = { id: h.ip, label: h.hostname + "\n" + h.ip, title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, openPorts: h.open_ports || [], shape: style.shape, size: nodeSize, x: pos[h.ip].x, y: pos[h.ip].y };
+      if (style.shape === "circularImage") nodeData.image = iconURI(style.icon);
+      for (var k in base) nodeData[k] = base[k];
+      nodes.add(nodeData);
+    } else {
+      var label = h.hostname + "\n" + h.ip;
+      var existing = nodes.get(h.ip);
+      var updateObj = { id: h.ip, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, openPorts: h.open_ports || [], title: title, size: nodeSize };
+      if (existing.label !== label) updateObj.label = label;
+      if (existing.shape !== style.shape) updateObj.shape = style.shape;
+      var img = style.shape === "circularImage" ? iconURI(style.icon) : null;
+      if (img && existing.image !== img) updateObj.image = img;
+      for (var k2 in base) updateObj[k2] = base[k2];
+      nodes.update(updateObj);
+    }
+    seen.add(h.ip);
   } for (var ni = 0; ni < nodes.get().length; ni++) if (!seen.has(nodes.get()[ni].id)) nodes.remove(nodes.get()[ni].id);
   if (layoutChanged) { layoutKey = key; for (var id in pos) if (nodes.get(id)) network.moveNode(id, pos[id].x, pos[id].y); network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); }
   var seenEdges = new Set(); for (var ei = 0; ei < data.edges.length; ei++) { var e = data.edges[ei]; var isLink = e.kind === "link"; var id = (isLink ? "L|" : "T|") + e.from + "|" + e.to; if (!edges.get(id)) { edges.add({ id: id, from: e.from, to: e.to, dashes: !isLink, width: isLink ? 3 : 1.6, arrows: isLink ? "" : { to: { enabled: true, scaleFactor: 0.5, type: "arrow" } }, color: { color: isLink ? "#484f58" : "#6e7681", highlight: "#58a6ff", hover: "#58a6ff" }, smooth: isLink ? false : { enabled: true, type: "continuous", roundness: 0.3 }, selectionWidth: 3 }); } seenEdges.add(id); } edges.get().forEach(function(e) { if (!seenEdges.has(e.id)) edges.remove(e.id); }); }
-}
+
 
 function fmtAlert(a) { var div = document.createElement("div"); var icon = SEV_ICONS[a.severity] || "\u2139\uFE0F"; var sev = (a.severity || "info").toLowerCase(); var engineTag = a.engine === "rules" ? 'rules' : 'ml'; div.className = "alert " + sev; div.innerHTML = '<div class="top"><b>' + icon + ' ' + a.attack + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span></div><div class="meta">' + a.time + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine: <span class="engine-tag ' + engineTag + '">' + engineTag + '</span> \u00B7 conf: ' + a.confidence + '</div>' + (sev !== "info" && a.src ? '<button class="act" data-ip="' + a.src + '">Block ' + a.src + '</button>' : ''); return div; }
 function fmtRule(r) { var div = document.createElement("div"); div.className = "rule"; var allow = r.action === "ALLOW"; div.innerHTML = '<div class="top"><span class="ip">' + r.ip + '</span><span>' + (allow ? "\u2713 ALLOW" : "\u26D4 BLOCK") + '</span></div><div class="meta">' + r.time + ' \u00B7 ' + r.reason + '</div>' + (allow ? '' : '<button class="act unblock" data-unblock="' + r.ip + '">Remove rule</button>'); return div; }
@@ -303,11 +440,64 @@ function onAction(ev) { var block = ev.target.closest("[data-ip]"); var unblock 
 async function post(url, body) { try { await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); refresh(); } catch (e) { console.error("API call failed:", e); } }
 var statPrev = {};
 function tweenStat(id, target, fmt) { fmt = fmt || function(v) { return Math.round(v).toString(); }; var el = document.getElementById(id); if (!el) return; var from = statPrev[id] !== undefined ? statPrev[id] : target; statPrev[id] = target; if (from === target) { el.textContent = fmt(target); return; } el.classList.add("updating"); var t0 = performance.now(), dur = 400; var step = function(now) { var k = Math.min(1, (now - t0) / dur); var eased = 1 - Math.pow(1 - k, 3); el.textContent = fmt(from + (target - from) * eased); if (k < 1) statPrev[id + ":raf"] = requestAnimationFrame(step); else el.classList.remove("updating"); }; cancelAnimationFrame(statPrev[id + ":raf"]); statPrev[id + ":raf"] = requestAnimationFrame(step); }
-function renderStats(data) { var s = data.stats; tweenStat("s-devices", data.nodes.length); tweenStat("s-flows", s.flows_per_sec, function(v) { return v.toFixed(1); }); tweenStat("s-alerts", s.attacks_total); tweenStat("s-blocked", s.blocks_total); document.getElementById("mode-badge").textContent = "\u25CF " + (data.mode || "demo"); document.getElementById("map-status").textContent = data.mode || "demo"; var m = data.model_metrics; document.getElementById("model-badge").textContent = m ? 'ML rf \u00B7 acc ' + Math.round(m.accuracy * 100) + '% \u00B7 ' + m.dataset : "heuristic mode"; }
-function toggleMapMinimize() { var container = document.getElementById("map-container"); var map = document.getElementById("map"); var btn = document.getElementById("btn-toggle-map"); var minimized = container.classList.toggle("minimized"); map.classList.toggle("minimized"); btn.innerHTML = minimized ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>' : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>'; btn.title = minimized ? "Expandir mapa (M)" : "Minimizar mapa (M)"; btn.setAttribute("aria-label", minimized ? "Expandir mapa" : "Minimizar mapa"); setTimeout(function() { network.redraw(); }, 300); }
-function toggleLegend() { var legend = document.getElementById("legend"); var btn = document.getElementById("btn-toggle-legend"); var collapsed = legend.classList.toggle("collapsed"); btn.innerHTML = collapsed ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 9h6v6H9z"/></svg>' : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>'; btn.title = collapsed ? "Mostrar leyenda (L)" : "Ocultar leyenda (L)"; }
+function renderStats(data) { var s = data.stats; tweenStat("s-devices", data.nodes.length); tweenStat("s-flows", s.flows_per_sec, function(v) { return v.toFixed(1); }); tweenStat("s-alerts", s.attacks_total); tweenStat("s-blocked", s.blocks_total); document.getElementById("mode-badge").textContent = "\u25CF " + (data.mode || "demo"); var m = data.model_metrics; document.getElementById("model-badge").textContent = m ? 'ML rf \u00B7 acc ' + Math.round(m.accuracy * 100) + '% \u00B7 ' + m.dataset : "heuristic mode"; }
+var ICON_CHEVRON_UP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>';
+var ICON_CHEVRON_DOWN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
+var ICON_LEGEND_CLOSED = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>';
+var ICON_LEGEND_OPEN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>';
+
+function setMapMinimized(min) {
+  var container = document.getElementById("map-container");
+  var map = document.getElementById("map");
+  var btn = document.getElementById("btn-toggle-map");
+  container.classList.toggle("minimized", min);
+  map.classList.toggle("minimized", min);
+  btn.innerHTML = min ? ICON_CHEVRON_DOWN : ICON_CHEVRON_UP;
+  btn.title = min ? "Expand map (M)" : "Minimize map (M)";
+  btn.setAttribute("aria-label", btn.title);
+  btn.setAttribute("aria-expanded", String(!min));
+  // let the CSS transition finish before vis re-measures the canvas
+  setTimeout(function() { sizeFx(); network.redraw(); if (!min) network.fit({ animation: { duration: 400, easingFunction: "easeOutQuad" } }); }, 320);
+}
+function toggleMapMinimize() { setMapMinimized(!document.getElementById("map-container").classList.contains("minimized")); }
+
+function setLegendCollapsed(collapsed) {
+  var btn = document.getElementById("btn-toggle-legend");
+  document.getElementById("legend").classList.toggle("collapsed", collapsed);
+  btn.innerHTML = collapsed ? ICON_LEGEND_CLOSED : ICON_LEGEND_OPEN;
+  btn.title = collapsed ? "Show legend (L)" : "Hide legend (L)";
+  btn.setAttribute("aria-label", btn.title);
+  btn.setAttribute("aria-expanded", String(!collapsed));
+}
+function toggleLegend() { setLegendCollapsed(!document.getElementById("legend").classList.contains("collapsed")); }
 function fitMap() { network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); }
 var pollTimer = null; function startPolling() { if (pollTimer) return; pollTimer = setInterval(refresh, 2000); } function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 async function refresh() { try { var res = await fetch("/api/state"); if (!res.ok) throw new Error("HTTP " + res.status); apply(await res.json()); } catch (e) { console.warn("refresh failed:", e); } }
+function setConnStatus(state) {
+  var el = document.getElementById("map-status");
+  if (!el) return;
+  el.className = "map-status " + state;
+  el.textContent = state === "live" ? "ws live" : state === "polling" ? "polling" : "connecting…";
+  el.title = state === "live" ? "WebSocket stream connected" : state === "polling" ? "WebSocket unavailable \u2014 polling /api/state" : "Connecting to the live stream\u2026";
+}
 function apply(data) { renderTopology(data); renderFeeds(data); renderLog(data); renderStats(data); }
-(function() { refresh().catch(function() {}); document.getElementById("btn-toggle-map").onclick = toggleMapMinimize; document.getElementById("btn-toggle-legend").onclick = toggleLegend; document.getElementById("btn-fit-map").onclick = fitMap; document.getElementById("btn-legend-close").onclick = function() { document.getElementById("legend").classList.add("collapsed"); document.getElementById("btn-toggle-legend").click(); }; if (typeof WebSocket === "undefined") startPolling(); else { var connect = function() { var proto = location.protocol === "https:" ? "wss" : "ws"; var ws = new WebSocket(proto + "://" + location.host + "/ws"); ws.onopen = function() { stopPolling(); console.log("[WS] connected"); }; ws.onmessage = function(ev) { try { apply(JSON.parse(ev.data)); } catch(e) { console.warn("WS parse error", e); } }; ws.onerror = function(e) { console.warn("[WS] error", e); }; ws.onclose = function() { console.log("[WS] closed, fallback to polling"); startPolling(); setTimeout(connect, 4000); }; }; connect(); } })();
+(function() {
+  refresh().catch(function() {});
+  document.getElementById("btn-toggle-map").onclick = toggleMapMinimize;
+  document.getElementById("btn-toggle-legend").onclick = toggleLegend;
+  document.getElementById("btn-fit-map").onclick = fitMap;
+  document.getElementById("btn-legend-close").onclick = function() { setLegendCollapsed(true); };
+  // on narrow screens the legend would cover the map, so start it collapsed
+  if (window.matchMedia && window.matchMedia("(max-width: 1120px)").matches) setLegendCollapsed(true);
+  if (typeof WebSocket === "undefined") { setConnStatus("polling"); startPolling(); return; }
+  var connect = function() {
+    var proto = location.protocol === "https:" ? "wss" : "ws";
+    var ws = new WebSocket(proto + "://" + location.host + "/ws");
+    ws.onopen = function() { stopPolling(); setConnStatus("live"); console.log("[WS] connected"); };
+    ws.onmessage = function(ev) { try { apply(JSON.parse(ev.data)); } catch(e) { console.warn("WS parse error", e); } };
+    ws.onerror = function(e) { setConnStatus("polling"); console.warn("[WS] error", e); };
+    ws.onclose = function() { setConnStatus("polling"); console.log("[WS] closed, fallback to polling"); startPolling(); setTimeout(connect, 4000); };
+  };
+  setConnStatus("connecting");
+  connect();
+})();

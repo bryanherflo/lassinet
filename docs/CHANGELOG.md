@@ -2,6 +2,40 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.7] — 2026-10-21 · "make the map render again"
+
+### Fixed
+- **Fatal JavaScript syntax error** (stray closing brace in `renderTopology`) that aborted `app.js` at parse time and left the dashboard blank. Found with `node --check`; the dashboard is now smoke-tested in headless Chrome.
+- **Map layout**: `#map-container` had been left outside `<main>`, so the grid gave the map no height (0 px) and `main` rendered an empty left column next to the feed. The map card is back in the grid and fills the panel.
+- **Legend / hint anchoring**: both were positioned against the viewport (covering the header badges) instead of the map card. `#map-container` is now `position: relative`.
+- **Duplicate hint pill**: `#hint` existed in `index.html` *and* was created again from JS (two overlapping pills, duplicate id).
+- **Legend close button** re-opened the legend (it added `.collapsed` and then clicked the toggle, which removed it).
+- **Trust menu header** showed `undefined` instead of the hostname (hostname was never stored on the vis node), and clearing a mark reset every device to "workstation" instead of restoring its real role.
+- **Blocked styling** was ignored for nodes carrying a trust mark.
+- **Attack banner race**: each alert's dismissal timer could remove a newer banner early; timers are now owned by the element and cancelled on replacement.
+- **Tablet/mobile feed height**: three feeds were squeezed into the leftover viewport height at ≤1120 px. The page now scrolls, stats become a 2×2 grid at ≤768 px, and each feed keeps a usable height.
+- **Startup log lied about the port** when launched with `--port`/`--host` (it always printed the env defaults); it now reports the values actually bound.
+
+### Changed
+- **All UI strings in English**: the 0.4.6 trust menu, attack banner, toolbar tooltips and legend were partly Spanish; they are now consistent with the rest of the dashboard.
+- **Toolbar status** now reports the live-stream state (`connecting…` / `ws live` / `polling`) instead of duplicating the mode badge.
+- **Trust menu**: clamped to the viewport using layout size (not the pop-animation transform), `menuitem` roles for screen readers, infrastructure nodes (router/Internet) only offer firewall blocking, and all interpolated names are HTML-escaped.
+- **Attack banner**: one banner at a time (no churn during attack bursts), explicit dismiss button, `Esc` closes it, and it never blocks the next burst after dismissing.
+- **Legend** gains *Trusted* and *Suspicious* entries; on narrow screens it starts collapsed so the button is never a dead control.
+- Trust marks are client-side visual state (like the 0.4.6 design); device renames remain server-persisted.
+
+### Tests
+- 30/30 passing in CI: the 27 existing tests plus three dashboard-asset guards (Node syntax check when available, cache-buster consistency, `app.js` → `index.html` id wiring) so a broken frontend can no longer ship green.
+
+## [0.4.6] — 2026-10-21 · "know who is attacking"
+
+### Added
+- **Attacker progression**: a host seen as the source of a detected attack is promoted on the map to the attacker style (skull icon, red frame and glow, red lane); hosts that merely *look* like attackers stay "unknown" until confirmed.
+- **Trust menu** (right-click a node): mark a device as **trusted** or **suspicious**, clear the mark, or block it in the firewall. Trusted hosts are excluded from automatic attacker promotion and get a green highlight.
+- **Major-attack banner** for high/critical alerts with source → destination, confidence, engine and a one-click **Block** action.
+- **Map toolbar**: minimize map, toggle legend, refit view — all mirrored by `M` / `L` / `R` shortcuts.
+- **Grouped legend** with a close button and per-role entries.
+
 ## [0.4.5] — 2026-10-21 · "polished UX, network-adaptive, production-ready"
 
 ### Added
