@@ -70,6 +70,73 @@ def test_block_and_unblock_flow(client: TestClient) -> None:
     assert again["changed"] is False
 
 
+def test_block_failure_is_not_marked_as_blocked(client: TestClient, monkeypatch) -> None:
+    class FailingFirewall:
+        provider = "nftables"
+
+        def block(self, ip: str, reason: str = "manual") -> bool:
+            return False
+
+        def unblock(self, ip: str) -> bool:
+            return False
+
+    monkeypatch.setattr(lassi_app, "fw", FailingFirewall())
+    ip = "203.0.113.88"
+    data = client.post("/api/firewall/block", json={"ip": ip, "reason": "provider down"}).json()
+    assert data["ok"] is False
+    assert data["changed"] is False
+    assert "could not apply" in data["error"]
+    assert ip not in client.get("/api/state").json()["blocked_ips"]
+
+
+def test_unblock_failure_keeps_state_blocked(client: TestClient, monkeypatch) -> None:
+    ip = "203.0.113.89"
+    assert client.post("/api/firewall/block", json={"ip": ip, "reason": "test"}).json()["ok"] is True
+
+    class FailingFirewall:
+        provider = "nftables"
+
+        def block(self, ip: str, reason: str = "manual") -> bool:
+            return False
+
+        def unblock(self, ip: str) -> bool:
+            return False
+
+    monkeypatch.setattr(lassi_app, "fw", FailingFirewall())
+    try:
+        data = client.post("/api/firewall/unblock", json={"ip": ip}).json()
+        assert data["ok"] is False
+        assert data["changed"] is False
+        assert "could not remove" in data["error"]
+        assert ip in client.get("/api/state").json()["blocked_ips"]
+    finally:
+        lassi_app.state.unblock_host(ip)
+
+
+def test_auto_block_failure_does_not_mark_state(client: TestClient, monkeypatch) -> None:
+    ip = "203.0.113.90"
+
+    class FailingFirewall:
+        provider = "nftables"
+
+        def block(self, ip: str, reason: str = "manual") -> bool:
+            return False
+
+        def unblock(self, ip: str) -> bool:
+            return False
+
+    class HighDetector:
+        def predict(self, flows):
+            return [{"severity": "high", "attack": "ddos",
+                     "confidence": 0.99, "engine": "rules"}]
+
+    monkeypatch.setattr(lassi_app, "fw", FailingFirewall())
+    monkeypatch.setattr(lassi_app, "detector", HighDetector())
+    monkeypatch.setattr(lassi_app, "AUTO_BLOCK", True)
+    lassi_app.process_flows([{"src": ip, "dst": "10.0.0.2", "bytes": 1000}])
+    assert ip not in client.get("/api/state").json()["blocked_ips"]
+
+
 def test_infrastructure_block_rejected(client: TestClient) -> None:
     snap = client.get("/api/state").json()
     router = next((n for n in snap["nodes"] if n["role"] == "router"), None)

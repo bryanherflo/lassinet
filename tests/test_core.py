@@ -222,13 +222,14 @@ def test_sim_falls_back_on_garbage_net(monkeypatch) -> None:
 
 def test_nft_rule_picks_ip_family(monkeypatch) -> None:
     captured: list[list[str]] = []
+    monkeypatch.delenv("LASSI_FW", raising=False)
     monkeypatch.setattr("lassi.firewall.Firewall._nft",
-                        staticmethod(lambda args: captured.append(args)))
+                        staticmethod(lambda args: captured.append(args) or True))
     from lassi.firewall import Firewall
 
     fw = Firewall(provider="nftables")
-    fw.block("10.0.0.9")
-    fw.block("2001:db8::1")
+    assert fw.block("10.0.0.9") is True
+    assert fw.block("2001:db8::1") is True
     # The dashboard blocks sources (attackers), so nft must match saddr.
     assert {"ip", "saddr", "10.0.0.9"} <= set(captured[0])
     assert {"ip6", "saddr", "2001:db8::1"} <= set(captured[1])
@@ -237,8 +238,9 @@ def test_nft_rule_picks_ip_family(monkeypatch) -> None:
 
 def test_nft_unblock_deletes_matching_handle(monkeypatch) -> None:
     calls: list[list[str]] = []
+    monkeypatch.delenv("LASSI_FW", raising=False)
     monkeypatch.setattr("lassi.firewall.Firewall._nft",
-                        staticmethod(lambda args: calls.append(args)))
+                        staticmethod(lambda args: calls.append(args) or True))
     monkeypatch.setattr(
         "lassi.firewall.Firewall._nft_list",
         staticmethod(lambda: "ip saddr 10.0.0.9 drop # handle 42\n"
@@ -246,9 +248,34 @@ def test_nft_unblock_deletes_matching_handle(monkeypatch) -> None:
     )
     from lassi.firewall import Firewall
 
-    Firewall(provider="nftables").unblock("10.0.0.9")
+    assert Firewall(provider="nftables").unblock("10.0.0.9") is True
     assert ["delete", "rule", "inet", "lassinet", "handle", "42"] in calls
     assert all("43" not in args for args in calls)
+
+
+def test_nft_failure_is_not_reported_as_success(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("LASSI_FW", raising=False)
+    monkeypatch.setattr(
+        "lassi.firewall.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="", stderr="Operation not permitted"),
+    )
+    from lassi.firewall import Firewall
+
+    assert Firewall(provider="nftables").block("10.0.0.9") is False
+    monkeypatch.setattr("lassi.firewall.Firewall._nft_list", staticmethod(lambda: None))
+    assert Firewall(provider="nftables").unblock("10.0.0.9") is False
+
+
+def test_mock_succeeds_and_pfsense_placeholder_fails(monkeypatch) -> None:
+    monkeypatch.delenv("LASSI_FW", raising=False)
+    from lassi.firewall import Firewall
+
+    assert Firewall(provider="mock").block("10.0.0.9") is True
+    assert Firewall(provider="mock").unblock("10.0.0.9") is True
+    assert Firewall(provider="pfsense").block("10.0.0.9") is False
+    assert Firewall(provider="pfsense").unblock("10.0.0.9") is False
 
 def test_simulator_reveals_devices_progressively() -> None:
     sim = Simulator()

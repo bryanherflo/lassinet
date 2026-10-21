@@ -2,6 +2,18 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.14] — 2026-10-21 · "never claim a block that did not happen"
+
+### Fixed
+- **Firewall success is now truthful.** `Firewall.block()` / `unblock()` return a real boolean; the API only updates `state` after the provider accepts the operation. If `nft` is missing, the table/chain is absent, permissions are wrong, or a rule cannot be listed/deleted, the UI shows an error and the IP is **not** marked blocked/unblocked.
+- **Auto-block follows the same rule.** It asks the provider first, updates state only on success, and writes a `block_failed` audit event when the provider rejects it. It also rolls back if discovery turns the source into protected infrastructure.
+- **The OPNsense/pfSense placeholder no longer pretends to enforce.** It returns failure explicitly, so the dashboard cannot show a fake block with that provider.
+- Unblock failure leaves the dashboard blocked, matching the firewall instead of clearing the UI optimistically.
+- `docs/lab.md` now documents the required nftables base chain (`input` for this host, `forward` for a gateway) instead of only creating the table.
+
+### Tests
+- 45/45 passing. New coverage: nft failure/missing table, mock vs. placeholder behavior, API block/unblock failures, and auto-block failure without state mutation.
+
 ## [0.4.13] — 2026-10-21 · "say what live mode really does"
 
 ### Docs

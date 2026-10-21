@@ -40,5 +40,13 @@ docker run --rm -it --network lab b3ardino/attacker nmap -T5 -Pn -p- 172.17.0.2
 * **pfSense/OPNsense** — generate an API key in the web UI, then set
   `LASSI_FW=pfsense OPNSENSE_URL=... OPNSENSE_KEY=...` and complete the REST call
   in `lassi/firewall.py::_opnsense_rule` (documented placeholder).
-* **Linux nftables** — `LASSI_FW=nftables` and ensure a table `inet lassinet`
-  exists: `sudo nft add table inet lassinet`.
+* **Linux nftables** — `LASSI_FW=nftables`; create the table and a base chain
+  named `drop` with the hook for your deployment. LassiNet adds/removes rules
+  but does not create firewall infrastructure:
+  ```bash
+  sudo nft add table inet lassinet
+  # protect this host (input); use hook forward instead if this host is a gateway
+  sudo nft add chain inet lassinet drop '{ type filter hook input priority 0; policy accept; }'
+  ```
+  A base chain has one hook, so choose `input` (local host) or `forward`
+  (traffic routed through the machine) according to what you want to protect.

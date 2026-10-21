@@ -48,7 +48,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (40 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (45 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt
@@ -59,7 +59,7 @@ Open **http://localhost:8000** — within seconds you will see devices joining t
 
 **About the packet dots on the map** (and honesty about what they show): the travelling dots are *not* decoration — they are rendered **only** from the engine's real flow stream. Every dot corresponds to an actual flow (source, destination, byte size, verdict) that passed through the detection pipeline. In **demo mode** that network is simulated (the badge says *"demo (simulated)"*: the simulator generates the flows, but they still go through the same ML detection → alert → firewall path as real packets). In **live mode** (`LASSI_MODE=live`) the same pipeline feeds the dots from **physically sniffed packets**, so the traffic you see is the traffic on your wire.
 
-**What Block does:** every block is **source-only**. `Block source <IP>` on an alert, or `Block IP` on a device, adds a firewall rule for that IP (never the victim), marks the device as blocked, and stops counting or animating traffic **from** it. In demo mode the rule is simulated (`mock` provider) — nothing on your PC changes. In live mode only the **nftables** provider currently enforces the rule (Linux, root, and a pre-created table/chain); `mock` only logs, and the OPNsense/pfSense integration is a documented placeholder. `Unblock` reverses it. The router and the Internet placeholder are protected and can never be blocked.
+**What Block does:** every block is **source-only**. `Block source <IP>` on an alert, or `Block IP` on a device, adds a firewall rule for that IP (never the victim), marks the device as blocked, and stops counting or animating traffic **from** it. In demo mode the rule is simulated (`mock` provider) — nothing on your PC changes. In live mode only the **nftables** provider currently enforces the rule (Linux, root, and a pre-created table/chain); `mock` only logs, and the OPNsense/pfSense integration is a documented placeholder. If the provider rejects the operation, the API reports an error and the IP is **not** marked as blocked. `Unblock` reverses it. The router and the Internet placeholder are protected and can never be blocked.
 
 **Shortcuts:**
 - Click a node → action bar (Block/Unblock, Actions…, close)

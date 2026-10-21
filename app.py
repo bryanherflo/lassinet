@@ -121,12 +121,22 @@ def process_flows(flows: list[dict]) -> None:
             }
             state.add_alert(alert)
             if AUTO_BLOCK and SEVERITY_RANK[verdict["severity"]] >= 2:
-                # state is the rule-table truth for the UI; the firewall
-                # provider is called so real deployments actually apply it
-                if state.block_host(flow["src"], reason=f"{verdict['attack']} ({verdict['confidence']})"):
-                    fw.block(flow["src"], reason=verdict["attack"])
-                    state.add_alert({**alert, "attack": "auto_block",
-                                     "severity": "info"})
+                # Ask the provider first: state must not claim a block that the
+                # firewall rejected (missing nft binary, no table/chain, etc.).
+                src = flow["src"]
+                if not state.is_blocked(src) and not state.is_protected(src):
+                    reason = f"{verdict['attack']} ({verdict['confidence']})"
+                    if fw.block(src, reason=verdict["attack"]):
+                        if state.block_host(src, reason=reason):
+                            state.add_alert({**alert, "attack": "auto_block",
+                                             "severity": "info"})
+                        elif state.is_protected(src):
+                            fw.unblock(src)          # discovery made it infrastructure
+                    else:
+                        log.error("auto-block failed for %s via %s; state unchanged",
+                                  src, fw.provider)
+                        audit({"event": "block_failed", "ip": src,
+                               "reason": verdict["attack"], "provider": fw.provider})
 
 
 def demo_loop() -> None:
@@ -287,9 +297,15 @@ def block(req: BlockRequest) -> dict:
         return {"ok": False, "error": "That is not a valid IP address"}
     if state.is_protected(req.ip):
         return {"ok": False, "error": "The router and Internet nodes cannot be blocked"}
+    if state.is_blocked(req.ip):
+        return {"ok": True, "changed": False, "blocked": True,
+                "rules": state.snapshot()["rules"][:10]}
+    if not fw.block(req.ip, req.reason):
+        return {"ok": False, "changed": False, "blocked": state.is_blocked(req.ip),
+                "error": f"Firewall provider '{fw.provider}' could not apply the block; nothing changed"}
     changed = state.block_host(req.ip, req.reason)
-    if changed:
-        fw.block(req.ip, req.reason)
+    if not changed and state.is_protected(req.ip):
+        fw.unblock(req.ip)                  # roll back a rule for infrastructure
     return {"ok": True, "changed": changed, "blocked": state.is_blocked(req.ip),
             "rules": state.snapshot()["rules"][:10]}
 
@@ -300,9 +316,12 @@ def unblock(req: BlockRequest) -> dict:
         ipaddress.ip_address(req.ip)
     except ValueError:
         return {"ok": False, "error": "That is not a valid IP address"}
+    if not state.is_blocked(req.ip):
+        return {"ok": True, "changed": False, "blocked": False}
+    if not fw.unblock(req.ip):
+        return {"ok": False, "changed": False, "blocked": True,
+                "error": f"Firewall provider '{fw.provider}' could not remove the block; it is still active"}
     changed = state.unblock_host(req.ip)
-    if changed:
-        fw.unblock(req.ip)
     return {"ok": True, "changed": changed, "blocked": state.is_blocked(req.ip)}
 
 
