@@ -53,13 +53,6 @@ state.mode = "demo (simulated)" if MODE == "demo" else "live (scapy)"
 sim = Simulator()
 fw = Firewall()
 
-# Seed the demo router before the API starts serving. Without this, a request
-# arriving during the first engine tick could block 10.0.0.1 (or the custom
-# LASSI_DEMO_NET router), i.e. the gateway the whole topology depends on.
-if MODE == "demo":
-    state.upsert_host(sim.ip["router"], hostname="edge-gw", role="router",
-                      open_ports=[22, 80, 443, 53])
-
 # one model per operating mode — each trained on the distribution it serves:
 #   demo -> synthetic (train_model.py)        live -> CICIDS2017 (load_cicids.py)
 MODELS_DIR = Path(__file__).resolve().parent / "models"
@@ -74,6 +67,21 @@ def _clean_ip(value: str) -> str | None:
         return str(ipaddress.ip_address((value or "").strip()))
     except ValueError:
         return None
+
+
+def _seed_demo_router() -> None:
+    """Protect the demo gateway before the API accepts block requests.
+
+    Also used when a requested live mode falls back to the demo source
+    (missing scapy/invalid mode), where `MODE` is no longer "demo" but the
+    running topology is still the simulated one.
+    """
+    state.upsert_host(sim.ip["router"], hostname="edge-gw", role="router",
+                      open_ports=[22, 80, 443, 53])
+
+
+if MODE == "demo":
+    _seed_demo_router()
 
 
 def _load_metrics() -> None:
@@ -377,6 +385,7 @@ async def lifespan(app: FastAPI):
     source, mode_label = _source_for_mode(MODE, has_scapy)
     state.mode = mode_label
     if source is demo_loop:
+        _seed_demo_router()                 # also covers live→demo fallback
         _train_demo_model_if_missing()
         if mode_label != "demo (simulated)":
             # Requested live but fell back: use the demo model, not the live
