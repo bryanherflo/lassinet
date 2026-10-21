@@ -53,12 +53,27 @@ state.mode = "demo (simulated)" if MODE == "demo" else "live (scapy)"
 sim = Simulator()
 fw = Firewall()
 
+# Seed the demo router before the API starts serving. Without this, a request
+# arriving during the first engine tick could block 10.0.0.1 (or the custom
+# LASSI_DEMO_NET router), i.e. the gateway the whole topology depends on.
+if MODE == "demo":
+    state.upsert_host(sim.ip["router"], hostname="edge-gw", role="router",
+                      open_ports=[22, 80, 443, 53])
+
 # one model per operating mode — each trained on the distribution it serves:
 #   demo -> synthetic (train_model.py)        live -> CICIDS2017 (load_cicids.py)
 MODELS_DIR = Path(__file__).resolve().parent / "models"
 detector = Detector(model_path=MODELS_DIR / ("demo_model.pkl" if MODE == "demo" else "lassi_model.pkl"))
 
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
+def _clean_ip(value: str) -> str | None:
+    """Canonicalize an IP at the API boundary (IPv6 has many spellings)."""
+    try:
+        return str(ipaddress.ip_address((value or "").strip()))
+    except ValueError:
+        return None
 
 
 def _load_metrics() -> None:
@@ -106,31 +121,34 @@ def process_flows(flows: list[dict]) -> None:
         return
     verified = detector.predict(flows)
     for flow, verdict in zip(flows, verified):
+        src, dst = flow.get("src", ""), flow.get("dst", "")
+        attack = verdict.get("attack", "benign")
+        severity = verdict.get("severity", "low")
+        confidence = verdict.get("confidence", 0.0)
         # Source blocks are enforced before anything is counted: a blocked source
         # is not a live flow any more, and it must not generate alert spam.
-        if state.is_blocked(flow["src"]):
+        if state.is_blocked(src):
             continue
-        state.add_flow(is_attack=verdict["attack"] != "benign",
-                       src=flow["src"], dst=flow["dst"],
+        state.add_flow(is_attack=attack != "benign",
+                       src=src, dst=dst,
                        bytes=flow.get("bytes") or 0)
-        if verdict["severity"] in ("medium", "high", "critical"):
+        if severity in ("medium", "high", "critical"):
             alert = {
-                "severity": verdict["severity"],
-                "attack": verdict["attack"],
-                "src": flow["src"],
-                "dst": flow["dst"],
-                "confidence": verdict["confidence"],
-                "engine": verdict["engine"],
+                "severity": severity,
+                "attack": attack,
+                "src": src,
+                "dst": dst,
+                "confidence": confidence,
+                "engine": verdict.get("engine", "rules"),
                 "ports": flow.get("dst_port_count"),
             }
             state.add_alert(alert)
-            if AUTO_BLOCK and SEVERITY_RANK[verdict["severity"]] >= 2:
+            if AUTO_BLOCK and SEVERITY_RANK.get(severity, 0) >= 2:
                 # Ask the provider first: state must not claim a block that the
                 # firewall rejected (missing nft binary, no table/chain, etc.).
-                src = flow["src"]
                 if not state.is_blocked(src) and not state.is_protected(src):
-                    reason = f"{verdict['attack']} ({verdict['confidence']})"
-                    if fw.block(src, reason=verdict["attack"]):
+                    reason = f"{attack} ({confidence})"
+                    if fw.block(src, reason=attack):
                         if state.block_host(src, reason=reason):
                             state.add_alert({**alert, "attack": "auto_block",
                                              "severity": "info"})
@@ -140,18 +158,24 @@ def process_flows(flows: list[dict]) -> None:
                         log.error("auto-block failed for %s via %s; state unchanged",
                                   src, fw.provider)
                         audit({"event": "block_failed", "ip": src,
-                               "reason": verdict["attack"], "provider": fw.provider})
+                               "reason": attack, "provider": fw.provider})
 
 
 def demo_loop() -> None:
     devices = sim.devices()
     router_ip = next((h["ip"] for h in devices if h["role"] == "router"), None)
     for host in devices:
+        ip = host["ip"]
+        was_blocked = state.is_blocked(ip)
         fields = {k: v for k, v in host.items() if k != "ip"}
-        state.upsert_host(host["ip"], **fields)
+        state.upsert_host(ip, **fields)
+        if was_blocked and not state.is_blocked(ip):
+            # It was blocked while unknown, then appeared as infrastructure.
+            # Do not leave an orphan firewall rule behind the UI's back.
+            _release_firewall_block(ip, "infrastructure discovered")
         # infrastructure layer: every device hangs off the router
-        if router_ip and host["ip"] != router_ip:
-            state.add_link(router_ip, host["ip"])
+        if router_ip and ip != router_ip:
+            state.add_link(router_ip, ip)
     flows = sim.flows()
     # the schema only draws the infrastructure tree (router <-> devices and the
     # Internet uplink); attack and egress context lives in the feeds/alerts
@@ -195,7 +219,12 @@ def _discover_cached() -> tuple[list[dict], str | None]:
     now = time.time()
     if _last_discovery_at and now - _last_discovery_at < DISCOVERY_INTERVAL:
         return _discovered_hosts, _discovered_gateway
-    _discovered_hosts, _discovered_gateway = discover()
+    try:
+        _discovered_hosts, _discovered_gateway = discover()
+    except Exception:
+        # A transient ARP/interface failure should not make the engine crash
+        # every 2 seconds; keep the previous topology until the next interval.
+        log.exception("network discovery failed; keeping the previous topology")
     _last_discovery_at = time.time()
     return _discovered_hosts, _discovered_gateway
 
@@ -233,15 +262,19 @@ def live_source() -> None:
         hosts.append({"ip": gateway_ip, "mac": None, "hostname": "gateway",
                       "role": "router", "open_ports": []})
     for host in hosts:
+        ip = host["ip"]
+        was_blocked = state.is_blocked(ip)
         fields = {k: v for k, v in host.items() if k != "ip"}
         if gateway_ip:
-            if host["ip"] == gateway_ip:
+            if ip == gateway_ip:
                 # the real default gateway becomes the hub of the schema
                 fields["role"] = "router"
                 fields["hostname"] = "gateway"
             elif host.get("role") != "router":
-                state.add_link(gateway_ip, host["ip"])
-        state.upsert_host(host["ip"], **fields)
+                state.add_link(gateway_ip, ip)
+        state.upsert_host(ip, **fields)
+        if was_blocked and not state.is_blocked(ip):
+            _release_firewall_block(ip, "infrastructure discovered")
     router_ip = next((ip for ip, h in state.hosts.items() if h["role"] == "router"), None)
     flows = _capture.drain_flows()
     if flows:
@@ -251,12 +284,46 @@ def live_source() -> None:
     state.tick_rate()
 
 
+def _release_firewall_block(ip: str, reason: str) -> bool:
+    """Remove a rule that no longer belongs in the UI (e.g. gateway discovered)."""
+    if not ip or ip == "0.0.0.0":
+        return False
+    if fw.unblock(ip):
+        log.warning("released firewall block for %s (%s)", ip, reason)
+        audit({"event": "block_released", "ip": ip, "reason": reason,
+               "provider": fw.provider})
+        return True
+    log.error("could not release firewall block for %s (%s) via %s; rule may remain",
+              ip, reason, fw.provider)
+    audit({"event": "block_release_failed", "ip": ip, "reason": reason,
+           "provider": fw.provider})
+    return False
+
+
+def _seed_live_gateway() -> None:
+    """Protect the live gateway before the API accepts any block request.
+
+    `default_gateway()` only reads the local routing table; it does not send
+    packets. Seeding it also lets `_restore_firewall_blocks()` clean up a stale
+    rule that a previous run left on the gateway.
+    """
+    try:
+        from lassi.live import default_gateway
+        gateway = default_gateway()
+    except Exception:
+        log.exception("could not determine the default gateway")
+        return
+    if gateway and gateway != "0.0.0.0":
+        state.upsert_host(gateway, hostname="gateway", role="router", open_ports=[])
+
+
 def _restore_firewall_blocks() -> int:
     """Seed dashboard state from blocks that survived in the firewall.
 
     nftables rules live in the kernel and can outlive the Python process. If
     the UI starts empty it would hide those blocks and the next auto-block
-    could add a duplicate rule. Reading them back keeps state honest.
+    could add a duplicate rule. Reading them back keeps state honest. A rule
+    for protected infrastructure is removed instead of restored.
     """
     try:
         blocks = fw.active_blocks()
@@ -268,6 +335,7 @@ def _restore_firewall_blocks() -> int:
     restored = 0
     for ip in sorted(blocks):
         if state.is_protected(ip):
+            _release_firewall_block(ip, "protected infrastructure")
             continue
         if state.block_host(ip, reason="restored from firewall"):
             restored += 1
@@ -319,6 +387,7 @@ async def lifespan(app: FastAPI):
     if MODE != "demo" and mode_label != "live (scapy)":
         log.error("LASSI_MODE=%s is not usable for live capture; %s", MODE, mode_label)
     if MODE == "live" and mode_label == "live (scapy)":
+        _seed_live_gateway()
         _restore_firewall_blocks()
     start_engine(source)
     log.info("LassiNet running in %s on %s:%d", mode_label,
@@ -345,16 +414,19 @@ class RenameRequest(BaseModel):
 
 @app.post("/api/devices/rename")
 def rename_device(req: RenameRequest) -> dict:
-    name = req.name.strip()[:32]
+    name = (req.name or "").strip()[:32]
     if not name:
         return {"ok": False, "error": "name must not be empty"}
-    if req.ip not in state.hosts:
+    ip = _clean_ip(req.ip)
+    if ip is None:
+        return {"ok": False, "error": "That is not a valid IP address"}
+    if ip not in state.hosts:
         return {"ok": False, "error": "device is not on the map yet — wait for discovery"}
     from lassi.state import set_device_name
-    set_device_name(req.ip, name)          # persisted to data/device_names.json
-    host = state.hosts[req.ip]
+    set_device_name(ip, name)              # persisted to data/device_names.json
+    host = state.hosts[ip]
     host["hostname"] = name
-    return {"ok": True, "ip": req.ip, "name": name}
+    return {"ok": True, "ip": ip, "name": name}
 
 
 @app.middleware("http")
@@ -380,45 +452,55 @@ def get_logs(limit: int = 50) -> dict:
         if not EVENTS_LOG_PATH.exists():
             return {"events": []}
         tail = EVENTS_LOG_PATH.read_text(encoding="utf-8").splitlines()[-min(max(limit, 1), 500):]
-        return {"events": [json.loads(line) for line in tail if line.strip()]}
+        events: list[dict] = []
+        for line in tail:
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                continue                 # one truncated line must not hide the rest
+            if isinstance(event, dict):
+                events.append(event)
+        return {"events": events}
     except Exception:
+        log.exception("could not read the event log")
         return {"events": []}
 
 
 @app.post("/api/firewall/block")
 def block(req: BlockRequest) -> dict:
-    try:
-        ipaddress.ip_address(req.ip)
-    except ValueError:
+    ip = _clean_ip(req.ip)
+    if ip is None:
         return {"ok": False, "error": "That is not a valid IP address"}
-    if state.is_protected(req.ip):
+    reason = (req.reason or "manual").strip()[:120] or "manual"
+    if state.is_protected(ip):
         return {"ok": False, "error": "The router and Internet nodes cannot be blocked"}
-    if state.is_blocked(req.ip):
+    if state.is_blocked(ip):
         return {"ok": True, "changed": False, "blocked": True,
                 "rules": state.snapshot()["rules"][:10]}
-    if not fw.block(req.ip, req.reason):
-        return {"ok": False, "changed": False, "blocked": state.is_blocked(req.ip),
+    if not fw.block(ip, reason):
+        return {"ok": False, "changed": False, "blocked": state.is_blocked(ip),
                 "error": f"Firewall provider '{fw.provider}' could not apply the block; nothing changed"}
-    changed = state.block_host(req.ip, req.reason)
-    if not changed and state.is_protected(req.ip):
-        fw.unblock(req.ip)                  # roll back a rule for infrastructure
-    return {"ok": True, "changed": changed, "blocked": state.is_blocked(req.ip),
+    changed = state.block_host(ip, reason)
+    if not changed and state.is_protected(ip):
+        fw.unblock(ip)                      # roll back a rule for infrastructure
+    return {"ok": True, "changed": changed, "blocked": state.is_blocked(ip),
             "rules": state.snapshot()["rules"][:10]}
 
 
 @app.post("/api/firewall/unblock")
 def unblock(req: BlockRequest) -> dict:
-    try:
-        ipaddress.ip_address(req.ip)
-    except ValueError:
+    ip = _clean_ip(req.ip)
+    if ip is None:
         return {"ok": False, "error": "That is not a valid IP address"}
-    if not state.is_blocked(req.ip):
+    if not state.is_blocked(ip):
         return {"ok": True, "changed": False, "blocked": False}
-    if not fw.unblock(req.ip):
+    if not fw.unblock(ip):
         return {"ok": False, "changed": False, "blocked": True,
                 "error": f"Firewall provider '{fw.provider}' could not remove the block; it is still active"}
-    changed = state.unblock_host(req.ip)
-    return {"ok": True, "changed": changed, "blocked": state.is_blocked(req.ip)}
+    changed = state.unblock_host(ip)
+    return {"ok": True, "changed": changed, "blocked": state.is_blocked(ip)}
 
 
 @app.get("/health")
@@ -430,9 +512,13 @@ def health() -> dict:
     """
     capture = _capture if MODE == "live" else None
     capture_error = getattr(capture, "error", None)
-    return {"ok": not capture_error, "mode": state.mode, "model": detector.model is not None,
+    capture_running = bool(getattr(capture, "running", False)) if capture else None
+    # A capture object that is no longer running is unhealthy even if it never
+    # raised (sniff() can return normally after the interface disappears).
+    ok = not capture_error and (capture is None or capture_running is True)
+    return {"ok": ok, "mode": state.mode, "model": detector.model is not None,
             "flows_total": state.stats["flows_total"],
-            "capture_running": bool(getattr(capture, "running", False)) if capture else None,
+            "capture_running": capture_running,
             "capture_error": capture_error}
 
 

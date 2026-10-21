@@ -51,6 +51,30 @@ def test_health_reports_capture_failure(client: TestClient, monkeypatch) -> None
     assert "PermissionError" in data["capture_error"]
 
 
+def test_health_reports_capture_that_stopped_cleanly(client: TestClient, monkeypatch) -> None:
+    class StoppedCapture:
+        error = None
+        running = False
+
+    monkeypatch.setattr(lassi_app, "MODE", "live")
+    monkeypatch.setattr(lassi_app, "_capture", StoppedCapture())
+    data = client.get("/health").json()
+    assert data["ok"] is False
+    assert data["capture_running"] is False
+
+
+def test_health_reports_running_capture(client: TestClient, monkeypatch) -> None:
+    class RunningCapture:
+        error = None
+        running = True
+
+    monkeypatch.setattr(lassi_app, "MODE", "live")
+    monkeypatch.setattr(lassi_app, "_capture", RunningCapture())
+    data = client.get("/health").json()
+    assert data["ok"] is True
+    assert data["capture_running"] is True
+
+
 def test_discovery_cache_reuses_results(monkeypatch) -> None:
     calls: list[int] = []
 
@@ -68,6 +92,24 @@ def test_discovery_cache_reuses_results(monkeypatch) -> None:
     assert len(calls) == 1
     assert hosts1 == hosts2 == [{"ip": "10.0.0.2"}]
     assert gw1 == gw2 == "10.0.0.1"
+
+
+def test_discovery_failure_keeps_last_good_topology(monkeypatch) -> None:
+    calls: list[int] = []
+
+    def broken_discover():
+        calls.append(1)
+        raise OSError("interface disappeared")
+
+    monkeypatch.setattr("lassi.live.discover", broken_discover)
+    monkeypatch.setattr(lassi_app, "DISCOVERY_INTERVAL", 3600.0)
+    monkeypatch.setattr(lassi_app, "_last_discovery_at", 0.0)
+    monkeypatch.setattr(lassi_app, "_discovered_hosts", [{"ip": "10.0.0.2"}])
+    monkeypatch.setattr(lassi_app, "_discovered_gateway", "10.0.0.1")
+    hosts, gateway = lassi_app._discover_cached()
+    assert calls == [1]
+    assert hosts == [{"ip": "10.0.0.2"}]
+    assert gateway == "10.0.0.1"
 
 
 def test_restore_firewall_blocks_seeds_state(client: TestClient, monkeypatch) -> None:
@@ -91,6 +133,60 @@ def test_restore_firewall_blocks_seeds_state(client: TestClient, monkeypatch) ->
         assert ip in client.get("/api/state").json()["blocked_ips"]
     finally:
         lassi_app.state.unblock_host(ip)
+
+
+def test_restore_releases_protected_firewall_rule(client: TestClient, monkeypatch) -> None:
+    snap = client.get("/api/state").json()
+    router = next((n for n in snap["nodes"] if n["role"] == "router"), None)
+    assert router is not None, "demo router must be seeded before the first tick"
+    removed: list[str] = []
+
+    class FakeFirewall:
+        provider = "nftables"
+
+        def active_blocks(self):
+            return {router["ip"]}
+
+        def block(self, ip: str, reason: str = "manual") -> bool:
+            return False
+
+        def unblock(self, ip: str) -> bool:
+            removed.append(ip)
+            return True
+
+    monkeypatch.setattr(lassi_app, "fw", FakeFirewall())
+    assert lassi_app._restore_firewall_blocks() == 0
+    assert removed == [router["ip"]]
+    assert router["ip"] not in client.get("/api/state").json()["blocked_ips"]
+
+
+def test_logs_skip_corrupt_lines(client: TestClient, tmp_path, monkeypatch) -> None:
+    import lassi.state as state_module
+
+    logfile = tmp_path / "events.jsonl"
+    logfile.write_text(
+        '{"ts":"2026-01-01T00:00:00","event":"startup"}\n'
+        '{"truncated":\n'
+        "\n"
+        '{"ts":"2026-01-01T00:00:01","event":"alert"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(state_module, "EVENTS_LOG_PATH", logfile)
+    events = client.get("/api/logs", params={"limit": 10}).json()["events"]
+    kinds = [e.get("event") for e in events]
+    assert "startup" in kinds and "alert" in kinds
+    assert all(isinstance(e, dict) for e in events)
+
+
+def test_block_normalizes_ipv6(client: TestClient) -> None:
+    raw = "2001:0db8::0001"
+    canonical = "2001:db8::1"
+    data = client.post("/api/firewall/block", json={"ip": raw, "reason": "test"}).json()
+    assert data["ok"] is True and data["changed"] is True
+    assert canonical in client.get("/api/state").json()["blocked_ips"]
+    again = client.post("/api/firewall/unblock", json={"ip": raw}).json()
+    assert again["ok"] is True and again["changed"] is True
+    assert canonical not in client.get("/api/state").json()["blocked_ips"]
 
 
 def test_dashboard_served(client: TestClient) -> None:

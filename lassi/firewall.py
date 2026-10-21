@@ -72,20 +72,33 @@ class Firewall:
         return False
 
     def unblock(self, ip: str) -> bool:
-        """Remove the BLOCK rule for `ip`. Returns True only when it was removed."""
+        """Remove every BLOCK rule for `ip`. Returns True only when all were removed.
+
+        Older versions could leave duplicate rules (for example after a restart
+        or a concurrent auto-block). Deleting only the first handle made the API
+        report "unblocked" while the source was still dropped, so remove all
+        matching handles and fail honestly if any command is rejected.
+        """
         if self.provider == "nftables":
             listing = self._nft_list()
             if listing is None:
                 log.warning("cannot list nftables rules; block for %s was not removed", ip)
                 return False
-            for line in listing.splitlines():
-                tokens = line.split()
-                if "drop" in tokens and ip in tokens and "handle" in tokens:
-                    handle = line.rsplit("handle", 1)[-1].strip()
-                    if handle.isdigit():
-                        return self._nft(["delete", "rule", "inet", "lassinet", "handle", handle])
-            log.warning("no nftables block rule found for %s", ip)
-            return False
+            handles = self._nft_block_handles(listing, ip)
+            if not handles:
+                log.warning("no nftables block rule found for %s", ip)
+                return False
+            removed = 0
+            for handle in handles:
+                if self._nft(["delete", "rule", "inet", "lassinet", "handle", handle]):
+                    removed += 1
+                else:
+                    log.warning("could not delete nftables handle %s for %s", handle, ip)
+            if removed != len(handles):
+                log.warning("removed %d/%d nftables rules for %s; block is still active",
+                            removed, len(handles), ip)
+                return False
+            return True
         if self.provider == "opnsense":
             return self._opnsense_alias(ip, add=False)
         if self.provider == "pfsense":
@@ -126,28 +139,47 @@ class Firewall:
         return blocked
 
     @staticmethod
+    def _nft_block_handles(listing: str, ip: str) -> list[str]:
+        """Return every nftables handle whose source is exactly `ip` and drops."""
+        handles: list[str] = []
+        for line in listing.splitlines():
+            tokens = line.split()
+            if "drop" not in tokens or "saddr" not in tokens or "handle" not in tokens:
+                continue
+            try:
+                src = tokens[tokens.index("saddr") + 1]
+                handle = tokens[tokens.index("handle") + 1]
+                ipaddress.ip_address(src)
+            except (ValueError, IndexError):
+                continue
+            if src == ip and handle.isdigit() and handle not in handles:
+                handles.append(handle)
+        return handles
+
+    @staticmethod
     def _nft(args: list[str]) -> bool:
         try:
-            result = subprocess.run(["nft", *args], check=False, capture_output=True, text=True)
+            result = subprocess.run(["nft", *args], check=False, capture_output=True,
+                                    text=True, timeout=10)
             if result.returncode != 0:
                 log.warning("nft command failed: %s", (result.stderr or "").strip())
                 return False
             return True
-        except FileNotFoundError:
-            log.error("nft binary not found \u2014 rule not applied (check that nftables is installed).")
+        except (OSError, subprocess.SubprocessError) as exc:
+            log.error("could not run nft (%s) \u2014 rule not applied", exc)
             return False
 
     @staticmethod
     def _nft_list() -> str | None:
         try:
             result = subprocess.run(["nft", "-a", "list", "table", "inet", "lassinet"],
-                                    check=False, capture_output=True, text=True)
+                                    check=False, capture_output=True, text=True, timeout=10)
             if result.returncode != 0:
                 log.warning("nft list failed: %s", (result.stderr or "").strip())
                 return None
             return result.stdout
-        except FileNotFoundError:
-            log.error("nft binary not found \u2014 cannot list rules.")
+        except (OSError, subprocess.SubprocessError) as exc:
+            log.error("could not run nft (%s) \u2014 cannot list rules", exc)
             return None
 
     def _opnsense_alias(self, ip: str, add: bool) -> bool:

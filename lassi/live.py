@@ -118,6 +118,9 @@ def discover(cidr: str | None = None, timeout: int = 2) -> tuple[list[dict[str, 
         except ValueError:
             log.warning("ignoring invalid cidr %r", c)
             continue
+        if net.version != 4:
+            log.warning("ignoring IPv6 cidr %r: ARP discovery is IPv4-only", c)
+            continue
         # never sweep more than a /24 (an ARP storm on big nets is rude)
         scan = net if net.prefixlen >= 24 else ipaddress.ip_network(
             f"{c.rsplit('/', 1)[0]}/24", strict=False)
@@ -164,27 +167,32 @@ class LiveCapture:
         self.thread: Any = None
 
     def _on_packet(self, pkt: Any) -> None:
-        from scapy.layers.inet import IP, TCP
-        if IP not in pkt:
-            return
-        ip = pkt[IP]
-        key = (ip.src, ip.dst)
-        f = self.flows.setdefault(key, {
-            "src": ip.src, "dst": ip.dst, "pkts": 0, "bytes": 0,
-            "syn_ratio": 0.0, "syns": 0, "ack_or_synacks": 0,
-            "dst_port_count": 0, "_ports": set(), "start": time.time(),
-        })
-        f["pkts"] += 1
-        f["bytes"] += len(pkt)
-        if TCP in pkt:
-            t = pkt[TCP]
-            f["_ports"].add(int(t.dport))
-            f["dst_port_count"] = len(f["_ports"])
-            flags = int(t.flags)
-            if _is_syn(flags):
-                f["syns"] += 1
-            elif flags & 0x10:  # ACK (including SYN+ACK) from the responder
-                f["ack_or_synacks"] += 1
+        # One malformed packet must not kill the whole sniffing thread: scapy
+        # propagates exceptions from `prn` out of sniff().
+        try:
+            from scapy.layers.inet import IP, TCP
+            if IP not in pkt:
+                return
+            ip = pkt[IP]
+            key = (ip.src, ip.dst)
+            f = self.flows.setdefault(key, {
+                "src": ip.src, "dst": ip.dst, "pkts": 0, "bytes": 0,
+                "syn_ratio": 0.0, "syns": 0, "ack_or_synacks": 0,
+                "dst_port_count": 0, "_ports": set(), "start": time.time(),
+            })
+            f["pkts"] += 1
+            f["bytes"] += len(pkt)
+            if TCP in pkt:
+                t = pkt[TCP]
+                f["_ports"].add(int(t.dport))
+                f["dst_port_count"] = len(f["_ports"])
+                flags = int(t.flags)
+                if _is_syn(flags):
+                    f["syns"] += 1
+                elif flags & 0x10:  # ACK (including SYN+ACK) from the responder
+                    f["ack_or_synacks"] += 1
+        except Exception:
+            log.debug("ignoring malformed or unsupported packet", exc_info=True)
 
     def _sniff_loop(self) -> None:
         try:
@@ -194,6 +202,11 @@ class LiveCapture:
             log.exception("live capture stopped")
         finally:
             self.running = False
+            if self.error is None:
+                # sniff() returned without raising. It is no longer capturing,
+                # so /health and the dashboard must not claim a healthy sensor.
+                self.error = "capture stopped unexpectedly"
+                log.error("live capture stopped without an exception")
 
     def start_background(self) -> None:
         import threading

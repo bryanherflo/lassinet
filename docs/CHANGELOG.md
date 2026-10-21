@@ -2,6 +2,21 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.17] — 2026-10-21 · "honest failure paths"
+
+### Fixed
+- **nftables unblock removes every duplicate rule, not just the first one.** If any handle remains, the API now reports failure so the UI cannot claim an unblocked source while traffic is still dropped.
+- **`nft` permission errors, missing binaries and timeouts are reported as firewall failures** instead of escaping as HTTP 500 responses.
+- **`/api/logs` skips a truncated or corrupt JSONL line** instead of returning an empty log for the whole request.
+- **`/health` is unhealthy when the capture thread stops cleanly** (`sniff()` returning without an exception). The sniffer now records `capture stopped unexpectedly` instead of looking healthy.
+- **Live ARP discovery failures keep the last known topology** and retry on the configured interval instead of crashing every engine tick. IPv6 CIDRs are rejected before reaching the IPv4-only ARP sweep.
+- **The known demo router is seeded before the API starts**, and the live default gateway is seeded from the routing table, so a block request cannot hit the gateway during the first engine tick. Stale protected rules are released rather than silently hidden.
+- **API IPs are canonicalized** (for example `2001:0db8::0001` → `2001:db8::1`) and reasons are capped, keeping state, firewall rules and unblock requests consistent.
+- A malformed packet is ignored by the live sniffer instead of terminating capture.
+
+### Tests
+- 65/65 passing, including duplicate-handle removal, permission errors, corrupt log lines, stopped-capture health, discovery failure fallback, IPv6 discovery rejection, IPv6 API normalization and protected-rule release. No UI or cache-buster changes.
+
 ## [0.4.16] — 2026-10-21 · "usable on a real firewall"
 
 ### Added

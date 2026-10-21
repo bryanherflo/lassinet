@@ -216,6 +216,30 @@ def test_live_capture_records_sniff_failure(monkeypatch) -> None:
     assert "PermissionError" in cap.error and "not permitted" in cap.error
 
 
+def test_live_capture_marks_unexpected_normal_exit(monkeypatch) -> None:
+    """sniff() can return cleanly when an interface disappears; that is not healthy."""
+    from lassi.live import LiveCapture
+
+    cap = LiveCapture.__new__(LiveCapture)
+    cap.iface = None
+    cap.error = None
+    cap.running = True
+    monkeypatch.setattr("lassi.live.sniff", lambda **kwargs: None)
+    cap._sniff_loop()
+    assert cap.running is False
+    assert "stopped unexpectedly" in (cap.error or "")
+
+
+def test_discover_ignores_ipv6_cidr(monkeypatch) -> None:
+    import lassi.live as live
+
+    def fail_sweep(*args, **kwargs):
+        raise AssertionError("IPv6 must not be passed to the IPv4 ARP sweep")
+
+    monkeypatch.setattr(live, "_sweep", fail_sweep)
+    assert live.discover("2001:db8::/64") == ([], None)
+
+
 def test_egress_registers_internet_node_and_uplink() -> None:
     st = State()
     st.upsert_host("10.0.0.3", hostname="pc", role="workstation")
@@ -272,7 +296,7 @@ def test_nft_rule_picks_ip_family(monkeypatch) -> None:
     assert all("daddr" not in args for args in captured)
 
 
-def test_nft_unblock_deletes_matching_handle(monkeypatch) -> None:
+def test_nft_unblock_deletes_all_matching_handles(monkeypatch) -> None:
     calls: list[list[str]] = []
     monkeypatch.delenv("LASSI_FW", raising=False)
     monkeypatch.setattr("lassi.firewall.Firewall._nft",
@@ -280,13 +304,33 @@ def test_nft_unblock_deletes_matching_handle(monkeypatch) -> None:
     monkeypatch.setattr(
         "lassi.firewall.Firewall._nft_list",
         staticmethod(lambda: "ip saddr 10.0.0.9 drop # handle 42\n"
-                             "ip saddr 10.0.0.90 drop # handle 43\n"),
+                             "ip saddr 10.0.0.90 drop # handle 43\n"
+                             "ip saddr 10.0.0.9 drop # handle 44\n"),
     )
     from lassi.firewall import Firewall
 
     assert Firewall(provider="nftables").unblock("10.0.0.9") is True
     assert ["delete", "rule", "inet", "lassinet", "handle", "42"] in calls
+    assert ["delete", "rule", "inet", "lassinet", "handle", "44"] in calls
     assert all("43" not in args for args in calls)
+
+
+def test_nft_unblock_fails_if_any_duplicate_remains(monkeypatch) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.delenv("LASSI_FW", raising=False)
+    monkeypatch.setattr(
+        "lassi.firewall.Firewall._nft",
+        staticmethod(lambda args: calls.append(args) or args[-1] != "42"),
+    )
+    monkeypatch.setattr(
+        "lassi.firewall.Firewall._nft_list",
+        staticmethod(lambda: "ip saddr 10.0.0.9 drop # handle 42\n"
+                             "ip saddr 10.0.0.9 drop # handle 44\n"),
+    )
+    from lassi.firewall import Firewall
+
+    assert Firewall(provider="nftables").unblock("10.0.0.9") is False
+    assert len([c for c in calls if c[-1] in ("42", "44")]) == 2
 
 
 def test_nft_failure_is_not_reported_as_success(monkeypatch) -> None:
@@ -302,6 +346,19 @@ def test_nft_failure_is_not_reported_as_success(monkeypatch) -> None:
     assert Firewall(provider="nftables").block("10.0.0.9") is False
     monkeypatch.setattr("lassi.firewall.Firewall._nft_list", staticmethod(lambda: None))
     assert Firewall(provider="nftables").unblock("10.0.0.9") is False
+
+
+def test_nft_permission_error_is_not_reported_as_success(monkeypatch) -> None:
+    monkeypatch.delenv("LASSI_FW", raising=False)
+
+    def denied(*args, **kwargs):
+        raise PermissionError("operation not permitted")
+
+    monkeypatch.setattr("lassi.firewall.subprocess.run", denied)
+    from lassi.firewall import Firewall
+
+    assert Firewall(provider="nftables").block("10.0.0.9") is False
+    assert Firewall(provider="nftables").active_blocks() is None
 
 
 def test_mock_succeeds_and_pfsense_placeholder_fails(monkeypatch) -> None:
