@@ -93,6 +93,7 @@ class State:
         self.links: set[tuple[str, str]] = set()            # infrastructure links (device <-> router)
         self.alerts: deque[dict[str, Any]] = deque(maxlen=200)
         self.rules: list[dict[str, Any]] = []               # firewall rules
+        self.blocked: set[str] = set()                      # IPs with an active BLOCK rule (even if not discovered as a host)
         self.traffic: deque[dict[str, Any]] = deque(maxlen=30)   # recent flows for the live map animation
         self.stats: dict[str, Any] = {"flows_total": 0, "attacks_total": 0, "blocks_total": 0, "flows_per_sec": 0}
         self.model_metrics: dict[str, Any] | None = None
@@ -108,6 +109,11 @@ class State:
             )
             host["last_seen"] = time.time()
             host.update({k: v for k, v in fields.items() if v is not None})
+            if host.get("role") in ("router", "external"):
+                self.blocked.discard(ip)                     # infrastructure is never quarantined
+                host["blocked"] = False
+            elif ip in self.blocked:                         # a rule may predate discovery
+                host["blocked"] = True
             if ip in _aliases:                               # user rename wins, always
                 host["hostname"] = _aliases[ip]
 
@@ -133,7 +139,7 @@ class State:
                 self.hosts["0.0.0.0"] = {
                     "ip": "0.0.0.0", "mac": None, "hostname": "Internet",
                     "role": "external", "open_ports": [], "first_seen": time.time(),
-                    "last_seen": time.time(), "blocked": False,
+                    "last_seen": time.time(), "blocked": "0.0.0.0" in self.blocked,
                 }
             self.links.add(tuple(sorted((router_ip, "0.0.0.0"))))
 
@@ -142,9 +148,10 @@ class State:
                  bytes: int = 0) -> None:
         with self._lock:
             # A blocked source is dropped at the firewall: do not count it, do not
-            # animate it, and do not let it inflate the attack counter. This keeps
-            # the "blocked" badge honest in the map's packet animation.
-            if src and self.hosts.get(src, {}).get("blocked"):
+            # animate it, and do not let it inflate the attack counter. Border
+            # traffic to a blocked host is a separate direction and is not claimed
+            # to be filtered here.
+            if src and src in self.blocked:
                 return
             self.stats["flows_total"] += 1
             self._flow_window += 1
@@ -166,12 +173,38 @@ class State:
             self._flow_window = 0
 
     # ---- firewall -----------------------------------------------------------
-    def block_host(self, ip: str, reason: str = "manual") -> bool:
+    def is_blocked(self, ip: str) -> bool:
+        with self._lock:
+            return ip in self.blocked
+
+    def is_protected(self, ip: str) -> bool:
+        """Infrastructure must never be blocked from the dashboard: dropping the
+        edge router would cut the whole map, and 0.0.0.0 is the Internet
+        placeholder rather than a real host."""
+        if ip == "0.0.0.0":
+            return True
         with self._lock:
             host = self.hosts.get(ip)
-            if host is None or host.get("blocked"):
+            return bool(host and host.get("role") in ("router", "external"))
+
+    def block_host(self, ip: str, reason: str = "manual") -> bool:
+        """Add a BLOCK rule for `ip`.
+
+        The IP does not need to be a discovered host: live alerts can name an
+        external source that never appears on the topology map, and it still
+        deserves a firewall rule. Returns True only when a new rule was added.
+        """
+        if not ip or ip == "0.0.0.0":
+            return False
+        with self._lock:
+            if ip in self.blocked:
                 return False
-            host["blocked"] = True
+            host = self.hosts.get(ip)
+            if host is not None and host.get("role") in ("router", "external"):
+                return False
+            self.blocked.add(ip)
+            if host is not None:
+                host["blocked"] = True
             self.stats["blocks_total"] += 1
             self.rules.append({"ip": ip, "action": "BLOCK", "reason": reason,
                                "time": time.strftime("%H:%M:%S")})
@@ -179,11 +212,14 @@ class State:
         return True
 
     def unblock_host(self, ip: str) -> bool:
+        """Remove an active BLOCK rule for `ip` (known host or not)."""
         with self._lock:
-            host = self.hosts.get(ip)
-            if host is None or not host.get("blocked"):
+            if ip not in self.blocked:
                 return False
-            host["blocked"] = False
+            self.blocked.discard(ip)
+            host = self.hosts.get(ip)
+            if host is not None:
+                host["blocked"] = False
             self.rules.append({"ip": ip, "action": "ALLOW", "reason": "manual unblock",
                                "time": time.strftime("%H:%M:%S")})
         audit({"event": "unblock", "ip": ip})
@@ -194,15 +230,26 @@ class State:
         with self._lock:
             nodes = []
             for h in self.hosts.values():
-                nodes.append({**h, "blocked": bool(h.get("blocked"))})
+                nodes.append({**h, "blocked": h["ip"] in self.blocked})
+            # Active blocks must survive the history cap: if a rule is older
+            # than the last 50 events, the UI still needs its Unblock button.
+            active_rules: list[dict[str, Any]] = []
+            seen_blocked: set[str] = set()
+            for rule in reversed(self.rules):
+                ip = rule["ip"]
+                if rule["action"] == "BLOCK" and ip in self.blocked and ip not in seen_blocked:
+                    active_rules.append(rule)
+                    seen_blocked.add(ip)
             return {
                 "nodes": nodes,
                 "edges": ([{"from": a, "to": b, "kind": "link"} for a, b in self.links]
                           + [{"from": a, "to": b, "kind": "traffic"} for a, b in self.edges]),
                 "alerts": list(self.alerts),
                 "rules": self.rules[-50:][::-1],
+                "active_rules": active_rules,
                 "traffic": list(self.traffic)[::-1],
-                "stats": self.stats,
+                "stats": dict(self.stats),
+                "blocked_ips": sorted(self.blocked),
                 "model_metrics": self.model_metrics,
                 "mode": self.mode,
             }

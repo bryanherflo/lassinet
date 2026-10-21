@@ -2,6 +2,36 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.9] — 2026-10-21 · "know what every control does"
+
+### Added
+- **Help dialog** (`?` toolbar button or `H` / `?`): explains the colour code, traffic dots, device actions, the right column, every shortcut, and — most importantly — **what Block actually does**. Focus-trapped, `Esc` closes, scrolls inside the dialog on small screens.
+- **Selected-device action bar**: clicking a device now shows its name, IP, **Block IP / Unblock IP**, an **Actions…** button (opens the trust menu) and a close button. No hidden gestures required.
+- **Toast feedback** for block, unblock, rename and rejected actions (invalid IP, protected infrastructure, already blocked).
+- **`blocked_ips` and `active_rules`** in `/api/state`, so the UI knows every active block — including an external source that was never discovered as a host.
+- **`blocked now` stat** (renamed from cumulative blocked IPs), with tooltips on every stat card.
+- Demo tip in Help: with auto-block on, the simulation can go quiet after the attacker is blocked; unblock it in Firewall rules to continue.
+
+### Changed
+- **Block is explicitly source-only**: `Block source <IP>` on alerts, `Block IP` / `Unblock IP` on devices. It adds a firewall rule for that IP, dims the device, drops and stops counting/animating flows **from** it, and hides attack paths that touch it. The victim is never blocked. Everything is reversible with **Unblock**.
+- **Firewall rules panel shows active blocks only** (count matches `blocked now`); the full BLOCK/ALLOW history stays in the System log. Active rules are computed from the whole history, so they survive the 50-event display cap.
+- **Infrastructure cannot be blocked** anywhere: `10.0.0.x` router and `0.0.0.0` Internet are protected in state, API, keyboard shortcut, banner, feed and trust menu. A block placed before discovery is released when the host is identified as infrastructure.
+- **Alert sources do not need to be on the map**: blocking an unknown/external alert IP creates a real rule and the feed marks it **Blocked**.
+- Attack names are human-readable (`DDoS`, `Data exfiltration`, `Brute force`, `Port scan`) in the feed, log, banner and toast copy.
+- Map status now reads `live` / `polling` / `connecting…`; labels and tooltips explain demo vs live behaviour.
+
+### Fixed
+- **nftables blocked the wrong direction**: rules now match `saddr` (source) and `unblock` deletes the matching handle instead of the first grep result.
+- Block/unblock API responses report `changed` truthfully and validate IPs, so the UI no longer claims success for a no-op.
+- Blocked-source traffic is dropped **before** counting and alerting (no counter drift, no alert spam, no resurrected paths).
+- Selection auto-pans above the action bar, then re-pans after fit, map restore or a topology change.
+- **390 px layout**: no horizontal scrolling, banner clears the wrapped header badges, hover tooltips are hidden on narrow screens, and the Help dialog scrolls instead of clipping its lower sections.
+- Attack banner close button moved to the top-right on mobile; it no longer sits underneath the text.
+
+### Tests
+- **39/39 passing**, including IP validation, unknown-IP blocks, protected infrastructure, active-rule survival, truthful `changed`, source-drop and nftables command construction.
+- Headless Puppeteer audit at 1600 px and 760 px (toolbar, help, selection, block/unblock, trust menu, feed, rules, banner, rename, keyboard, unknown IP) plus a dedicated 390 px pass: zero console errors and no horizontal overflow.
+
 ## [0.4.8] — 2026-10-21 · "less noise, more room"
 
 ### Changed

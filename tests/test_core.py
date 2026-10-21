@@ -36,9 +36,66 @@ def test_block_unblock_host() -> None:
     assert st.snapshot()["nodes"][0]["blocked"] is False  # type: ignore[index]
 
 
-def test_blocks_missing_or_unseen_host() -> None:
+def test_blocks_unseen_host() -> None:
+    """Live alerts can name a source that is not on the topology map yet: the
+    block must still create a rule and be reversible."""
     st = State()
-    assert st.block_host("9.9.9.9") is False
+    assert st.block_host("9.9.9.9", reason="live alert") is True
+    snap = st.snapshot()
+    assert snap["blocked_ips"] == ["9.9.9.9"]
+    assert snap["active_rules"][0]["ip"] == "9.9.9.9"
+    assert snap["rules"][0]["action"] == "BLOCK" and snap["rules"][0]["ip"] == "9.9.9.9"
+    assert st.block_host("9.9.9.9") is False          # no duplicate rule
+    assert st.unblock_host("9.9.9.9") is True
+    assert st.snapshot()["blocked_ips"] == []
+    assert st.snapshot()["active_rules"] == []
+    assert st.unblock_host("9.9.9.9") is False
+
+
+def test_block_before_discovery() -> None:
+    st = State()
+    assert st.block_host("10.0.0.50") is True
+    st.upsert_host("10.0.0.50", hostname="new", role="workstation")
+    assert st.snapshot()["nodes"][0]["blocked"] is True
+    assert st.unblock_host("10.0.0.50") is True
+    assert st.snapshot()["nodes"][0]["blocked"] is False
+
+
+def test_infrastructure_cannot_be_blocked() -> None:
+    st = State()
+    st.upsert_host("10.0.0.1", hostname="edge-gw", role="router")
+    st.register_egress("10.0.0.1")
+    assert st.is_protected("10.0.0.1") is True
+    assert st.block_host("10.0.0.1") is False
+    assert st.block_host("0.0.0.0") is False       # Internet placeholder
+    assert st.snapshot()["blocked_ips"] == []
+
+
+def test_router_discovered_after_block_is_released() -> None:
+    st = State()
+    assert st.block_host("10.0.0.1") is True        # unknown at block time
+    st.upsert_host("10.0.0.1", hostname="edge-gw", role="router")
+    snap = st.snapshot()
+    assert snap["blocked_ips"] == []                # infrastructure wins
+    assert snap["nodes"][0]["blocked"] is False
+
+
+def test_snapshot_stats_is_a_copy() -> None:
+    st = State()
+    snap = st.snapshot()
+    snap["stats"]["flows_total"] = 999
+    assert st.stats["flows_total"] == 0
+
+
+def test_active_rule_survives_history_cap() -> None:
+    st = State()
+    assert st.block_host("10.0.0.7") is True
+    for i in range(60):
+        st.rules.append({"ip": f"198.51.100.{i}", "action": "BLOCK",
+                         "reason": "filler", "time": "00:00:00"})
+    snap = st.snapshot()
+    assert all(r["ip"] != "10.0.0.7" for r in snap["rules"])   # pushed out of history
+    assert snap["active_rules"][0]["ip"] == "10.0.0.7"         # but still active
 
 
 def test_add_alert_next_time() -> None:
@@ -141,16 +198,34 @@ def test_sim_falls_back_on_garbage_net(monkeypatch) -> None:
 
 
 def test_nft_rule_picks_ip_family(monkeypatch) -> None:
-    captured: list[str] = []
+    captured: list[list[str]] = []
     monkeypatch.setattr("lassi.firewall.Firewall._nft",
-                        staticmethod(lambda cmd: captured.append(cmd)))
+                        staticmethod(lambda args: captured.append(args)))
     from lassi.firewall import Firewall
 
     fw = Firewall(provider="nftables")
     fw.block("10.0.0.9")
     fw.block("2001:db8::1")
-    assert "ip daddr 10.0.0.9" in captured[0]
-    assert "ip6 daddr 2001:db8::1" in captured[1]
+    # The dashboard blocks sources (attackers), so nft must match saddr.
+    assert {"ip", "saddr", "10.0.0.9"} <= set(captured[0])
+    assert {"ip6", "saddr", "2001:db8::1"} <= set(captured[1])
+    assert all("daddr" not in args for args in captured)
+
+
+def test_nft_unblock_deletes_matching_handle(monkeypatch) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr("lassi.firewall.Firewall._nft",
+                        staticmethod(lambda args: calls.append(args)))
+    monkeypatch.setattr(
+        "lassi.firewall.Firewall._nft_list",
+        staticmethod(lambda: "ip saddr 10.0.0.9 drop # handle 42\n"
+                             "ip saddr 10.0.0.90 drop # handle 43\n"),
+    )
+    from lassi.firewall import Firewall
+
+    Firewall(provider="nftables").unblock("10.0.0.9")
+    assert ["delete", "rule", "inet", "lassinet", "handle", "42"] in calls
+    assert all("43" not in args for args in calls)
 
 def test_simulator_reveals_devices_progressively() -> None:
     sim = Simulator()
@@ -270,3 +345,8 @@ def test_blocked_source_flows_are_dropped():
     # traffic from other hosts keeps flowing
     st.add_flow(is_attack=False, src="10.0.0.5", dst="10.0.0.2")
     assert st.snapshot()["traffic"][0]["src"] == "10.0.0.5"
+    # ...including a source that was never discovered as a host
+    st.block_host("203.0.113.9", reason="live alert")
+    before = dict(st.snapshot()["stats"])
+    st.add_flow(is_attack=True, src="203.0.113.9", dst="10.0.0.2")
+    assert st.snapshot()["stats"] == before

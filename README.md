@@ -28,12 +28,12 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 | 🗺️ **Topology map** | Live network graph: devices, roles (router, server, IoT, attacker…), links, blocked status. Traffic animates as role-tinted packet dots with comet trails; attack paths glow red from attacker → router → victim. Deterministic tree layout (Internet → router → devices), zero physics drift. |
 | 📡 **Traffic capture** | Flow aggregation from a real sniffer (scapy) or a built-in simulator. Works on any subnet (10.x, 172.16.x, 192.168.x, custom CIDR via `LASSI_DEMO_NET` / `LASSI_SUBNET`). |
 | 🧠 **ML IDS** | RandomForest classifying flows into *benign / port_scan / brute_force / ddos / data_exfiltration*. Per-mode models (synthetic for demo, CICIDS2017 for live). Rule-based fallback when model missing. |
-| 🚨 **Threat feed** | Severity-ranked alerts with confidence, detection engine (`ml` vs `rules`), timestamps. Color-coded badges, one-click block buttons, and a dismissible banner for high/critical hits. |
-| 🧱 **Firewall control** | Read + write rules: `mock` (default), `nftables` (Linux), OPNsense/pfSense API. Auto-block on critical alerts (SOAR-style). Blocked sources are dropped from the flow counters and packet animation. |
+| 🚨 **Threat feed** | Severity-ranked alerts with confidence, detection engine (`ml` vs `rules`), timestamps and readable attack names. Each alert has a one-click **Block source** action; high/critical hits also raise a dismissible banner. |
+| 🧱 **Firewall control** | Read + write rules: `mock` (default), `nftables` (Linux), OPNsense/pfSense API. Blocks are **source-only**, can target an unknown external IP, and are reversible with Unblock. Auto-block on critical alerts (SOAR-style); blocked sources are dropped from the flow counters and packet animation. |
 | 🤖 **Auto-response** | Optional auto-block of high/critical sources. Configurable via `LASSI_AUTO_BLOCK`. |
-| 📜 **System log + audit trail** | Colour-coded event stream in UI **and** local JSONL log (`logs/events.jsonl`, tail via `GET /api/logs?limit=N`). |
+| 📜 **System log + audit trail** | Colour-coded event stream in UI **and** local JSONL log (`logs/events.jsonl`, tail via `GET /api/logs?limit=N`). The Firewall panel shows active blocks only; the log keeps the full BLOCK/ALLOW history. |
 | ⚡ **Zero config** | `pip install` → `python app.py` → open `http://localhost:8000`. Demo mode needs no privileges. Map library bundled locally — no CDN, no build step, works offline. |
-| 🎯 **Intuitive UX** | Right-click a device for the **trust menu** (mark trusted/suspicious, clear, block). Confirmed attackers escalate on the map; double-click renames (persists); `B` blocks, `R` refits, `M` minimizes, `L` toggles the legend, `D` hides the traffic dots, `Esc` dismisses. Responsive layout, live-stream indicator, reduced-motion support. |
+| 🎯 **Intuitive UX** | Click a device for the **action bar** (Block/Unblock, Actions…), right-click for the **trust menu**, double-click to rename, and press `?`/`H` for the built-in Help. Confirmed attackers escalate on the map; `B` blocks, `R` refits, `M` minimizes, `L` toggles the legend, `D` hides the traffic dots, `Esc` closes. Responsive layout, live-stream indicator, reduced-motion support. |
 
 ## 🚀 Quickstart
 
@@ -48,7 +48,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (31 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (39 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt
@@ -59,15 +59,18 @@ Open **http://localhost:8000** — within seconds you will see devices joining t
 
 **About the packet dots on the map** (and honesty about what they show): the travelling dots are *not* decoration — they are rendered **only** from the engine's real flow stream. Every dot corresponds to an actual flow (source, destination, byte size, verdict) that passed through the detection pipeline. In **demo mode** that network is simulated (the badge says *"demo (simulated)"*: the simulator generates the flows, but they still go through the same ML detection → alert → firewall path as real packets). In **live mode** (`LASSI_MODE=live`) the same pipeline feeds the dots from **physically sniffed packets**, so the traffic you see is the traffic on your wire.
 
+**What Block does:** every block is **source-only**. `Block source <IP>` on an alert, or `Block IP` on a device, adds a firewall rule for that IP (never the victim), marks the device as blocked, and stops counting or animating traffic **from** it. In demo mode the rule is simulated (`mock` provider) — nothing on your PC changes. In live mode the configured provider (nftables or OPNsense) applies it. `Unblock` reverses it. The router and the Internet placeholder are protected and can never be blocked.
+
 **Shortcuts:**
-- Right-click a node → trust menu (mark trusted / suspicious, clear, or block in the firewall)
+- Click a node → action bar (Block/Unblock, Actions…, close)
+- Right-click a node → trust menu (mark trusted / suspicious, clear, or block/unblock)
 - Select a node on the map and press `B` to block it
 - Double-click a node to rename it (persists across restarts)
-- Press `R` to refit the map view, `M` to minimize the map, `L` to toggle the legend, `D` to hide/show the traffic dots
-- Press `Esc` to close the trust menu / alert banner and deselect
-- Use feed/rule buttons to block/unblock
+- Press `H` or `?` for the Help dialog, `R` to refit the map, `M` to minimize it, `L` to toggle the legend, `D` to hide/show the traffic dots
+- Press `Esc` to close Help / the trust menu / the alert banner and clear the selection
+- Use the feed and rule buttons to block/unblock; the Firewall panel lists active blocks only
 
-The badge at the top right of the map shows the live stream state: `ws live` while the WebSocket pushes snapshots, `polling` when it falls back to `/api/state`, and `connecting…` during startup or reconnect.
+The badge at the top right of the map shows the live stream state: `live` while the WebSocket pushes snapshots, `polling` when it falls back to `/api/state`, and `connecting…` during startup or reconnect.
 
 ## 🧪 Modes & configuration
 
@@ -166,7 +169,7 @@ LassiNet is an **educational project**: discovery, capture, and blocking must on
 
 ## 🗺️ Roadmap
 
-- [x] Unit + API tests (`pytest`, 31 tests) with GitHub Actions CI
+- [x] Unit + API tests (`pytest`, 39 tests) with GitHub Actions CI
 - [ ] Zeek/Argus feed instead of hand-rolled flow aggregation
 - [ ] Host-shield agents (report process/service inventory)
 - [ ] Alert → playbook chain (block + re-scan + report generation)

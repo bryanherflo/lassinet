@@ -9,7 +9,7 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.11">
+<link rel="stylesheet" href="style.css?v=3.14">
 <script src="vendor/vis-network.min.js"></script>
 <script>
   if (typeof vis === "undefined")
@@ -20,16 +20,16 @@
 <header>
   <div class="brand"><span class="shield">&#128737;&#65039;</span> LassiNet</div>
   <div class="badges">
-    <span id="mode-badge" class="badge">…</span>
-    <span id="model-badge" class="badge secondary"></span>
+    <span id="mode-badge" class="badge" title="Demo mode: simulated traffic, no real packets">…</span>
+    <span id="model-badge" class="badge secondary" title="Intrusion-detection model"></span>
   </div>
 </header>
 
 <section class="stats">
-  <div class="stat"><div class="value" id="s-devices">0</div><div class="label">🖥️ devices</div></div>
-  <div class="stat"><div class="value" id="s-flows">0</div><div class="label">⚡ flows/s</div></div>
-  <div class="stat danger"><div class="value" id="s-alerts">0</div><div class="label">🚨 attacks</div></div>
-  <div class="stat warn"><div class="value" id="s-blocked">0</div><div class="label">⛔ blocked IPs</div></div>
+  <div class="stat" title="Devices currently visible on the map"><div class="value" id="s-devices">0</div><div class="label">🖥️ devices</div></div>
+  <div class="stat" title="Flows sampled per second (blocked sources are dropped)"><div class="value" id="s-flows">0</div><div class="label">⚡ flows/s</div></div>
+  <div class="stat danger" title="Attacks detected since LassiNet started"><div class="value" id="s-alerts">0</div><div class="label">🚨 attacks</div></div>
+  <div class="stat warn" title="IPs with an active firewall block (devices and external sources)"><div class="value" id="s-blocked">0</div><div class="label">⛔ blocked now</div></div>
 </section>
 
 <main>
@@ -48,8 +48,11 @@
         <button id="btn-toggle-fx" class="toolbar-btn" title="Hide traffic dots (D)" aria-label="Toggle traffic dots" aria-pressed="true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2.2"/><circle cx="11" cy="12" r="1.5" opacity=".65"/><circle cx="16.5" cy="12" r="1" opacity=".35"/></svg>
         </button>
+        <button id="btn-help" class="toolbar-btn" title="Help &amp; shortcuts (H)" aria-label="Help and shortcuts" aria-haspopup="dialog">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.8 2.4c-.9.5-1.4 1-1.4 1.9"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></svg>
+        </button>
       </div>
-      <span id="map-status" class="map-status">connecting…</span>
+      <span id="map-status" class="map-status" role="status">connecting…</span>
     </div>
 
     <div id="map"></div>
@@ -69,26 +72,82 @@
         <div class="li attacker"><span class="dot">★</span><span>Attacker</span></div>
         <div class="li trusted"><span class="dot"></span><span>Trusted</span></div>
         <div class="li suspicious"><span class="dot">?</span><span>Suspicious</span></div>
-        <div class="li blocked"><span class="dot"></span><span>Blocked</span></div>
+        <div class="li blocked" title="Firewall block: traffic from this IP is dropped"><span class="dot"></span><span>Blocked</span></div>
         <div class="legend-sep"></div>
         <div class="li flow"><span class="dot"></span><span>Normal flow</span></div>
         <div class="li attack-flow"><span class="dot"></span><span>Attack flow</span></div>
       </div>
     </div>
 
-    <div id="hint">drag to pan · wheel to zoom · B block · double-click rename · right-click trust · R refit · M map · L legend · D dots · red = attack</div>
+    <div id="selection-bar" hidden>
+      <span class="sel-dot"></span>
+      <span class="sel-name" id="sel-name"></span>
+      <span class="sel-ip" id="sel-ip"></span>
+      <button type="button" id="sel-block" class="sel-btn danger">Block</button>
+      <button type="button" id="sel-actions" class="sel-btn" aria-haspopup="menu">Actions…</button>
+      <button type="button" id="sel-close" class="sel-close" aria-label="Clear selection" title="Clear selection">×</button>
+    </div>
+
+    <div id="hint">click a device for actions · right-click for more · drag to pan · wheel to zoom · ? help</div>
   </div>
 
   <aside>
-    <h2>&#128679; Threat feed <span class="count" id="alerts-count">0</span></h2>
+    <h2 title="Detections. Block acts on the source IP of the alert.">&#128679; Threat feed <span class="count" id="alerts-count">0</span></h2>
     <div id="alerts" class="feed"></div>
-    <h2>&#128274; Firewall rules <span class="count" id="rules-count">0</span></h2>
+    <h2 title="Active blocks. The system log keeps the full block/unblock history.">&#128274; Firewall rules <span class="count" id="rules-count">0</span></h2>
+    <p class="section-note">Active blocks only. Block source drops traffic from that IP; Unblock reverses it. History stays in the System log.</p>
     <div id="rules" class="feed"></div>
     <h2>&#128225; System log <span class="count" id="log-count">0</span></h2>
     <div id="log" class="feed log"></div>
   </aside>
 </main>
 
-<script src="app.js?v=3.11"></script>
+<div id="help-overlay" class="modal-overlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <div class="modal-head">
+      <h3 id="help-title">How to use LassiNet</h3>
+      <button type="button" id="help-close" class="modal-close" aria-label="Close help" title="Close (Esc)">×</button>
+    </div>
+    <div class="modal-body">
+      <p class="lead">A live map of your network. Once you know the two colour codes, the rest is read at a glance.</p>
+      <div class="help-block">
+        <h4>What does Block do?</h4>
+        <p><b>Block source</b> on a threat card adds a firewall rule for that alert's <b>source IP</b> — never the victim. <b>Block IP</b> on a device adds the same rule for that device. LassiNet marks it blocked, drops flows from it, stops counting and animating them, and records a <b>BLOCK</b> entry in Firewall rules. Alert history is kept.</p>
+        <p>In demo mode the rule is simulated (<b>mock</b> provider): nothing on your PC changes. In live mode the configured provider (nftables or OPNsense) applies it. <b>Unblock</b> — on a blocked device or in a rule — reverses it.</p>
+        <p class="help-tip">Demo tip: critical attacks are auto-blocked by default, so the simulation can go quiet. Unblock the attacker in Firewall rules to let it continue.</p>
+      </div>
+      <div class="help-grid">
+        <div>
+          <h4>Traffic dots</h4>
+          <p><span class="help-dot normal"></span><b>Normal flow</b> — one soft blue dot per sampled flow.<br>
+          <span class="help-dot attack"></span><b>Attack flow</b> — a red trail moving toward the victim.<br>
+          Press <kbd>D</kbd> to hide or show all dots.</p>
+        </div>
+        <div>
+          <h4>Device colours</h4>
+          <p>Purple = router · blue = server / Internet · green = workstation / trusted · orange = IoT / suspicious · grey = printer. A red skull marks a confirmed attacker; a dashed red ring and a dimmed node mean the firewall blocked it.</p>
+        </div>
+        <div>
+          <h4>Act on a device</h4>
+          <p><b>Click</b> a device to select it and open its action bar. <b>Right-click</b> for the trust menu. <b>Double-click</b> to rename it. <kbd>B</kbd> blocks the selected host (never the router or Internet).</p>
+        </div>
+        <div>
+          <h4>Right column</h4>
+          <p><b>Threats</b> are detections, each with a one-click <b>Block source</b>. <b>Firewall</b> lists active blocks; Unblock removes one. <b>Log</b> is the full event stream. The column scrolls as one page.</p>
+        </div>
+      </div>
+      <h4>Keyboard</h4>
+      <div class="keys">
+        <span><kbd>B</kbd> block</span><span><kbd>R</kbd> refit</span><span><kbd>M</kbd> map</span>
+        <span><kbd>L</kbd> legend</span><span><kbd>D</kbd> dots</span><span><kbd>H</kbd> help</span><span><kbd>Esc</kbd> close</span>
+      </div>
+      <p class="help-note">In demo mode LassiNet simulates traffic and attacks on a fictional 10.0.0.0/24 network — nothing is captured from your real network. In live mode the same map shows real devices and flows.</p>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+<script src="app.js?v=3.14"></script>
 </body>
 </html>

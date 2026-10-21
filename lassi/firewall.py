@@ -33,9 +33,13 @@ class Firewall:
         log.info("Firewall provider: %s", self.provider)
 
     def block(self, ip: str, reason: str = "manual") -> None:
-        """Apply a BLOCK rule for `ip` on the configured provider."""
+        """Apply a BLOCK rule for traffic **from** `ip` on the provider.
+
+        The dashboard always blocks the source of a detection (the attacker),
+        so nftables matches `saddr`. The rule is reversible with `unblock`.
+        """
         if self.provider == "nftables":
-            self._nft(f"nft add rule inet lassinet drop {_family(ip)} daddr {ip}")
+            self._nft(["add", "rule", "inet", "lassinet", "drop", _family(ip), "saddr", ip])
         elif self.provider == "pfsense":
             self._opnsense_rule(ip, block=True)
         else:
@@ -44,18 +48,33 @@ class Firewall:
     def unblock(self, ip: str) -> None:
         """Remove the BLOCK rule for `ip` on the configured provider."""
         if self.provider == "nftables":
-            self._nft(f"nft delete rule inet lassinet handle $(nft -a list table inet lassinet | grep {ip} | awk '{{print $NF}}')")
+            for line in self._nft_list().splitlines():
+                tokens = line.split()
+                if "drop" in tokens and ip in tokens and "handle" in tokens:
+                    handle = line.rsplit("handle", 1)[-1].strip()
+                    if handle.isdigit():
+                        self._nft(["delete", "rule", "inet", "lassinet", "handle", handle])
         elif self.provider == "pfsense":
             self._opnsense_rule(ip, block=False)
         else:
             log.info("[mock] ALLOW %s", ip)
 
     @staticmethod
-    def _nft(cmd: str) -> None:
+    def _nft(args: list[str]) -> None:
         try:
-            subprocess.run(cmd.split(), check=False)
+            result = subprocess.run(["nft", *args], check=False, capture_output=True, text=True)
+            if result.returncode != 0:
+                log.warning("nft command failed: %s", (result.stderr or "").strip())
         except FileNotFoundError:
-            log.error("nft binary not found — rule not applied (check that nftables is installed).")
+            log.error("nft binary not found \u2014 rule not applied (check that nftables is installed).")
+
+    @staticmethod
+    def _nft_list() -> str:
+        try:
+            return subprocess.run(["nft", "-a", "list", "table", "inet", "lassinet"],
+                                  check=False, capture_output=True, text=True).stdout
+        except FileNotFoundError:
+            return ""
 
     def _opnsense_rule(self, ip: str, block: bool) -> None:
         """OPNsense REST API NC — placeholder showing the integration point."""

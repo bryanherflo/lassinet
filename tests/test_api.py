@@ -31,7 +31,7 @@ def test_dashboard_served(client: TestClient) -> None:
 
 def test_state_shape(client: TestClient) -> None:
     snap = client.get("/api/state").json()
-    for key in ["nodes", "edges", "alerts", "rules", "stats", "mode"]:
+    for key in ["nodes", "edges", "alerts", "rules", "active_rules", "stats", "blocked_ips", "mode"]:
         assert key in snap
 
 
@@ -45,13 +45,43 @@ def test_logs_endpoint(client: TestClient) -> None:
 
 
 def test_block_and_unblock_flow(client: TestClient) -> None:
-    r = client.post("/api/firewall/block", json={"ip": "10.0.0.9", "reason": "test"})
-    assert r.status_code == 200 and r.json()["ok"] is True
+    # Use an external IP that the demo engine never auto-blocks, so the test is
+    # deterministic: blocking does not require the IP to be a discovered host.
+    ip = "203.0.113.9"
+    r = client.post("/api/firewall/block", json={"ip": ip, "reason": "test"})
+    data = r.json()
+    assert r.status_code == 200 and data["ok"] is True
+    assert data["changed"] is True and data["blocked"] is True
 
     snap = client.get("/api/state").json()
-    node = next((n for n in snap["nodes"] if n["ip"] == "10.0.0.9"), None)
-    if node is not None:  # attacker is revealed a few seconds into demo mode
-        assert node["blocked"] is True
+    assert ip in snap["blocked_ips"]
+    assert any(rule["ip"] == ip and rule["action"] == "BLOCK" for rule in snap["active_rules"])
+    assert any(rule["ip"] == ip and rule["action"] == "BLOCK" for rule in snap["rules"])
 
-    r = client.post("/api/firewall/unblock", json={"ip": "10.0.0.9"})
-    assert r.json()["ok"] is True
+    dup = client.post("/api/firewall/block", json={"ip": ip, "reason": "dup"}).json()
+    assert dup["changed"] is False and dup["blocked"] is True
+
+    r = client.post("/api/firewall/unblock", json={"ip": ip}).json()
+    assert r["changed"] is True and r["blocked"] is False
+    snap = client.get("/api/state").json()
+    assert ip not in snap["blocked_ips"]
+    assert all(rule["ip"] != ip for rule in snap["active_rules"])
+    again = client.post("/api/firewall/unblock", json={"ip": ip}).json()
+    assert again["changed"] is False
+
+
+def test_infrastructure_block_rejected(client: TestClient) -> None:
+    snap = client.get("/api/state").json()
+    router = next((n for n in snap["nodes"] if n["role"] == "router"), None)
+    if router is None:
+        pytest.skip("demo router not discovered yet")
+    data = client.post("/api/firewall/block",
+                       json={"ip": router["ip"], "reason": "must fail"}).json()
+    assert data["ok"] is False and "cannot be blocked" in data["error"]
+    assert router["ip"] not in client.get("/api/state").json()["blocked_ips"]
+
+
+def test_invalid_ip_rejected(client: TestClient) -> None:
+    for path in ("/api/firewall/block", "/api/firewall/unblock"):
+        data = client.post(path, json={"ip": "not-an-ip"}).json()
+        assert data["ok"] is False and "valid IP" in data["error"]

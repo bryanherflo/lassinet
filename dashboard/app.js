@@ -31,6 +31,31 @@ function esc(s) {
 
 var SEV_ICONS = { critical: "\u{1F6A8}", high: "\u26A0\uFE0F", medium: "\u26D3\uFE0F", info: "\u2705" };
 
+// Technical detector names -> labels a human can read at a glance.
+var ATTACK_LABELS = {
+  port_scan: "Port scan",
+  brute_force: "Brute force",
+  ddos: "DDoS",
+  data_exfiltration: "Data exfiltration",
+  auto_block: "Auto-block fired",
+};
+function attackLabel(name) {
+  return ATTACK_LABELS[name] || String(name || "attack").replace(/_/g, " ");
+}
+
+// Infrastructure addresses (edge router, Internet placeholder) are never valid
+// block targets: dropping the router would cut the whole map. Any other IP —
+// including an external source that is not on the map yet — can be blocked.
+function isBlockableNode(ip) {
+  var node = nodes.get(ip);
+  return !!node && node.hostRole !== "router" && node.hostRole !== "external";
+}
+function canBlockIp(ip) {
+  if (!ip || ip === "0.0.0.0") return false;
+  var node = nodes.get(ip);
+  return !node || (node.hostRole !== "router" && node.hostRole !== "external");
+}
+
 var nodes = new vis.DataSet([]);
 var edges = new vis.DataSet([]);
 var network = new vis.Network(
@@ -168,15 +193,19 @@ function showAttackBanner(alert) {
   el.id = "attack-banner";
   el.className = "attack-banner " + sev;
   el.setAttribute("role", "alert");
+  var blockAction = canBlockIp(alert.src)
+    ? '<button class="banner-act" title="Drop traffic from ' + esc(alert.src) + ' at the firewall (reversible)">Block source ' + esc(alert.src) + '</button>'
+    : "";
   el.innerHTML = '<div class="banner-content"><span class="banner-icon">' + icon + '</span>' +
-    '<div class="banner-text"><strong>' + esc(String(alert.attack || "attack").replace(/_/g, " ")) + ' detected</strong>' +
+    '<div class="banner-text"><strong>' + esc(attackLabel(alert.attack)) + ' detected</strong>' +
     '<span>' + esc(alert.src) + ' \u2192 ' + esc(alert.dst) + ' \u00B7 confidence ' + esc(conf) + ' \u00B7 engine ' + esc(alert.engine || "ml") + '</span></div>' +
-    '<button class="banner-act">Block ' + esc(alert.src) + '</button>' +
+    blockAction +
     '<button class="banner-close" aria-label="Dismiss alert" title="Dismiss">\u00D7</button></div>';
   document.body.appendChild(el);
   attackBannerEl = el;
   el.querySelector(".banner-close").onclick = hideAttackBanner;
-  el.querySelector(".banner-act").onclick = function() {
+  var act = el.querySelector(".banner-act");
+  if (act) act.onclick = function() {
     post("/api/firewall/block", { ip: alert.src, reason: "operator blocked from attack banner" });
     hideAttackBanner();
   };
@@ -218,7 +247,9 @@ function fxSync(data) {
   fxRoles = new Map(data.nodes.map(function(h) { return [h.ip, h.role]; }));
   fxLinks = new Set(data.edges.filter(function(e) { return e.kind === "link"; }).map(function(e) { return e.from + "|" + e.to; }));
   trafficSamples = Array.isArray(data.traffic) ? data.traffic : [];
-  blockedHosts = new Set(data.nodes.filter(function(h) { return h.blocked; }).map(function(h) { return h.ip; }));
+  var blocked = Array.isArray(data.blocked_ips) ? data.blocked_ips.slice() : [];
+  data.nodes.forEach(function(h) { if (h.blocked && blocked.indexOf(h.ip) < 0) blocked.push(h.ip); });
+  blockedHosts = new Set(blocked);
 }
 
 function spawnAmbient(now) {
@@ -308,8 +339,133 @@ function drawAttackFx(now) {
 }
 (function tick() { drawAttackFx(Date.now()); requestAnimationFrame(tick); })();
 
-network.on("selectNode", function(p) { selectedNodeIp = p.nodes[0] || null; });
-network.on("deselectNode", function() { selectedNodeIp = null; });
+network.on("selectNode", function(p) {
+  selectedNodeIp = p.nodes[0] || null;
+  updateSelectionBar();
+});
+network.on("deselectNode", function() {
+  selectedNodeIp = null;
+  updateSelectionBar();
+});
+
+// Selected-device action bar: makes click-to-act discoverable without knowing
+// the right-click menu or the B shortcut.
+var lastPannedSelection = null;
+function ensureSelectionVisible() {
+  if (!selectedNodeIp) return;
+  var bar = document.getElementById("selection-bar");
+  var mapEl = document.getElementById("map");
+  if (!bar || bar.hidden || !mapEl) return;
+  var coords = network.getPositions([selectedNodeIp])[selectedNodeIp];
+  if (!coords) return;
+  var dom = network.canvasToDOM(coords);
+  var mapRect = mapEl.getBoundingClientRect();
+  // Use layout offset, not getBoundingClientRect: the bar has an entrance
+  // animation (translateY) and measuring mid-animation would under-pan.
+  var containerRect = document.getElementById("map-container").getBoundingClientRect();
+  var barTop = containerRect.top + bar.offsetTop;
+  // Leave room for the label under the node, not just the circle.
+  var overlap = (mapRect.top + dom.y + 28) - barTop;
+  if (overlap <= 0) return;
+  var view = network.getViewPosition();
+  var scale = network.getScale() || 1;
+  network.moveTo({
+    position: { x: view.x, y: view.y + overlap / scale },
+    animation: { duration: 220, easingFunction: "easeOutQuad" },
+  });
+}
+function updateSelectionBar() {
+  var bar = document.getElementById("selection-bar");
+  if (!bar) return;
+  var node = selectedNodeIp ? nodes.get(selectedNodeIp) : null;
+  var baseRole = node ? (node.hostRole || node.role) : null;
+  if (!node || baseRole === "router" || baseRole === "external") {
+    bar.hidden = true;
+    lastPannedSelection = null;
+    return;
+  }
+  var blocked = blockedHosts.has(selectedNodeIp);
+  bar.hidden = false;
+  bar.classList.toggle("blocked", blocked);
+  document.getElementById("sel-name").textContent = node.hostname || String(node.label || selectedNodeIp).split("\n")[0];
+  document.getElementById("sel-ip").textContent = selectedNodeIp;
+  var btn = document.getElementById("sel-block");
+  btn.textContent = blocked ? "Unblock IP" : "Block IP";
+  btn.className = "sel-btn " + (blocked ? "safe" : "danger");
+  btn.title = blocked ? "Remove the firewall block for " + selectedNodeIp : "Drop traffic from " + selectedNodeIp + " at the firewall (reversible)";
+  btn.setAttribute("aria-label", (blocked ? "Unblock " : "Block ") + selectedNodeIp);
+  // Pan only when the selection changes (not on every data tick), so the
+  // operator can still pan freely while a device stays selected.
+  if (lastPannedSelection !== selectedNodeIp) {
+    lastPannedSelection = selectedNodeIp;
+    requestAnimationFrame(ensureSelectionVisible);
+  }
+}
+document.getElementById("sel-block").onclick = function() {
+  if (!selectedNodeIp) return;
+  if (blockedHosts.has(selectedNodeIp)) post("/api/firewall/unblock", { ip: selectedNodeIp });
+  else post("/api/firewall/block", { ip: selectedNodeIp, reason: "operator blocked selected node" });
+};
+document.getElementById("sel-actions").onclick = function() {
+  if (!selectedNodeIp) return;
+  var pos = nodeDOMPos(selectedNodeIp);
+  var rect = fxHost.getBoundingClientRect();
+  var cx = pos ? rect.left + pos.x : rect.left + rect.width / 2;
+  var cy = pos ? rect.top + pos.y : rect.top + 90;
+  showTrustMenu({ clientX: cx, clientY: cy, preventDefault: function() {} }, selectedNodeIp);
+};
+document.getElementById("sel-close").onclick = function() {
+  selectedNodeIp = null;
+  updateSelectionBar();
+  closeTrustMenu();
+  network.unselectAll();
+};
+
+// Help dialog: the map is dense, so one short reference beats guessing what a
+// colour or an icon means. Opened from the toolbar or with H / ?.
+var helpOverlay = document.getElementById("help-overlay");
+var helpReturnFocus = null;
+function openHelp() {
+  if (!helpOverlay || !helpOverlay.hidden) return;
+  helpReturnFocus = document.activeElement;
+  helpOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  var body = helpOverlay.querySelector(".modal-body");
+  if (body) body.scrollTop = 0;
+  var close = document.getElementById("help-close");
+  if (close) close.focus();
+}
+function closeHelp() {
+  if (!helpOverlay || helpOverlay.hidden) return;
+  helpOverlay.hidden = true;
+  document.body.classList.remove("modal-open");
+  if (helpReturnFocus && helpReturnFocus.focus) helpReturnFocus.focus();
+  helpReturnFocus = null;
+}
+document.getElementById("btn-help").onclick = openHelp;
+document.getElementById("help-close").onclick = closeHelp;
+helpOverlay.addEventListener("click", function(ev) { if (ev.target === helpOverlay) closeHelp(); });
+helpOverlay.addEventListener("keydown", function(ev) {
+  if (ev.key !== "Tab") return;
+  var focusable = helpOverlay.querySelectorAll("button, [href], [tabindex]:not([tabindex='-1'])");
+  if (!focusable.length) return;
+  var first = focusable[0], last = focusable[focusable.length - 1];
+  if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+  else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+});
+
+function toast(msg, kind) {
+  var wrap = document.getElementById("toast-container");
+  if (!wrap) return;
+  var el = document.createElement("div");
+  el.className = "toast" + (kind ? " " + kind : "");
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(function() {
+    el.classList.add("out");
+    setTimeout(function() { el.remove(); }, 220);
+  }, 3200);
+}
 
 // Right-click anywhere on the map: open the trust menu only when a node is hit.
 // Listening on the container (instead of vis' oncontext) gives us a reliable
@@ -341,7 +497,11 @@ function showTrustMenu(event, ip) {
   } else {
     rows += '<div class="trust-menu-note">Infrastructure node \u2014 trust marks are not available.</div>';
   }
-  if (currentRole !== "router") rows += '<button class="trust-btn danger" data-action="block">\u{1F6AB} Block in firewall</button>';
+  if (markable) {
+    rows += blockedHosts.has(ip)
+      ? '<button class="trust-btn safe" data-action="unblock" title="Remove the firewall block for ' + esc(ip) + '">\u2713 Unblock ' + esc(ip) + '</button>'
+      : '<button class="trust-btn danger" data-action="block" title="Drop traffic from ' + esc(ip) + ' at the firewall (reversible)">\u{1F6AB} Block ' + esc(ip) + '</button>';
+  }
 
   var menu = document.createElement("div");
   menu.id = "trust-menu"; menu.className = "trust-menu"; menu.setAttribute("role", "menu");
@@ -365,14 +525,16 @@ function handleTrustAction(ip, action) {
     case "suspicious": if (suspiciousDevices.has(ip)) { suspiciousDevices.delete(ip); revertToOriginalRole(ip); } else { suspiciousDevices.add(ip); trustedDevices.delete(ip); markAsSuspicious(ip); } break;
     case "clear": trustedDevices.delete(ip); suspiciousDevices.delete(ip); revertToOriginalRole(ip); break;
     case "block": post("/api/firewall/block", { ip: ip, reason: "operator blocked from trust menu" }); break;
+    case "unblock": post("/api/firewall/unblock", { ip: ip }); break;
   }
   closeTrustMenu();
 }
 
 function nodeInfoTitle(node, headline) {
   var ports = node.openPorts && node.openPorts.length ? node.openPorts.join(", ") : "\u2014";
+  var infra = node.hostRole === "router" || node.hostRole === "external";
   return headline + "\nMAC: " + (node.mac || "n/a") + "\nports: " + ports +
-    "\ndouble-click to rename \u00B7 select + B to block \u00B7 right-click for trust menu";
+    (infra ? "\ndouble-click to rename" : "\nclick for actions \u00B7 right-click for trust menu \u00B7 double-click to rename");
 }
 
 function applyNodeRole(ip, role, headline) {
@@ -406,9 +568,18 @@ network.on("doubleClick", function(p) { var ip = p.nodes[0]; if (!ip) return; va
 window.addEventListener("keydown", function(ev) {
   if (ev.target && (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA" || ev.target.isContentEditable)) return;
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  if (helpOverlay && !helpOverlay.hidden) {
+    if (ev.key === "Escape") { ev.preventDefault(); closeHelp(); }
+    return;
+  }
   var key = ev.key.toLowerCase();
-  if (key === "b" && selectedNodeIp) post("/api/firewall/block", { ip: selectedNodeIp, reason: "operator blocked selected node" });
-  else if (ev.key === "Escape") { network.unselectAll(); closeTrustMenu(); hideAttackBanner(); }
+  if (ev.key === "?" || key === "h") { ev.preventDefault(); openHelp(); }
+  else if (key === "b" && selectedNodeIp) {
+    if (!isBlockableNode(selectedNodeIp)) toast("Infrastructure nodes cannot be blocked", "error");
+    else if (blockedHosts.has(selectedNodeIp)) toast(selectedNodeIp + " is already blocked", "error");
+    else post("/api/firewall/block", { ip: selectedNodeIp, reason: "operator blocked selected node" });
+  }
+  else if (ev.key === "Escape") { selectedNodeIp = null; updateSelectionBar(); network.unselectAll(); closeTrustMenu(); hideAttackBanner(); }
   else if (key === "r") network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } });
   else if (key === "m") toggleMapMinimize();
   else if (key === "l") toggleLegend();
@@ -432,7 +603,7 @@ function renderTopology(data) {
     var nodeColor = { background: style.color, border: isBlocked || flashing ? "#f85149" : (isUnknown ? "#d29922" : (isTrusted ? style.color : style.color)), highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } };
     var base = { color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : flashing ? 4 : (isAttacker ? 3 : (isUnknown ? 3 : 2)), font: { color: isBlocked ? "#8b949e" : "#c9d1d9", size: 12, face: "Segoe UI" }, shadow: { enabled: true, color: isBlocked ? "#f8514966" : flashing ? "#f8514988" : (isAttacker ? "#f8514944" : (isUnknown ? "#d2992244" : (isTrusted ? "#3fb95044" : "#00000066"))), size: isBlocked ? 20 : flashing ? 16 : (isAttacker ? 14 : (isUnknown ? 12 : 10)), x: 0, y: 3 }, shapeProperties: { useBorderWithImage: true, borderDashes: h.role === "external" ? [4, 4] : false } };
     var headline = isBlocked ? "\u{1F6AB} BLOCKED" : (isAttacker ? "ATTACKER (confirmed)" : isTrusted ? "TRUSTED (marked by user)" : isUnknown ? "SUSPICIOUS / UNKNOWN" : style.label);
-    var title = nodeInfoTitle({ mac: h.mac, openPorts: h.open_ports || [] }, headline);
+    var title = nodeInfoTitle({ mac: h.mac, openPorts: h.open_ports || [], hostRole: h.role }, headline);
     var nodeSize = h.role === "router" ? 24 : h.role === "external" ? 22 : (isAttacker ? 20 : 18);
     if (!nodes.get(h.ip)) {
       var nodeData = { id: h.ip, label: h.hostname + "\n" + h.ip, title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, openPorts: h.open_ports || [], shape: style.shape, size: nodeSize, x: pos[h.ip].x, y: pos[h.ip].y };
@@ -452,14 +623,39 @@ function renderTopology(data) {
     }
     seen.add(h.ip);
   } for (var ni = 0; ni < nodes.get().length; ni++) if (!seen.has(nodes.get()[ni].id)) nodes.remove(nodes.get()[ni].id);
-  if (layoutChanged) { layoutKey = key; for (var id in pos) if (nodes.get(id)) network.moveNode(id, pos[id].x, pos[id].y); network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); }
+  if (layoutChanged) { layoutKey = key; for (var id in pos) if (nodes.get(id)) network.moveNode(id, pos[id].x, pos[id].y); network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 560); }
   var seenEdges = new Set(); for (var ei = 0; ei < data.edges.length; ei++) { var e = data.edges[ei]; var isLink = e.kind === "link"; var id = (isLink ? "L|" : "T|") + e.from + "|" + e.to; if (!edges.get(id)) { edges.add({ id: id, from: e.from, to: e.to, dashes: !isLink, width: isLink ? 3 : 1.6, arrows: isLink ? "" : { to: { enabled: true, scaleFactor: 0.5, type: "arrow" } }, color: { color: isLink ? "#484f58" : "#6e7681", highlight: "#58a6ff", hover: "#58a6ff" }, smooth: isLink ? false : { enabled: true, type: "continuous", roundness: 0.3 }, selectionWidth: 3 }); } seenEdges.add(id); } edges.get().forEach(function(e) { if (!seenEdges.has(e.id)) edges.remove(e.id); }); }
 
 
-function fmtAlert(a) { var div = document.createElement("div"); var icon = SEV_ICONS[a.severity] || "\u2139\uFE0F"; var sev = (a.severity || "info").toLowerCase(); var engineTag = a.engine === "rules" ? 'rules' : 'ml'; div.className = "alert " + sev; div.innerHTML = '<div class="top"><b>' + icon + ' ' + a.attack + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span></div><div class="meta">' + a.time + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine: <span class="engine-tag ' + engineTag + '">' + engineTag + '</span> \u00B7 conf: ' + a.confidence + '</div>' + (sev !== "info" && a.src ? '<button class="act" data-ip="' + a.src + '">Block ' + a.src + '</button>' : ''); return div; }
-function fmtRule(r) { var div = document.createElement("div"); div.className = "rule"; var allow = r.action === "ALLOW"; div.innerHTML = '<div class="top"><span class="ip">' + r.ip + '</span><span>' + (allow ? "\u2713 ALLOW" : "\u26D4 BLOCK") + '</span></div><div class="meta">' + r.time + ' \u00B7 ' + r.reason + '</div>' + (allow ? '' : '<button class="act unblock" data-unblock="' + r.ip + '">Remove rule</button>'); return div; }
+function fmtAlert(a) {
+  var div = document.createElement("div");
+  var sev = (a.severity || "info").toLowerCase();
+  var icon = SEV_ICONS[sev] || "\u2139\uFE0F";
+  var engineTag = a.engine === "rules" ? "rules" : "ml";
+  var blocked = a.src && blockedHosts.has(a.src);
+  var action = "";
+  if (sev !== "info" && a.src) {
+    if (!canBlockIp(a.src)) action = '<span class="blocked-tag">\u26D4 Infrastructure IP</span>';
+    else if (blocked) action = '<span class="blocked-tag">\u26D4 Blocked</span>';
+    else action = '<button class="act" data-ip="' + esc(a.src) + '" title="Drop traffic from ' + esc(a.src) + ' at the firewall (reversible)">Block source ' + esc(a.src) + '</button>';
+  }
+  div.className = "alert " + sev;
+  div.innerHTML = '<div class="top"><b>' + icon + " " + esc(attackLabel(a.attack)) + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span></div>' +
+    '<div class="meta">' + esc(a.time) + " \u00B7 " + esc(a.src) + " \u2192 " + esc(a.dst) +
+    ' \u00B7 engine: <span class="engine-tag ' + engineTag + '">' + engineTag + '</span> \u00B7 conf: ' + esc(a.confidence) + '</div>' +
+    action;
+  return div;
+}
+function fmtRule(r) {
+  var div = document.createElement("div");
+  div.className = "rule";
+  div.innerHTML = '<div class="top"><span class="ip">' + esc(r.ip) + '</span><span class="action block">\u26D4 BLOCK</span></div>' +
+    '<div class="meta">' + esc(r.time) + " \u00B7 " + esc(r.reason) + '</div>' +
+    '<button class="act unblock" data-unblock="' + esc(r.ip) + '" title="Remove the firewall block for ' + esc(r.ip) + '">Unblock</button>';
+  return div;
+}
 function fmtLogRow(row) { var div = document.createElement("div"); div.className = "log-line " + row.cls; div.title = row.time + "  " + row.msg; var t = document.createElement("span"); t.className = "t"; t.textContent = row.time; div.appendChild(t); div.appendChild(document.createTextNode(row.msg)); return div; }
-function renderLog(data) { var rows = []; for (var i = 0; i < data.alerts.length; i++) { var a = data.alerts[i]; if (a.attack === "auto_block") rows.push({ time: a.time, cls: "ok", msg: "AUTO-BLOCK fired " + a.src }); else { var conf = typeof a.confidence === "number" ? a.confidence.toFixed(2) : "?"; var sev = a.severity || "info"; rows.push({ time: a.time, cls: sev === "critical" || sev === "high" ? sev : "warn", msg: sev.toUpperCase().padEnd(8) + ' ' + a.attack + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine ' + a.engine + ' conf ' + conf }); } } for (var j = 0; j < data.rules.length; j++) { var r = data.rules[j]; rows.push({ time: r.time, cls: r.action === "BLOCK" ? "fw" : "ok", msg: 'FW ' + r.action.padEnd(5) + ' ' + r.ip + ' \u2014 ' + r.reason }); } rows.sort(function(x, y) { return y.time.localeCompare(x.time); }); rows.length = Math.min(rows.length, 80); var log = document.getElementById("log"); log.replaceChildren.apply(log, rows.length ? rows.map(fmtLogRow) : [emptyState("waiting for events\u2026")]); setCount("log-count", rows.length); }
+function renderLog(data) { var rows = []; for (var i = 0; i < data.alerts.length; i++) { var a = data.alerts[i]; if (a.attack === "auto_block") rows.push({ time: a.time, cls: "ok", msg: "AUTO-BLOCK fired " + a.src }); else { var conf = typeof a.confidence === "number" ? a.confidence.toFixed(2) : "?"; var sev = a.severity || "info"; rows.push({ time: a.time, cls: sev === "critical" || sev === "high" ? sev : "warn", msg: sev.toUpperCase().padEnd(8) + ' ' + attackLabel(a.attack) + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine ' + a.engine + ' conf ' + conf }); } } for (var j = 0; j < data.rules.length; j++) { var r = data.rules[j]; rows.push({ time: r.time, cls: r.action === "BLOCK" ? "fw" : "ok", msg: 'FW ' + r.action.padEnd(5) + ' ' + r.ip + ' \u2014 ' + r.reason }); } rows.sort(function(x, y) { return y.time.localeCompare(x.time); }); rows.length = Math.min(rows.length, 80); var log = document.getElementById("log"); log.replaceChildren.apply(log, rows.length ? rows.map(fmtLogRow) : [emptyState("waiting for events\u2026")]); setCount("log-count", rows.length); }
 function emptyState(msg) { var div = document.createElement("div"); div.className = "empty"; div.textContent = msg; return div; }
 function feedNote(msg) { var div = document.createElement("div"); div.className = "feed-note"; div.textContent = msg; return div; }
 function setCount(id, n) { var el = document.getElementById(id); if (el) el.textContent = n; }
@@ -469,16 +665,66 @@ function renderFeeds(data) {
   alertsEl.replaceChildren.apply(alertsEl, shown.length ? shown.map(fmtAlert) : [emptyState("no threats yet \u2014 watching\u2026")]);
   if (data.alerts.length > shown.length) alertsEl.appendChild(feedNote("showing latest 30 of " + data.alerts.length));
   var rulesEl = document.getElementById("rules");
-  rulesEl.replaceChildren.apply(rulesEl, data.rules.length ? data.rules.map(fmtRule) : [emptyState("no firewall rules yet")]);
+  var activeRules = [];
+  if (Array.isArray(data.active_rules)) {
+    activeRules = data.active_rules;
+  } else {
+    var seenBlocked = new Set();
+    data.rules.forEach(function(r) {
+      if (r.action === "BLOCK" && blockedHosts.has(r.ip) && !seenBlocked.has(r.ip)) {
+        seenBlocked.add(r.ip);
+        activeRules.push(r);
+      }
+    });
+  }
+  rulesEl.replaceChildren.apply(rulesEl, activeRules.length
+    ? activeRules.map(fmtRule)
+    : [emptyState("no active blocks \u2014 traffic is allowed")]);
   setCount("alerts-count", data.alerts.length);
-  setCount("rules-count", data.rules.length);
+  setCount("rules-count", activeRules.length);
 }
 document.getElementById("alerts").addEventListener("click", onAction); document.getElementById("rules").addEventListener("click", onAction);
 function onAction(ev) { var block = ev.target.closest("[data-ip]"); var unblock = ev.target.closest("[data-unblock]"); if (block) post("/api/firewall/block", { ip: block.dataset.ip, reason: "operator blocked from UI" }); if (unblock) post("/api/firewall/unblock", { ip: unblock.dataset.unblock }); }
-async function post(url, body) { try { await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); refresh(); } catch (e) { console.error("API call failed:", e); } }
+async function post(url, body) {
+  try {
+    var res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var data = await res.json().catch(function() { return {}; });
+    if (data && data.ok === false) { toast(data.error || "That action is not allowed right now", "error"); return; }
+    if (url.indexOf("/firewall/block") >= 0) {
+      if (data.changed === false) toast(body.ip + " is already blocked", "error");
+      else toast("Blocked " + body.ip + " \u00B7 traffic from it is dropped");
+    } else if (url.indexOf("/firewall/unblock") >= 0) {
+      if (data.changed === false) toast("No active block for " + body.ip, "error");
+      else toast("Unblocked " + body.ip + " \u00B7 traffic is allowed again");
+    } else if (url.indexOf("/devices/rename") >= 0) {
+      toast("Renamed to " + body.name);
+    }
+    refresh();
+  } catch (e) {
+    console.error("API call failed:", e);
+    toast("Action failed \u2014 check the server log", "error");
+  }
+}
 var statPrev = {};
 function tweenStat(id, target, fmt) { fmt = fmt || function(v) { return Math.round(v).toString(); }; var el = document.getElementById(id); if (!el) return; var from = statPrev[id] !== undefined ? statPrev[id] : target; statPrev[id] = target; if (from === target) { el.textContent = fmt(target); return; } el.classList.add("updating"); var t0 = performance.now(), dur = 400; var step = function(now) { var k = Math.min(1, (now - t0) / dur); var eased = 1 - Math.pow(1 - k, 3); el.textContent = fmt(from + (target - from) * eased); if (k < 1) statPrev[id + ":raf"] = requestAnimationFrame(step); else el.classList.remove("updating"); }; cancelAnimationFrame(statPrev[id + ":raf"]); statPrev[id + ":raf"] = requestAnimationFrame(step); }
-function renderStats(data) { var s = data.stats; tweenStat("s-devices", data.nodes.length); tweenStat("s-flows", s.flows_per_sec, function(v) { return v.toFixed(1); }); tweenStat("s-alerts", s.attacks_total); tweenStat("s-blocked", s.blocks_total); document.getElementById("mode-badge").textContent = "\u25CF " + (data.mode || "demo"); var m = data.model_metrics; document.getElementById("model-badge").textContent = m ? 'ML rf \u00B7 acc ' + Math.round(m.accuracy * 100) + '% \u00B7 ' + m.dataset : "heuristic mode"; }
+function renderStats(data) {
+  var s = data.stats;
+  tweenStat("s-devices", data.nodes.length);
+  tweenStat("s-flows", s.flows_per_sec, function(v) { return v.toFixed(1); });
+  tweenStat("s-alerts", s.attacks_total);
+  var blockedNow = Array.isArray(data.blocked_ips)
+    ? data.blocked_ips.length
+    : data.nodes.filter(function(h) { return h.blocked; }).length;
+  tweenStat("s-blocked", blockedNow);
+  var modeEl = document.getElementById("mode-badge");
+  modeEl.textContent = "\u25CF " + (data.mode || "demo");
+  modeEl.title = data.mode === "live" ? "Live mode: reading real traffic from this machine" : "Demo mode: simulated traffic on a fictional 10.0.0.0/24 network \u2014 no real packets";
+  var m = data.model_metrics;
+  var modelEl = document.getElementById("model-badge");
+  modelEl.textContent = m ? "ML model \u00B7 " + Math.round(m.accuracy * 100) + "% \u00B7 " + m.dataset : "heuristic mode";
+  modelEl.title = m ? "RandomForest intrusion-detection model \u00B7 " + Math.round(m.accuracy * 100) + "% accuracy on the " + m.dataset + " dataset" : "No ML model loaded \u2014 rule-based detection only";
+}
 var ICON_CHEVRON_UP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 15l-6-6-6 6"/></svg>';
 var ICON_CHEVRON_DOWN = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>';
 var ICON_LEGEND_CLOSED = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>';
@@ -495,7 +741,7 @@ function setMapMinimized(min) {
   btn.setAttribute("aria-label", btn.title);
   btn.setAttribute("aria-expanded", String(!min));
   // let the CSS transition finish before vis re-measures the canvas
-  setTimeout(function() { sizeFx(); network.redraw(); if (!min) network.fit({ animation: { duration: 400, easingFunction: "easeOutQuad" } }); }, 320);
+  setTimeout(function() { sizeFx(); network.redraw(); if (!min) { network.fit({ animation: { duration: 400, easingFunction: "easeOutQuad" } }); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 460); } }, 320);
 }
 function toggleMapMinimize() { setMapMinimized(!document.getElementById("map-container").classList.contains("minimized")); }
 
@@ -520,17 +766,17 @@ function setFxEnabled(on) {
   if (!FX_ENABLED) { ambientDots.length = 0; attackPaths.length = 0; }
 }
 function toggleFx() { setFxEnabled(!FX_ENABLED); }
-function fitMap() { network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); }
+function fitMap() { network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 560); }
 var pollTimer = null; function startPolling() { if (pollTimer) return; pollTimer = setInterval(refresh, 2000); } function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 async function refresh() { try { var res = await fetch("/api/state"); if (!res.ok) throw new Error("HTTP " + res.status); apply(await res.json()); } catch (e) { console.warn("refresh failed:", e); } }
 function setConnStatus(state) {
   var el = document.getElementById("map-status");
   if (!el) return;
   el.className = "map-status " + state;
-  el.textContent = state === "live" ? "ws live" : state === "polling" ? "polling" : "connecting…";
-  el.title = state === "live" ? "WebSocket stream connected" : state === "polling" ? "WebSocket unavailable \u2014 polling /api/state" : "Connecting to the live stream\u2026";
+  el.textContent = state === "live" ? "live" : state === "polling" ? "polling" : "connecting\u2026";
+  el.title = state === "live" ? "Live \u2014 WebSocket stream connected" : state === "polling" ? "WebSocket unavailable \u2014 refreshing over /api/state" : "Connecting to the live stream\u2026";
 }
-function apply(data) { renderTopology(data); renderFeeds(data); renderLog(data); renderStats(data); }
+function apply(data) { renderTopology(data); renderFeeds(data); renderLog(data); renderStats(data); updateSelectionBar(); }
 (function() {
   refresh().catch(function() {});
   document.getElementById("btn-toggle-map").onclick = toggleMapMinimize;

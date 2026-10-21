@@ -14,6 +14,7 @@ Modes (env vars):
 """
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -101,12 +102,14 @@ def process_flows(flows: list[dict]) -> None:
         return
     verified = detector.predict(flows)
     for flow, verdict in zip(flows, verified):
+        # Source blocks are enforced before anything is counted: a blocked source
+        # is not a live flow any more, and it must not generate alert spam.
+        if state.is_blocked(flow["src"]):
+            continue
         state.add_flow(is_attack=verdict["attack"] != "benign",
                        src=flow["src"], dst=flow["dst"],
                        bytes=flow.get("bytes") or 0)
         if verdict["severity"] in ("medium", "high", "critical"):
-            if state.hosts.get(flow["src"], {}).get("blocked"):
-                continue   # the firewall already shut this source out — no alert spam
             alert = {
                 "severity": verdict["severity"],
                 "attack": verdict["attack"],
@@ -278,16 +281,29 @@ def get_logs(limit: int = 50) -> dict:
 
 @app.post("/api/firewall/block")
 def block(req: BlockRequest) -> dict:
-    if state.block_host(req.ip, req.reason):
+    try:
+        ipaddress.ip_address(req.ip)
+    except ValueError:
+        return {"ok": False, "error": "That is not a valid IP address"}
+    if state.is_protected(req.ip):
+        return {"ok": False, "error": "The router and Internet nodes cannot be blocked"}
+    changed = state.block_host(req.ip, req.reason)
+    if changed:
         fw.block(req.ip, req.reason)
-    return {"ok": True, "rules": state.snapshot()["rules"][:10]}
+    return {"ok": True, "changed": changed, "blocked": state.is_blocked(req.ip),
+            "rules": state.snapshot()["rules"][:10]}
 
 
 @app.post("/api/firewall/unblock")
 def unblock(req: BlockRequest) -> dict:
-    if state.unblock_host(req.ip):
+    try:
+        ipaddress.ip_address(req.ip)
+    except ValueError:
+        return {"ok": False, "error": "That is not a valid IP address"}
+    changed = state.unblock_host(req.ip)
+    if changed:
         fw.unblock(req.ip)
-    return {"ok": True}
+    return {"ok": True, "changed": changed, "blocked": state.is_blocked(req.ip)}
 
 
 @app.get("/health")
