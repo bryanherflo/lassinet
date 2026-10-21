@@ -9,7 +9,7 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.10">
+<link rel="stylesheet" href="style.css?v=3.11">
 <script src="vendor/vis-network.min.js"></script>
 <script>
   if (typeof vis === "undefined")
@@ -45,6 +45,9 @@
         <button id="btn-fit-map" class="toolbar-btn" title="Fit map view (R)" aria-label="Fit map view">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4"/></svg>
         </button>
+        <button id="btn-toggle-fx" class="toolbar-btn" title="Hide traffic dots (D)" aria-label="Toggle traffic dots" aria-pressed="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2.2"/><circle cx="11" cy="12" r="1.5" opacity=".65"/><circle cx="16.5" cy="12" r="1" opacity=".35"/></svg>
+        </button>
       </div>
       <span id="map-status" class="map-status">connecting…</span>
     </div>
@@ -67,22 +70,25 @@
         <div class="li trusted"><span class="dot"></span><span>Trusted</span></div>
         <div class="li suspicious"><span class="dot">?</span><span>Suspicious</span></div>
         <div class="li blocked"><span class="dot"></span><span>Blocked</span></div>
+        <div class="legend-sep"></div>
+        <div class="li flow"><span class="dot"></span><span>Normal flow</span></div>
+        <div class="li attack-flow"><span class="dot"></span><span>Attack flow</span></div>
       </div>
     </div>
 
-    <div id="hint">drag to pan · wheel to zoom · select + B to block · double-click to rename · right-click for trust menu · R refit · M map · L legend</div>
+    <div id="hint">drag to pan · wheel to zoom · B block · double-click rename · right-click trust · R refit · M map · L legend · D dots · red = attack</div>
   </div>
 
   <aside>
-    <h2>&#128679; Threat feed</h2>
+    <h2>&#128679; Threat feed <span class="count" id="alerts-count">0</span></h2>
     <div id="alerts" class="feed"></div>
-    <h2>&#128274; Firewall rules</h2>
+    <h2>&#128274; Firewall rules <span class="count" id="rules-count">0</span></h2>
     <div id="rules" class="feed"></div>
-    <h2>&#128225; System log</h2>
+    <h2>&#128225; System log <span class="count" id="log-count">0</span></h2>
     <div id="log" class="feed log"></div>
   </aside>
 </main>
 
-<script src="app.js?v=3.10"></script>
+<script src="app.js?v=3.11"></script>
 </body>
 </html>

@@ -2,6 +2,21 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.8] — 2026-10-21 · "less noise, more room"
+
+### Changed
+- **Sidebar is one page again**: the threat feed, firewall rules and system log now stack in a single scrollable column (wider on large screens) instead of living in three tiny independent scroll boxes that cut cards in half. Each section header shows a live item count.
+- **Traffic dots are legible**: normal flows are a single soft cyan dot (max 8 on screen, no comet trail); red is reserved for attack paths. The legend gains **Normal flow** and **Attack flow** entries.
+- **New dots toggle**: the map toolbar (or `D`) hides/shows all packet dots, and the preference is remembered in `localStorage`. The map stays usable when the animation is distracting.
+- Alert feed renders the latest 30 items (with a "showing latest 30 of N" note) and system-log rows expose their full text on hover.
+
+### Fixed
+- **Blocked devices no longer keep sending traffic**: the state layer drops flows from blocked sources, so they no longer increase `flows_total` / `attacks_total` or feed the packet animation. The dashboard also filters stale samples and in-flight attack paths the moment a host is blocked.
+- The attack-animation replay no longer resurrects paths from blocked sources after the firewall closed them.
+
+### Tests
+- 31/31 passing (new: `test_blocked_source_flows_are_dropped`), plus headless checks for the single-scroll sidebar, dot toggle and blocked-dot suppression at 1600/1200/1000/760 px.
+
 ## [0.4.7] — 2026-10-21 · "make the map render again"
 
 ### Fixed

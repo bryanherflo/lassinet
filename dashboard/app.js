@@ -91,6 +91,7 @@ function seedConfirmedAttackers(data) {
 function newestSevereAlert(data) {
   for (var i = 0; i < data.alerts.length; i++) {
     var a = data.alerts[i];
+    if (blockedHosts.has(a.src) || blockedHosts.has(a.dst)) continue;
     if (a.severity === "critical" || a.severity === "high") return a;
   }
   return null;
@@ -99,6 +100,7 @@ function newestSevereAlert(data) {
 function markAttackPath(data, a, now) {
   var router = data.nodes.find(function(h) { return h.role === "router"; });
   if (!router || !a.src) return;
+  if (blockedHosts.has(a.src) || blockedHosts.has(a.dst)) return;
   var hostIps = new Set(data.nodes.map(function(h) { return h.ip; }));
   var victim = a.dst;
   if (!hostIps.has(victim)) victim = (data.nodes.find(function(h) { return h.role === "external"; }) || {}).ip;
@@ -110,7 +112,7 @@ function markAttackPath(data, a, now) {
   if (s1 && s2) {
     var key = s1[0] + ">" + s1[1] + "|" + s2[0] + ">" + s2[1];
     var exists = attackPaths.some(function(p) { return p.until > now && p.key === key; });
-    if (!exists) attackPaths.push({ key: key, born: now, until: now + FLASH_MS, segments: [s1, s2], severity: a.severity });
+    if (!exists) attackPaths.push({ key: key, born: now, until: now + FLASH_MS, segments: [s1, s2], severity: a.severity, src: a.src, dst: a.dst });
     if (!confirmedAttackers.has(a.src) && !trustedDevices.has(a.src)) {
       confirmedAttackers.add(a.src);
       upgradeToAttacker(a.src);
@@ -132,8 +134,10 @@ function updateFlashes(data, now) {
   var fresh = Math.max(0, total - lastAttacks);
   lastAttacks = total;
   while (attackPaths.length && attackPaths[0].until < now) attackPaths.shift();
+  attackPaths = attackPaths.filter(function(p) { return !blockedHosts.has(p.src) && !blockedHosts.has(p.dst); });
   for (var i = 0; i < fresh && i < data.alerts.length; i++) {
     var a = data.alerts[i];
+    if (blockedHosts.has(a.src) || blockedHosts.has(a.dst)) continue;   // dropped by the firewall
     if (a.src) flashUntil[a.src] = now + FLASH_MS;
     markAttackPath(data, a, now);
   }
@@ -199,10 +203,13 @@ function sizeFx() {
 new ResizeObserver(sizeFx).observe(fxHost);
 sizeFx();
 
-var SPEED = 180, BALLS = 6, BALL_R = 6, AMBIENT_MAX = 18, SPAWN_MS = 80;
+var SPEED = 180, BALLS = 6, BALL_R = 6, AMBIENT_MAX = 8, SPAWN_MS = 180;
 var fxRouter = null, fxExt = null, fxLinks = new Set(), fxHostIds = new Set(), fxRoles = new Map(), trafficSamples = [];
 var ambientDots = []; var lastSpawn = 0;
-var FLOW_COLORS = { router: "#a371f7", server: "#58a6ff", external: "#58a6ff", workstation: "#3fb950", iot: "#d29922", printer: "#8b949e", attacker: "#f85149", unknown: "#8b949e", trusted: "#3fb950" };
+var blockedHosts = new Set();
+var FLOW_COLOR = "#58a6ff";
+var FX_ENABLED = true;
+try { FX_ENABLED = localStorage.getItem("lassi.fx") !== "off"; } catch (e) { /* storage disabled */ }
 
 function fxSync(data) {
   fxRouter = (data.nodes.find(function(h) { return h.role === "router"; }) || {}).ip || null;
@@ -211,15 +218,21 @@ function fxSync(data) {
   fxRoles = new Map(data.nodes.map(function(h) { return [h.ip, h.role]; }));
   fxLinks = new Set(data.edges.filter(function(e) { return e.kind === "link"; }).map(function(e) { return e.from + "|" + e.to; }));
   trafficSamples = Array.isArray(data.traffic) ? data.traffic : [];
+  blockedHosts = new Set(data.nodes.filter(function(h) { return h.blocked; }).map(function(h) { return h.ip; }));
 }
 
 function spawnAmbient(now) {
-  if (!trafficSamples.length || ambientDots.length >= AMBIENT_MAX) return;
+  if (!FX_ENABLED || !trafficSamples.length || ambientDots.length >= AMBIENT_MAX) return;
   if (now - lastSpawn < SPAWN_MS) return;
   lastSpawn = now;
-  var s = trafficSamples[Math.floor(Math.random() * trafficSamples.length)];
-  if (!s || s.attack || s.src === s.dst) return;
-  if (!fxHostIds.has(s.src) || !fxRouter) return;
+  // Pick only live traffic between hosts that are not blocked: a blocked
+  // device must not keep emitting dots after the firewall drops it.
+  var candidates = trafficSamples.filter(function(s) {
+    return s && !s.attack && s.src !== s.dst && fxHostIds.has(s.src) &&
+      !blockedHosts.has(s.src) && !blockedHosts.has(s.dst);
+  });
+  if (!candidates.length) return;
+  var s = candidates[Math.floor(Math.random() * candidates.length)];
   var src = s.src, dst = fxHostIds.has(s.dst) ? s.dst : fxExt;
   if (!dst || src === dst) return;
   var link = function(u, v) { return (fxLinks.has(u + "|" + v) || fxLinks.has(v + "|" + u)) ? [u, v] : null; };
@@ -227,7 +240,7 @@ function spawnAmbient(now) {
   var segments = raw.filter(Boolean);
   if (!segments.length) return;
   var bytes = Math.max(0, +s.bytes || 0);
-  var radius = 2.2 + Math.min(1.5, Math.log10(1 + bytes / 600));
+  var radius = 2 + Math.min(1.2, Math.log10(1 + bytes / 600));
   ambientDots.push({ born: now, until: now + 900 + Math.random() * 1100, segments: segments, kind: "ambient", radius: radius });
 }
 
@@ -236,6 +249,9 @@ function nodeDOMPos(ip) { var p = network.getPositions([ip])[ip]; return p ? net
 function drawGlowDot(x, y, r, col, a, glow) { if (r <= 0 || a <= 0) return; fctx.globalAlpha = a; fctx.beginPath(); fctx.arc(x, y, r, 0, Math.PI * 2); fctx.fillStyle = col; if (glow > 0) { fctx.shadowColor = col; fctx.shadowBlur = glow; } fctx.fill(); fctx.shadowBlur = 0; fctx.globalAlpha = 1; }
 
 function drawRider(p, now) {
+  if (!p.segments || !p.segments.length) return;
+  var from = p.segments[0][0], to = p.segments[p.segments.length - 1][1];
+  if (blockedHosts.has(from) || blockedHosts.has(to)) return;
   var idx = p.segments.map(function(seg) { return nodeDOMPos(seg[0]); });
   idx.push(nodeDOMPos(p.segments[p.segments.length - 1][1]));
   if (idx.some(function(q) { return !q; })) return;
@@ -244,11 +260,19 @@ function drawRider(p, now) {
   if (total <= 0) return;
   var xyAt = function(d) { var rest = Math.max(0, Math.min(d, total)); for (var k = 0; k < legs.length; k++) { if (rest <= legs[k]) { var t = legs[k] > 0 ? rest / legs[k] : 0; return [idx[k].x + (idx[k+1].x - idx[k].x) * t, idx[k].y + (idx[k+1].y - idx[k].y) * t]; } rest -= legs[k]; } var last = idx[idx.length - 1]; return [last.x, last.y]; };
   var fade = Math.min(1, (now - p.born) / 300, Math.max(0, (p.until - now) / 600));
-  if (p.kind === "ambient") { var col = FLOW_COLORS[fxRoles.get(p.segments[0][0])] || "#8b949e"; var R = p.radius || 2.6; var ph = Math.min(1, (now - p.born) / (p.until - p.born)); for (var g = 2; g >= 0; g--) { var xy = xyAt(Math.max(0, ph - g * 0.08) * total); drawGlowDot(xy[0], xy[1], Math.max(0.6, g === 0 ? R : R * (0.55 - g * 0.1)), col, fade * (g === 0 ? 0.9 : 0.25 / g), g === 0 ? 8 : 0); } return; }
+  if (p.kind === "ambient") {
+    // Normal traffic is deliberately quiet: one soft cyan dot, no comet trail.
+    // Red is reserved for attacks, so the map has an unambiguous colour code.
+    var R = p.radius || 2.4;
+    var ph = Math.min(1, (now - p.born) / (p.until - p.born));
+    var xy = xyAt(ph * total);
+    drawGlowDot(xy[0], xy[1], R, FLOW_COLOR, fade * 0.75, 5);
+    return;
+  }
   var severity = p.severity || "high";
   var severityColor = severity === "critical" ? "#ff0040" : severity === "high" ? "#f85149" : "#ff8c00";
   var d0 = (now / 1000) * SPEED;
-  for (var i = 0; i < BALLS; i++) { var d = (d0 + (i * total) / BALLS) % total; for (var g = 4; g >= 0; g--) { var dd = ((d - g * 12) % total + total) % total; var xy = xyAt(dd); drawGlowDot(xy[0], xy[1], g === 0 ? BALL_R : Math.max(1, BALL_R * (0.5 - g * 0.07)), severityColor, fade * (g === 0 ? 1 : 0.2 / g), g === 0 ? 20 : 0); } }
+  for (var i = 0; i < BALLS; i++) { var d = (d0 + (i * total) / BALLS) % total; for (var g = 4; g >= 0; g--) { var dd = ((d - g * 12) % total + total) % total; var xy2 = xyAt(dd); drawGlowDot(xy2[0], xy2[1], g === 0 ? BALL_R : Math.max(1, BALL_R * (0.5 - g * 0.07)), severityColor, fade * (g === 0 ? 1 : 0.2 / g), g === 0 ? 20 : 0); } }
 }
 
 var GROUP_ROLES = new Set(["server", "workstation", "iot", "printer", "attacker", "unknown", "trusted"]);
@@ -276,8 +300,10 @@ function drawAttackFx(now) {
   spawnAmbient(now);
   fctx.clearRect(0, 0, fx.width, fx.height);
   drawGroupBoxes();
-  for (var i = 0; i < attackPaths.length; i++) drawRider(Object.assign({}, attackPaths[i], { kind: "attack" }), now);
-  for (var j = 0; j < ambientDots.length; j++) drawRider(ambientDots[j], now);
+  if (FX_ENABLED) {
+    for (var i = 0; i < attackPaths.length; i++) drawRider(Object.assign({}, attackPaths[i], { kind: "attack" }), now);
+    for (var j = 0; j < ambientDots.length; j++) drawRider(ambientDots[j], now);
+  }
   drawSelectionHighlight(now);
 }
 (function tick() { drawAttackFx(Date.now()); requestAnimationFrame(tick); })();
@@ -386,10 +412,11 @@ window.addEventListener("keydown", function(ev) {
   else if (key === "r") network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } });
   else if (key === "m") toggleMapMinimize();
   else if (key === "l") toggleLegend();
+  else if (key === "d") toggleFx();
 });
 
 function renderTopology(data) {
-  var now = Date.now(); updateFlashes(data, now); fxSync(data);
+  var now = Date.now(); fxSync(data); updateFlashes(data, now);
   var pos = computeTreeLayout(data); var key = Object.keys(pos).sort().join(","); var layoutChanged = key !== layoutKey;
   var seen = new Set();
   for (var i = 0; i < data.nodes.length; i++) {
@@ -431,10 +458,21 @@ function renderTopology(data) {
 
 function fmtAlert(a) { var div = document.createElement("div"); var icon = SEV_ICONS[a.severity] || "\u2139\uFE0F"; var sev = (a.severity || "info").toLowerCase(); var engineTag = a.engine === "rules" ? 'rules' : 'ml'; div.className = "alert " + sev; div.innerHTML = '<div class="top"><b>' + icon + ' ' + a.attack + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span></div><div class="meta">' + a.time + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine: <span class="engine-tag ' + engineTag + '">' + engineTag + '</span> \u00B7 conf: ' + a.confidence + '</div>' + (sev !== "info" && a.src ? '<button class="act" data-ip="' + a.src + '">Block ' + a.src + '</button>' : ''); return div; }
 function fmtRule(r) { var div = document.createElement("div"); div.className = "rule"; var allow = r.action === "ALLOW"; div.innerHTML = '<div class="top"><span class="ip">' + r.ip + '</span><span>' + (allow ? "\u2713 ALLOW" : "\u26D4 BLOCK") + '</span></div><div class="meta">' + r.time + ' \u00B7 ' + r.reason + '</div>' + (allow ? '' : '<button class="act unblock" data-unblock="' + r.ip + '">Remove rule</button>'); return div; }
-function fmtLogRow(row) { var div = document.createElement("div"); div.className = "log-line " + row.cls; var t = document.createElement("span"); t.className = "t"; t.textContent = row.time; div.appendChild(t); div.appendChild(document.createTextNode(row.msg)); return div; }
-function renderLog(data) { var rows = []; for (var i = 0; i < data.alerts.length; i++) { var a = data.alerts[i]; if (a.attack === "auto_block") rows.push({ time: a.time, cls: "ok", msg: "AUTO-BLOCK fired " + a.src }); else { var conf = typeof a.confidence === "number" ? a.confidence.toFixed(2) : "?"; var sev = a.severity || "info"; rows.push({ time: a.time, cls: sev === "critical" || sev === "high" ? sev : "warn", msg: sev.toUpperCase().padEnd(8) + ' ' + a.attack + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine ' + a.engine + ' conf ' + conf }); } } for (var j = 0; j < data.rules.length; j++) { var r = data.rules[j]; rows.push({ time: r.time, cls: r.action === "BLOCK" ? "fw" : "ok", msg: 'FW ' + r.action.padEnd(5) + ' ' + r.ip + ' \u2014 ' + r.reason }); } rows.sort(function(x, y) { return y.time.localeCompare(x.time); }); rows.length = Math.min(rows.length, 80); var log = document.getElementById("log"); log.replaceChildren.apply(log, rows.length ? rows.map(fmtLogRow) : [emptyState("waiting for events\u2026")]); }
+function fmtLogRow(row) { var div = document.createElement("div"); div.className = "log-line " + row.cls; div.title = row.time + "  " + row.msg; var t = document.createElement("span"); t.className = "t"; t.textContent = row.time; div.appendChild(t); div.appendChild(document.createTextNode(row.msg)); return div; }
+function renderLog(data) { var rows = []; for (var i = 0; i < data.alerts.length; i++) { var a = data.alerts[i]; if (a.attack === "auto_block") rows.push({ time: a.time, cls: "ok", msg: "AUTO-BLOCK fired " + a.src }); else { var conf = typeof a.confidence === "number" ? a.confidence.toFixed(2) : "?"; var sev = a.severity || "info"; rows.push({ time: a.time, cls: sev === "critical" || sev === "high" ? sev : "warn", msg: sev.toUpperCase().padEnd(8) + ' ' + a.attack + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine ' + a.engine + ' conf ' + conf }); } } for (var j = 0; j < data.rules.length; j++) { var r = data.rules[j]; rows.push({ time: r.time, cls: r.action === "BLOCK" ? "fw" : "ok", msg: 'FW ' + r.action.padEnd(5) + ' ' + r.ip + ' \u2014 ' + r.reason }); } rows.sort(function(x, y) { return y.time.localeCompare(x.time); }); rows.length = Math.min(rows.length, 80); var log = document.getElementById("log"); log.replaceChildren.apply(log, rows.length ? rows.map(fmtLogRow) : [emptyState("waiting for events\u2026")]); setCount("log-count", rows.length); }
 function emptyState(msg) { var div = document.createElement("div"); div.className = "empty"; div.textContent = msg; return div; }
-function renderFeeds(data) { document.getElementById("alerts").replaceChildren.apply(document.getElementById("alerts"), data.alerts.length ? data.alerts.map(fmtAlert) : [emptyState("no threats yet \u2014 watching\u2026")]); document.getElementById("rules").replaceChildren.apply(document.getElementById("rules"), data.rules.length ? data.rules.map(fmtRule) : [emptyState("no firewall rules yet")]); }
+function feedNote(msg) { var div = document.createElement("div"); div.className = "feed-note"; div.textContent = msg; return div; }
+function setCount(id, n) { var el = document.getElementById(id); if (el) el.textContent = n; }
+function renderFeeds(data) {
+  var alertsEl = document.getElementById("alerts");
+  var shown = data.alerts.slice(0, 30);
+  alertsEl.replaceChildren.apply(alertsEl, shown.length ? shown.map(fmtAlert) : [emptyState("no threats yet \u2014 watching\u2026")]);
+  if (data.alerts.length > shown.length) alertsEl.appendChild(feedNote("showing latest 30 of " + data.alerts.length));
+  var rulesEl = document.getElementById("rules");
+  rulesEl.replaceChildren.apply(rulesEl, data.rules.length ? data.rules.map(fmtRule) : [emptyState("no firewall rules yet")]);
+  setCount("alerts-count", data.alerts.length);
+  setCount("rules-count", data.rules.length);
+}
 document.getElementById("alerts").addEventListener("click", onAction); document.getElementById("rules").addEventListener("click", onAction);
 function onAction(ev) { var block = ev.target.closest("[data-ip]"); var unblock = ev.target.closest("[data-unblock]"); if (block) post("/api/firewall/block", { ip: block.dataset.ip, reason: "operator blocked from UI" }); if (unblock) post("/api/firewall/unblock", { ip: unblock.dataset.unblock }); }
 async function post(url, body) { try { await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); refresh(); } catch (e) { console.error("API call failed:", e); } }
@@ -470,6 +508,18 @@ function setLegendCollapsed(collapsed) {
   btn.setAttribute("aria-expanded", String(!collapsed));
 }
 function toggleLegend() { setLegendCollapsed(!document.getElementById("legend").classList.contains("collapsed")); }
+function setFxEnabled(on) {
+  FX_ENABLED = !!on;
+  try { localStorage.setItem("lassi.fx", FX_ENABLED ? "on" : "off"); } catch (e) { /* private mode */ }
+  var btn = document.getElementById("btn-toggle-fx");
+  if (btn) {
+    btn.classList.toggle("off", !FX_ENABLED);
+    btn.setAttribute("aria-pressed", FX_ENABLED ? "true" : "false");
+    btn.title = FX_ENABLED ? "Hide traffic dots (D)" : "Show traffic dots (D)";
+  }
+  if (!FX_ENABLED) { ambientDots.length = 0; attackPaths.length = 0; }
+}
+function toggleFx() { setFxEnabled(!FX_ENABLED); }
 function fitMap() { network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); }
 var pollTimer = null; function startPolling() { if (pollTimer) return; pollTimer = setInterval(refresh, 2000); } function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 async function refresh() { try { var res = await fetch("/api/state"); if (!res.ok) throw new Error("HTTP " + res.status); apply(await res.json()); } catch (e) { console.warn("refresh failed:", e); } }
@@ -486,7 +536,9 @@ function apply(data) { renderTopology(data); renderFeeds(data); renderLog(data);
   document.getElementById("btn-toggle-map").onclick = toggleMapMinimize;
   document.getElementById("btn-toggle-legend").onclick = toggleLegend;
   document.getElementById("btn-fit-map").onclick = fitMap;
+  document.getElementById("btn-toggle-fx").onclick = toggleFx;
   document.getElementById("btn-legend-close").onclick = function() { setLegendCollapsed(true); };
+  setFxEnabled(FX_ENABLED);
   // on narrow screens the legend would cover the map, so start it collapsed
   if (window.matchMedia && window.matchMedia("(max-width: 1120px)").matches) setLegendCollapsed(true);
   if (typeof WebSocket === "undefined") { setConnStatus("polling"); startPolling(); return; }

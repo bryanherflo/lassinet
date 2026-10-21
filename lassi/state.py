@@ -141,6 +141,11 @@ class State:
     def add_flow(self, is_attack: bool | None = None, src: str = "", dst: str = "",
                  bytes: int = 0) -> None:
         with self._lock:
+            # A blocked source is dropped at the firewall: do not count it, do not
+            # animate it, and do not let it inflate the attack counter. This keeps
+            # the "blocked" badge honest in the map's packet animation.
+            if src and self.hosts.get(src, {}).get("blocked"):
+                return
             self.stats["flows_total"] += 1
             self._flow_window += 1
             if src and dst and src != dst:

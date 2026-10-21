@@ -254,3 +254,19 @@ def test_traffic_samples_feed_snapshot():
     st2 = State()
     st2.add_flow(is_attack=True)
     assert st2.snapshot()["traffic"] == [] and st2.stats["attacks_total"] == 1
+
+
+def test_blocked_source_flows_are_dropped():
+    """A blocked host must not keep counting, alerting or animating traffic."""
+    from lassi.state import State
+    st = State()
+    st.upsert_host("10.0.0.9", hostname="evil", role="attacker")
+    assert st.block_host("10.0.0.9", reason="test") is True
+    before = dict(st.snapshot()["stats"])
+    st.add_flow(is_attack=True, src="10.0.0.9", dst="10.0.0.2", bytes=9000)
+    snap = st.snapshot()
+    assert snap["traffic"] == []
+    assert snap["stats"] == before
+    # traffic from other hosts keeps flowing
+    st.add_flow(is_attack=False, src="10.0.0.5", dst="10.0.0.2")
+    assert st.snapshot()["traffic"][0]["src"] == "10.0.0.5"
