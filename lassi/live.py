@@ -19,6 +19,9 @@ try:
 except ImportError:
     HAS_SCAPY = False
 
+    def sniff(*args, **kwargs):  # pragma: no cover - only hit without scapy
+        raise RuntimeError("scapy is not installed — run `pip install scapy`")
+
 
 def default_gateway() -> str | None:
     """The machine's actual default gateway (the live-mode 'router' hub)."""
