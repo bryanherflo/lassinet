@@ -43,6 +43,10 @@ MODE = os.getenv("LASSI_MODE", "demo").lower()
 AUTO_BLOCK = os.getenv("LASSI_AUTO_BLOCK", "1" if MODE == "demo" else "0") == "1"
 PORT = int(os.getenv("LASSI_PORT", "8000"))
 HOST = os.getenv("LASSI_HOST", "127.0.0.1")
+try:
+    DISCOVERY_INTERVAL = max(float(os.getenv("LASSI_DISCOVERY_INTERVAL", "30")), 0.0)
+except ValueError:
+    DISCOVERY_INTERVAL = 30.0
 
 state = State()
 state.mode = "demo (simulated)" if MODE == "demo" else "live (scapy)"
@@ -174,6 +178,26 @@ def start_engine(source: Callable[[], None]) -> None:
 # --------------------------------------------------------------------------
 _capture = None
 _capture_error_reported = False
+_last_discovery_at = 0.0
+_discovered_hosts: list[dict] = []
+_discovered_gateway: str | None = None
+
+
+def _discover_cached() -> tuple[list[dict], str | None]:
+    """ARP discovery is a network action; do it on an interval, not every tick.
+
+    The old live loop swept the LAN every 2 seconds. A 30-second default is
+    enough for topology changes and much kinder to the network.
+    """
+    global _last_discovery_at, _discovered_hosts, _discovered_gateway
+    from lassi.live import discover  # lazy import
+
+    now = time.time()
+    if _last_discovery_at and now - _last_discovery_at < DISCOVERY_INTERVAL:
+        return _discovered_hosts, _discovered_gateway
+    _discovered_hosts, _discovered_gateway = discover()
+    _last_discovery_at = time.time()
+    return _discovered_hosts, _discovered_gateway
 
 
 def _note_capture_error() -> None:
@@ -188,7 +212,7 @@ def _note_capture_error() -> None:
 
 
 def live_source() -> None:
-    from lassi.live import LiveCapture, discover, local_ip  # lazy import
+    from lassi.live import LiveCapture, local_ip  # lazy import
 
     global _capture
     if _capture is None:
@@ -200,7 +224,8 @@ def live_source() -> None:
         # failed (usually missing root/admin or a bad LASSI_IFACE).
         _note_capture_error()
         return
-    hosts, gateway_ip = discover()
+    hosts, gateway_ip = _discover_cached()
+    hosts = list(hosts)          # never append synthetic nodes to the cache
     me = local_ip()
     if me and me not in {h["ip"] for h in hosts}:
         hosts.append({"ip": me, "mac": None, "hostname": "this host", "role": "workstation", "open_ports": []})
@@ -224,6 +249,32 @@ def live_source() -> None:
             state.register_egress(router_ip)
         process_flows(flows)
     state.tick_rate()
+
+
+def _restore_firewall_blocks() -> int:
+    """Seed dashboard state from blocks that survived in the firewall.
+
+    nftables rules live in the kernel and can outlive the Python process. If
+    the UI starts empty it would hide those blocks and the next auto-block
+    could add a duplicate rule. Reading them back keeps state honest.
+    """
+    try:
+        blocks = fw.active_blocks()
+    except Exception:
+        log.exception("could not read active firewall blocks")
+        return 0
+    if not blocks:
+        return 0
+    restored = 0
+    for ip in sorted(blocks):
+        if state.is_protected(ip):
+            continue
+        if state.block_host(ip, reason="restored from firewall"):
+            restored += 1
+    if restored:
+        log.info("restored %d active block(s) from %s", restored, fw.provider)
+        audit({"event": "blocks_restored", "count": restored, "provider": fw.provider})
+    return restored
 
 
 def _source_for_mode(mode: str, has_scapy: bool) -> tuple[Callable[[], None], str]:
@@ -267,6 +318,8 @@ async def lifespan(app: FastAPI):
                 detector.model = Detector(model_path=demo_path).model
     if MODE != "demo" and mode_label != "live (scapy)":
         log.error("LASSI_MODE=%s is not usable for live capture; %s", MODE, mode_label)
+    if MODE == "live" and mode_label == "live (scapy)":
+        _restore_firewall_blocks()
     start_engine(source)
     log.info("LassiNet running in %s on %s:%d", mode_label,
              getattr(app.state, "host", HOST), getattr(app.state, "port", PORT))

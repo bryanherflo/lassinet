@@ -5,7 +5,7 @@ this lab is a worthwhile extension exercise.
 
 ## Option A — two-VM lab (VirtualBox / VMware / Proxmox)
 
-1. **pfSense VM** — WAN: NAT/dummy · LAN: 192.168.56.0/24, enable the OPNsense API plugin.
+1. **OPNsense VM** — WAN: NAT/dummy · LAN: 192.168.56.0/24, enable the API and create an API key/secret.
 2. **Kali/attacker VM** — e.g. `nmap` port scan, `hydra`/ssh brute force, `hping3` flood.
 3. **Victim VM** — a simple web server (`python -m http.server`).
 4. Run LassiNet on the host or inside one VM with `LASSI_MODE=live`.
@@ -37,9 +37,21 @@ docker run --rm -it --network lab b3ardino/attacker nmap -T5 -Pn -p- 172.17.0.2
 
 ## Wiring real firewall enforcement
 
-* **pfSense/OPNsense** — generate an API key in the web UI, then set
-  `LASSI_FW=pfsense OPNSENSE_URL=... OPNSENSE_KEY=...` and complete the REST call
-  in `lassi/firewall.py::_opnsense_rule` (documented placeholder).
+* **OPNsense** — create an alias named `lassinet_blocked` (Host, Network or
+  External type) and a block rule that uses it as the source. Then generate an
+  API key/secret in the web UI and set:
+  ```bash
+  LASSI_FW=opnsense \
+  OPNSENSE_URL=https://192.168.56.1 \
+  OPNSENSE_KEY=... OPNSENSE_SECRET=... \
+  OPNSENSE_ALIAS=lassinet_blocked \
+  python app.py
+  ```
+  LassiNet calls `/api/firewall/alias_util/add|delete/<alias>` and only reports
+  the block after OPNsense returns `status: done`. It does not create the alias
+  or the firewall rule. For a lab with a self-signed certificate, set
+  `OPNSENSE_VERIFY_TLS=0`; never disable verification on a production firewall.
+  `pfsense` is still a placeholder because its REST API is different.
 * **Linux nftables** — `LASSI_FW=nftables`; create the table and a base chain
   named `drop` with the hook for your deployment. LassiNet adds/removes rules
   but does not create firewall infrastructure:
@@ -50,3 +62,5 @@ docker run --rm -it --network lab b3ardino/attacker nmap -T5 -Pn -p- 172.17.0.2
   ```
   A base chain has one hook, so choose `input` (local host) or `forward`
   (traffic routed through the machine) according to what you want to protect.
+  On restart, LassiNet reads the existing `drop ... saddr` rules back into the
+  dashboard so active blocks are not hidden or duplicated.

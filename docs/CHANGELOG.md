@@ -2,6 +2,19 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.16] — 2026-10-21 · "usable on a real firewall"
+
+### Added
+- **Real OPNsense enforcement** via the official `alias_util` API. `LASSI_FW=opnsense` adds/removes the blocked source in an existing alias (`OPNSENSE_ALIAS`, default `lassinet_blocked`) and only reports success on `{"status":"done"}`/`{"status":"ok"}`. Supports `OPNSENSE_SECRET`, key:secret, TLS verification toggle and timeout. The alias and firewall rule must be created in OPNsense first; LassiNet does not create infrastructure. `pfsense` remains a separate placeholder.
+- **nftables block reconciliation on startup.** In live mode, active `drop ... saddr` rules are read back from `inet lassinet` and restored into dashboard state, so a restart neither hides existing blocks nor causes duplicate rules.
+- **`LASSI_DISCOVERY_INTERVAL`** (default `30` s) caches live ARP discovery instead of sweeping the LAN every 2 s.
+
+### Tests
+- 55/55 passing. New coverage: OPNsense add/delete requests and failed-status handling, nftables active-block parsing, discovery caching, and firewall-to-state restoration.
+
+### UI
+- Help text now distinguishes nftables/OPNsense enforcement from the pfSense placeholder. Cache-busters bumped to `?v=3.18`; hard-refresh with Ctrl+F5.
+
 ## [0.4.15] — 2026-10-21 · "live mode must admit when it cannot see"
 
 ### Fixed

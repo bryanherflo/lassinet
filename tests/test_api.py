@@ -51,6 +51,48 @@ def test_health_reports_capture_failure(client: TestClient, monkeypatch) -> None
     assert "PermissionError" in data["capture_error"]
 
 
+def test_discovery_cache_reuses_results(monkeypatch) -> None:
+    calls: list[int] = []
+
+    def fake_discover():
+        calls.append(1)
+        return ([{"ip": "10.0.0.2"}], "10.0.0.1")
+
+    monkeypatch.setattr("lassi.live.discover", fake_discover)
+    monkeypatch.setattr(lassi_app, "DISCOVERY_INTERVAL", 3600.0)
+    monkeypatch.setattr(lassi_app, "_last_discovery_at", 0.0)
+    monkeypatch.setattr(lassi_app, "_discovered_hosts", [])
+    monkeypatch.setattr(lassi_app, "_discovered_gateway", None)
+    hosts1, gw1 = lassi_app._discover_cached()
+    hosts2, gw2 = lassi_app._discover_cached()
+    assert len(calls) == 1
+    assert hosts1 == hosts2 == [{"ip": "10.0.0.2"}]
+    assert gw1 == gw2 == "10.0.0.1"
+
+
+def test_restore_firewall_blocks_seeds_state(client: TestClient, monkeypatch) -> None:
+    ip = "203.0.113.77"
+
+    class FakeFirewall:
+        provider = "nftables"
+
+        def active_blocks(self):
+            return {ip}
+
+        def block(self, ip: str, reason: str = "manual") -> bool:
+            return False
+
+        def unblock(self, ip: str) -> bool:
+            return False
+
+    monkeypatch.setattr(lassi_app, "fw", FakeFirewall())
+    try:
+        assert lassi_app._restore_firewall_blocks() >= 1
+        assert ip in client.get("/api/state").json()["blocked_ips"]
+    finally:
+        lassi_app.state.unblock_host(ip)
+
+
 def test_dashboard_served(client: TestClient) -> None:
     assert client.get("/").status_code == 200
     assert "LassiNet" in client.get("/").text

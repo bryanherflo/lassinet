@@ -305,13 +305,103 @@ def test_nft_failure_is_not_reported_as_success(monkeypatch) -> None:
 
 
 def test_mock_succeeds_and_pfsense_placeholder_fails(monkeypatch) -> None:
-    monkeypatch.delenv("LASSI_FW", raising=False)
+    for key in ("LASSI_FW", "OPNSENSE_URL", "OPNSENSE_KEY",
+                "OPNSENSE_SECRET", "OPNSENSE_ALIAS"):
+        monkeypatch.delenv(key, raising=False)
     from lassi.firewall import Firewall
 
     assert Firewall(provider="mock").block("10.0.0.9") is True
     assert Firewall(provider="mock").unblock("10.0.0.9") is True
     assert Firewall(provider="pfsense").block("10.0.0.9") is False
     assert Firewall(provider="pfsense").unblock("10.0.0.9") is False
+    assert Firewall(provider="opnsense").block("10.0.0.9") is False  # unconfigured
+
+
+def test_nft_active_blocks_only_reads_drop_saddr(monkeypatch) -> None:
+    monkeypatch.delenv("LASSI_FW", raising=False)
+    listing = (
+        "ip saddr 10.0.0.9 drop # handle 42\n"
+        "ip6 saddr 2001:db8::1 drop # handle 43\n"
+        "ip daddr 10.0.0.1 drop # handle 44\n"
+        "ip saddr 10.0.0.10 accept # handle 45\n"
+    )
+    monkeypatch.setattr("lassi.firewall.Firewall._nft_list", staticmethod(lambda: listing))
+    from lassi.firewall import Firewall
+
+    assert Firewall(provider="nftables").active_blocks() == {"10.0.0.9", "2001:db8::1"}
+
+
+def test_opnsense_alias_add_and_delete_use_alias_util(monkeypatch) -> None:
+    import json
+
+    calls: list[object] = []
+
+    class Response:
+        status = 200
+
+        def __init__(self, body: bytes) -> None:
+            self.body = body
+
+        def read(self, size: int = -1) -> bytes:
+            return self.body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> bool:
+            return False
+
+    def fake_urlopen(request, timeout=None, context=None):
+        calls.append(request)
+        return Response(b'{"status":"done"}')
+
+    for key, value in {
+        "OPNSENSE_URL": "https://fw.example",
+        "OPNSENSE_KEY": "api-key",
+        "OPNSENSE_SECRET": "api-secret",
+        "OPNSENSE_ALIAS": "lassinet_blocked",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("LASSI_FW", raising=False)
+    monkeypatch.setattr("lassi.firewall.urllib.request.urlopen", fake_urlopen)
+    from lassi.firewall import Firewall
+
+    fw = Firewall(provider="opnsense")
+    assert fw.block("203.0.113.5") is True
+    assert fw.unblock("203.0.113.5") is True
+    assert calls[0].full_url.endswith("/api/firewall/alias_util/add/lassinet_blocked")
+    assert calls[1].full_url.endswith("/api/firewall/alias_util/delete/lassinet_blocked")
+    assert calls[0].get_method() == "POST"
+    assert json.loads(calls[0].data) == {"address": "203.0.113.5"}
+    assert calls[0].headers["Authorization"].startswith("Basic ")
+
+
+def test_opnsense_alias_failure_is_not_reported_as_success(monkeypatch) -> None:
+    class Response:
+        status = 200
+
+        def read(self, size: int = -1) -> bytes:
+            return b'{"status":"failed","status_msg":"nonexistent alias"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> bool:
+            return False
+
+    for key, value in {
+        "OPNSENSE_URL": "https://fw.example",
+        "OPNSENSE_KEY": "api-key",
+        "OPNSENSE_SECRET": "api-secret",
+        "OPNSENSE_ALIAS": "lassinet_blocked",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("LASSI_FW", raising=False)
+    monkeypatch.setattr("lassi.firewall.urllib.request.urlopen",
+                        lambda *args, **kwargs: Response())
+    from lassi.firewall import Firewall
+
+    assert Firewall(provider="opnsense").block("203.0.113.5") is False
 
 def test_simulator_reveals_devices_progressively() -> None:
     sim = Simulator()
