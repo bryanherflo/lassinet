@@ -5,6 +5,7 @@ Run with:  pytest -q
 
 import re
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -155,6 +156,28 @@ def test_default_gateway_never_crashes() -> None:
         assert gw is None                          # no scapy -> graceful None
     else:
         assert gw is None or re.fullmatch(r"(\d{1,3}\.){3}\d{1,3}", gw)
+
+
+def test_live_flow_duration_is_elapsed_not_epoch() -> None:
+    """duration/pkt_rate must use elapsed flow time, not the absolute start
+    timestamp (epoch seconds), which made live features useless."""
+    from lassi.live import LiveCapture
+
+    cap = LiveCapture.__new__(LiveCapture)
+    cap.flows = {
+        ("203.0.113.5", "10.0.0.2"): {
+            "src": "203.0.113.5", "dst": "10.0.0.2",
+            "pkts": 120, "bytes": 8400,
+            "syn_ratio": 0.0, "syns": 0, "ack_or_synacks": 0,
+            "dst_port_count": 2, "_ports": {80, 443}, "start": time.time() - 12,
+        }
+    }
+    flows = cap.drain_flows()
+    assert len(flows) == 1
+    flow = flows[0]
+    assert 11.0 <= flow["duration"] <= 13.0
+    assert flow["pkt_rate"] == round(120 / flow["duration"], 2)
+    assert cap.flows == {}
 
 
 def test_egress_registers_internet_node_and_uplink() -> None:

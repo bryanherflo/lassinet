@@ -181,17 +181,18 @@ class LiveCapture:
         now = time.time()
         out: list[dict[str, Any]] = []
         for key, f in list(self.flows.items()):
-            duration = max(f.get("start", now), 0.1)
+            started = f.get("start", now)
+            elapsed = max(now - started, 0.1)
             syns = f.get("syns", 0)
             total = max(f["pkts"], 1)
-            if now - f.get("start", now) < self.FLOW_FLUSH:
+            if elapsed < self.FLOW_FLUSH:
                 continue
             out.append({
                 "src": f["src"], "dst": f["dst"], "pkts": f["pkts"], "bytes": f["bytes"],
-                "duration": round(duration, 2), "syn_ratio": round(syns / total, 2),
+                "duration": round(elapsed, 2), "syn_ratio": round(syns / total, 2),
                 "dst_port_count": f["dst_port_count"],
                 "mean_pkt_size": round(f["bytes"] / total, 1),
-                "pkt_rate": round(f["pkts"] / duration, 2),
+                "pkt_rate": round(f["pkts"] / elapsed, 2),
                 "label": None,
             })
             self.flows.pop(key, None)

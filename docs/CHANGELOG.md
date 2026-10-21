@@ -2,6 +2,14 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.12] — 2026-10-21 · "live timing that tells the truth"
+
+### Fixed
+- **Live-flow duration was measured from the Unix epoch, not from the flow start.** `LiveCapture.drain_flows()` used `max(start_timestamp, 0.1)` as `duration`, so a normal 10-second flow arrived at the detector with a duration of roughly 1.7 billion seconds and a `pkt_rate` close to zero. Both are model features (and the rule engine also uses `pkt_rate`), so live detections were badly degraded. Duration is now `now - start`, measured once and reused for the flush window, `duration` and `pkt_rate`.
+
+### Tests
+- 40/40 passing. New regression constructs a 12-second-old flow, drains it, and asserts a sane 11–13 s duration, a `pkt_rate` derived from that duration, and that the flow is removed from the queue. The test does not require scapy.
+
 ## [0.4.11] — 2026-10-21 · "a gateway that looks like one"
 
 ### Changed
