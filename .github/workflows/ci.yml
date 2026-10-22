@@ -17,3 +17,20 @@ jobs:
         run: python ml-training/train_model.py
       - name: Run tests
         run: python -m pytest tests/ -q
+
+  # The Windows runner is administrator, so the `windows` firewall provider is
+  # exercised against the real Windows Firewall instead of a mock.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Train model (smoke)
+        run: python ml-training/train_model.py
+      - name: Run tests (real Windows Firewall)
+        run: python -m pytest tests/ -q

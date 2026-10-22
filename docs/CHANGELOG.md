@@ -2,6 +2,19 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.22] — 2026-10-22 · "the real model, a real CI job, the real OPNsense contract"
+
+### Added
+- **The real CICIDS model is trained and validated on real traffic.** 958,121 flows from the three public CIC-IDS-2017 day-files were parsed and a 250,000-flow stratified subsample trained: accuracy **0.9862**, macro F1 **0.956** (identical to the numbers published in the README, so they are reproducible). It was then run against the author's own LAN: 392 real flows in 150 s, **one** low-confidence false positive (0.45, rated *medium*) — below the threshold that would ever trigger an auto-block.
+- **Integration test for the OPNsense provider over a real connection** (`tests/test_opnsense_integration.py`): a real HTTP server that speaks the `alias_util` contract (Basic auth, JSON body, `{"status":"done"}`) plus a **real TLS handshake** with a self-signed certificate — `OPNSENSE_VERIFY_TLS=0` lets the provider through, verification-on refuses it instead of silently trusting it.
+- **CI job on `windows-latest`**: the GitHub Windows runner is administrator, so the `windows` provider is now exercised against the **real Windows Firewall** (`tests/test_windows_firewall.py`) instead of a mock: the rule is created, read back and removed, and the idempotent unblock is checked too.
+
+### Verified
+- The OPNsense client was checked against the **OPNsense 26.7 source**: `AliasUtilController` (add/delete, `{"status":"done"}`, `nonexistent alias` → `failed`) and `ApiControllerBase` (Basic auth with key/secret, JSON body converted into `$_POST`, 401 on bad credentials) match the implementation exactly.
+
+### Docs
+- `docs/ci.md` now describes the second (Windows) job and what it proves; the README mentions that the suite runs on both platforms.
+
 ## [0.4.21] — 2026-10-22 · "nftables: the chain name was a reserved word"
 
 ### Fixed

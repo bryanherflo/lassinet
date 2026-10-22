@@ -32,6 +32,19 @@ There is **one** automation in this repository: the GitHub Actions workflow
 
 Runner: `ubuntu-latest`, single Python version, no matrix.
 
+### The second job `windows` (added in 0.4.22)
+
+| Step | Command | Why it exists |
+|---|---|---|
+| checkout + setup-python (3.12, pip cache) | – | same toolchain as the Linux job |
+| Install dependencies | `pip install -r requirements.txt -r requirements-dev.txt` | |
+| Train model (smoke) | `python ml-training/train_model.py` | the demo model must also work on Windows |
+| Run tests | `python -m pytest tests/ -q` | the runner is **administrator**, so `tests/test_windows_firewall.py` drives the `windows` provider against the **real Windows Firewall**: the rule is created with `netsh`, read back with `Get-NetFirewallRule` and removed again |
+
+That job is what keeps the Windows provider honest: with mocks alone, a syntax
+error in the `netsh` arguments (or a wrong rule name) would pass CI unnoticed —
+exactly what happened with the nftables chain name in 0.4.21.
+
 ### What the green badge therefore proves
 
 * The code imports and the FastAPI app boots under Python 3.12 on Linux.
@@ -64,8 +77,8 @@ Runner: `ubuntu-latest`, single Python version, no matrix.
 
 | Gap | Impact |
 |---|---|
-| No **Windows** runner | the new `windows` firewall provider, the `netsh`/`Get-NetFirewallRule` code and the Windows-specific path of `lassi/live.py` are never executed by CI (the Windows runner is administrator, so `netsh advfirewall` *would* work there) |
-| No **macOS** runner | same for BSD/macOS capture |
+| ~~No **Windows** runner~~ | **closed in 0.4.22**: the `windows` job runs the suite on `windows-latest`, where the runner is administrator and the Windows Firewall provider is tested for real |
+| No **macOS** runner | the BSD/macOS capture path is never executed by CI |
 | Single **Python 3.12** | the project is developed on 3.15; a syntax/typing regression that only appears on 3.13/3.14 would only be found by users |
 | `scapy` is **not installed** in CI | `HAS_SCAPY` is always `False` there, so the live-mode import fallback and the interface/gateway helpers are only tested through fakes |
 

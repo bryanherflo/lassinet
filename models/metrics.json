@@ -1,7 +1,7 @@
 {
   "accuracy": 0.9862,
   "macro_f1": 0.956,
-  "train_time_s": 4.3,
+  "train_time_s": 4.6,
   "n_samples": 250000,
   "dataset": "CICIDS2017 (3-day subset)",
   "classes": [
@@ -10,5 +10,5 @@
     2,
     3
   ],
-  "trained_at": "2026-10-20 13:23"
+  "trained_at": "2026-10-22 12:56"
 }

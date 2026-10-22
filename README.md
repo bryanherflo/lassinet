@@ -49,14 +49,14 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (98 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (104 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 
-The same suite runs on every push through GitHub Actions; what that pipeline does — and what it still does **not** cover (no Windows/macOS runners, no lint/type/coverage gates, no dependency scanning) — is documented in [`docs/ci.md`](docs/ci.md).
+The same suite runs on every push through GitHub Actions on **Ubuntu and Windows** (the Windows runner is administrator, so the Windows Firewall provider is tested against the real firewall, not a mock); what that pipeline does — and what it still does **not** cover (no macOS runner, no lint/type/coverage gates, no dependency scanning) — is documented in [`docs/ci.md`](docs/ci.md).
 
 Open **http://localhost:8000** — within seconds you will see devices joining the map, an attacker appear, attack scenarios detected by the ML engine, and auto-blocks fired.
 
