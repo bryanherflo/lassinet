@@ -35,6 +35,28 @@ docker run --rm -it --network lab b3ardino/attacker nmap -T5 -Pn -p- 172.17.0.2
 > ⚠️ Run all of this only on networks you own. Isolate the lab from your home/
 > office network (host-only/NAT interfaces, or a dedicated VLAN).
 
+## Option C — sensor on your own LAN (Windows)
+
+LassiNet can run as a passive sensor on the network you are sitting on. It
+only *listens* (one ARP sweep per interval) and never scans ports.
+
+```powershell
+pip install scapy            # + Npcap driver installed (https://npcap.com)
+$env:LASSI_MODE = "live"
+$env:LASSI_FW   = "windows"   # real blocking; needs an Administrator shell
+python app.py
+```
+
+* The capture interface is the one of the **default route**, so a laptop with
+  Wi-Fi, Ethernet and virtual adapters still listens on the right NIC. Pin it
+  explicitly with `LASSI_IFACE="Ethernet"` if you want to be sure.
+* The real default gateway becomes the router hub of the map, and the machine
+  running LassiNet appears as a workstation. Both are protected and can never
+  be blocked.
+* `LASSI_AUTO_BLOCK` stays `0` in live mode: nothing is blocked until you
+  click *Block source* (or *Block IP* on a device).
+* Expect to see the traffic of the machine itself: the flows are real.
+
 ## Wiring real firewall enforcement
 
 * **OPNsense** — create an alias named `lassinet_blocked` (Host, Network or
@@ -64,3 +86,19 @@ docker run --rm -it --network lab b3ardino/attacker nmap -T5 -Pn -p- 172.17.0.2
   (traffic routed through the machine) according to what you want to protect.
   On restart, LassiNet reads the existing `ip saddr ... drop` rules back into
   the dashboard so active blocks are not hidden or duplicated.
+* **Windows Firewall** — `LASSI_FW=windows`; the process must run **elevated**
+  (Administrator PowerShell), otherwise `netsh` is rejected and the API reports
+  the error instead of marking the source as blocked:
+  ```powershell
+  # capture needs Npcap (https://npcap.com); blocking needs Administrator
+  pip install scapy
+  $env:LASSI_MODE = "live"
+  $env:LASSI_FW   = "windows"
+  python app.py
+  ```
+  Each blocked source becomes a persistent inbound rule named
+  `LassiNet-Block-<ip>` (`dir=in action=block remoteip=<ip> profile=any`),
+  removed again on unblock. Surviving rules are read back on startup.
+  Note the semantics: the rule blocks **inbound** traffic from that source on
+  this host. Outbound connections the machine initiates are not affected, and
+  a host behind NAT only sees the traffic that actually reaches it.

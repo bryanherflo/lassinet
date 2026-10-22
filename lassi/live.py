@@ -14,13 +14,15 @@ from typing import Any
 log = logging.getLogger("lassi.live")
 
 try:
-    from scapy.all import ARP, Ether, srp, sniff  # type: ignore
+    from scapy.all import ARP, Ether, conf, srp, sniff  # type: ignore
     HAS_SCAPY = True
 except ImportError:
     HAS_SCAPY = False
 
     def sniff(*args, **kwargs):  # pragma: no cover - only hit without scapy
         raise RuntimeError("scapy is not installed — run `pip install scapy`")
+
+    conf = None
 
 
 def _valid_ipv4(value: Any) -> str | None:
@@ -33,26 +35,40 @@ def _valid_ipv4(value: Any) -> str | None:
     return canonical if address.version == 4 and canonical != "0.0.0.0" else None
 
 
+def _route_for(destination: str | None = None) -> tuple[str | None, str | None, str | None]:
+    """Return `(interface, local_ip, gateway)` for a destination.
+
+    Scapy's route tuple is `(iface, output_ip, gateway)`; the old code used
+    indexes 1/2 the other way around and confused the machine's own address
+    with the router. That matters on laptops with several uplinks.
+    """
+    if conf is None:
+        return None, None, None
+    try:
+        route = conf.route.route(destination) if destination else conf.route.route()
+        iface, local, gateway = route
+    except Exception:
+        return None, None, None
+    return (str(iface) if iface else None, _valid_ipv4(local), _valid_ipv4(gateway))
+
+
 def default_gateway() -> str | None:
     """The machine's actual default gateway (the live-mode 'router' hub)."""
-    if not HAS_SCAPY:
-        return None
-    try:
-        from scapy.all import conf  # type: ignore
-        return _valid_ipv4(conf.route.route()[1])
-    except Exception:
-        return None
+    return _route_for()[2]
 
 
 def local_ip() -> str | None:
     """The machine's own LAN address (so the monitoring host also appears)."""
-    if not HAS_SCAPY:
-        return None
-    try:
-        from scapy.all import conf  # type: ignore
-        return _valid_ipv4(conf.route.route()[2])
-    except Exception:
-        return None
+    return _route_for()[1]
+
+
+def default_interface() -> str | None:
+    """Capture interface for the default route, not scapy's first adapter.
+
+    On a machine with Ethernet + Wi-Fi + virtual adapters, `conf.iface` can
+    point at a disconnected adapter while the real traffic uses another one.
+    """
+    return _route_for()[0]
 
 
 def _candidate_subnets() -> list[str]:
@@ -76,7 +92,9 @@ def _sweep(cidr: str, timeout: int = 2) -> list[dict[str, Any]]:
     if not HAS_SCAPY:
         raise RuntimeError("scapy is not installed — run `pip install scapy`")
     log.info("ARP discovery on %s", cidr)
-    answered, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=cidr), timeout=timeout, verbose=0)
+    iface = _route_for(cidr)[0]
+    answered, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=cidr),
+                      iface=iface, timeout=timeout, verbose=0)
     hosts: list[dict[str, Any]] = []
     for _, received in (answered or []):
         ip = _valid_ipv4(received.psrc)
@@ -94,12 +112,19 @@ def _gw_for(net: ipaddress.IPv4Network) -> str | None:
     local interface address, which is de-facto the hub there."""
     if not HAS_SCAPY:
         return None
-    try:
-        from scapy.all import conf  # type: ignore
-        _dev, gw, iface_ip = conf.route.route(str(net))
-        return _valid_ipv4(gw) or _valid_ipv4(iface_ip)
-    except Exception:
-        return None
+    _iface, iface_ip, gateway = _route_for(str(net))
+    if gateway:
+        return gateway
+    # A directly connected /24 has no per-route gateway; when it is the LAN
+    # that carries the default route, the default gateway is still the hub.
+    default = default_gateway()
+    if default:
+        try:
+            if ipaddress.ip_address(default) in net:
+                return default
+        except ValueError:
+            pass
+    return iface_ip
 
 
 def discover(cidr: str | None = None, timeout: int = 2) -> tuple[list[dict[str, Any]], str | None]:
@@ -185,7 +210,7 @@ class LiveCapture:
     def __init__(self, interface: str | None = None) -> None:
         if not HAS_SCAPY:
             raise RuntimeError("scapy is not installed — run `pip install scapy`")
-        self.iface = interface
+        self.iface = interface or default_interface()
         self.flows: dict[tuple[str, str], dict[str, Any]] = {}
         self.started = time.time()
         self.error: str | None = None

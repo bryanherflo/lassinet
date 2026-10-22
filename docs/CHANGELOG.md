@@ -2,6 +2,29 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.19] — 2026-10-22 · "real network: live capture fix + Windows enforcement"
+
+### Fixed
+- **Live mode mixed up the local IP and the router.** Scapy's route tuple is `(iface, output_ip, gateway)`, but the code read indexes 1 and 2 the other way round. On a real machine that made LassiNet treat **the machine's own address as the router** and the **real router as the local host**: the router was not protected, the sensor appeared as the hub, and the ARP sweep reported the wrong gateway. The route tuple is now parsed in one place (`_route_for`) and covered by a regression test.
+- **ARP discovery and sniffing used the wrong adapter.** Scapy's `conf.iface` can point at a disconnected adapter (Wi-Fi, Bluetooth, VirtualBox, Fortinet) while the real traffic uses another one, so the sweep found **zero neighbours** and the sniffer listened to the wrong NIC. Both now use the interface of the default route (`default_interface()`), and the sweep pins that interface explicitly.
+- **The gateway of a directly connected LAN is now detected correctly.** A `/24` has no per-route gateway, so the sweep fell back to the local address. If the default gateway lives in that subnet, it is used as the hub.
+
+### Added
+- **`windows` firewall provider (real enforcement on Windows).** `LASSI_FW=windows` adds a persistent inbound Windows Firewall rule per blocked source (`netsh advfirewall firewall add rule name=LassiNet-Block-<ip> dir=in action=block remoteip=<ip>`), removes it on unblock, and reads the surviving rules back after a restart through `Get-NetFirewallRule` (so a restart neither hides nor duplicates blocks). The rules are idempotent (the old rule is deleted first) and the provider fails honestly when the process is not elevated, instead of pretending the source was blocked.
+- **Real-network validation.** Live mode was exercised on a real 192.168.0.0/24 home LAN: ARP discovery found the router plus 11-14 hosts, the sensor itself appeared as a workstation, and real flows were captured, classified and rendered.
+- **`docs/ci.md`** documents what the GitHub Actions pipeline does on every push, what the green badge proves (and what it does not), and the missing pieces: no Windows/macOS runners, no lint/format/type-check/coverage gates, unpinned dependencies, no `pip-audit`/Dependabot, no issue/PR templates, no release automation and no scheduled job — each with a concrete proposal.
+
+### Verified on a real machine (not simulated)
+- Live capture on the real LAN: `capture_running: true`, real flows counted (`flows_total` grows), ARP sweep returns the real gateway as the router hub and the sensor as a workstation.
+- Real Windows enforcement, end to end in an **elevated** shell: `POST /api/firewall/block` for `203.0.113.5` (TEST-NET-3, never routable) produced the firewall rule `LassiNet-Block-203.0.113.5` — `Direction=Inbound`, `Action=Block`, `Enabled=True`, `Profile=Any`, `RemoteAddress=203.0.113.5` — which the dashboard showed as an active block; after restarting the app the rule was **restored** into the dashboard from the firewall; `unblock` removed the rule for real; the cleanup left **0** leftover `LassiNet-Block-*` rules.
+- Without elevation the provider fails honestly: `netsh` returns *"the requested operation requires elevation"*, the API reports the error and the source is **not** marked as blocked.
+
+### Tests
+- 82/82 passing. New regressions cover the Windows rule construction, reading persisted Windows rules back, and the scapy route-tuple order (local IP vs. gateway, default-route interface, host-only fallback).
+
+### UI
+- The Help panel now names Windows Firewall as a provider that can really enforce blocks. Cache-busters bumped to `?v=3.20` (CSS, JS, bundled map library); hard-refresh with Ctrl+F5.
+
 ## [0.4.18] — 2026-10-21 · "exhaustive review pass"
 
 ### Fixed

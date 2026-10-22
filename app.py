@@ -10,7 +10,7 @@ Modes (env vars):
     LASSI_MODE=demo        simulated devices + attack stories (default, no privileges)
     LASSI_MODE=live        ARP discovery + scapy sniffing (needs `pip install scapy`, admin)
     LASSI_AUTO_BLOCK=1     auto-block critical alerts in the firewall (default off in live, on in demo)
-    LASSI_FW=mock|nftables|opnsense|pfsense    firewall provider (default: mock)
+    LASSI_FW=mock|nftables|opnsense|windows|pfsense    firewall provider (default: mock)
 """
 
 import asyncio

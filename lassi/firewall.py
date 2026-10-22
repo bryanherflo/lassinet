@@ -10,6 +10,7 @@ Providers (LASSI_FW env var):
   * mock     — no external calls; logs actions (default, zero config, safe anywhere)
   * nftables — issues real `nft` commands (Linux, needs root)
   * opnsense — adds/removes the source IP in an existing OPNsense alias
+  * windows  — adds/removes a persistent inbound Windows Firewall rule (needs admin)
   * pfsense  — placeholder; pfSense uses a different REST API and is not wired yet
 """
 
@@ -27,6 +28,12 @@ import urllib.request
 from typing import Any
 
 log = logging.getLogger("lassi.firewall")
+
+# Netsh does not accept a rule name with spaces unless it is quoted, and the
+# quoting does not survive subprocess argument handling on every Windows
+# build. A dash-separated name is parsed reliably and still reads clearly in
+# the Windows Firewall UI.
+WINDOWS_RULE_PREFIX = "LassiNet-Block-"
 
 
 def _canonical_ip(value: Any) -> str | None:
@@ -58,7 +65,7 @@ class Firewall:
             self.opnsense_timeout = timeout if math.isfinite(timeout) and timeout >= 1.0 else 5.0
         except ValueError:
             self.opnsense_timeout = 5.0
-        if self.provider not in ("mock", "nftables", "opnsense", "pfsense"):
+        if self.provider not in ("mock", "nftables", "opnsense", "windows", "pfsense"):
             log.error("Unknown firewall provider %r — no rules will be applied", self.provider)
         log.info("Firewall provider: %s", self.provider)
 
@@ -81,6 +88,8 @@ class Firewall:
                               _family(ip), "saddr", ip, "drop"])
         if self.provider == "opnsense":
             return self._opnsense_alias(ip, add=True)
+        if self.provider == "windows":
+            return self._windows_block(ip)
         if self.provider == "pfsense":
             return self._pfsense_placeholder(ip, block=True)
         if self.provider == "mock":
@@ -124,6 +133,8 @@ class Firewall:
             return True
         if self.provider == "opnsense":
             return self._opnsense_alias(ip, add=False)
+        if self.provider == "windows":
+            return self._windows_unblock(ip)
         if self.provider == "pfsense":
             return self._pfsense_placeholder(ip, block=False)
         if self.provider == "mock":
@@ -137,9 +148,12 @@ class Firewall:
 
         This lets a restarted live sensor rebuild its dashboard state from the
         rules that are actually still in the kernel instead of starting empty
-        and later adding duplicates. OPNsense/pfSense return None for now.
+        and later adding duplicates. OPNsense/pfSense return None for now;
+        Windows rules are read back by their `LassiNet Block *` display name.
         """
         if self.provider != "nftables":
+            if self.provider == "windows":
+                return self._windows_active_blocks()
             return None
         listing = self._nft_list()
         if listing is None:
@@ -262,6 +276,72 @@ class Firewall:
             return True
         log.warning("[opnsense] %s %s rejected: %s", action, ip, raw[:200])
         return False
+
+    @staticmethod
+    def _windows_rule_name(ip: str) -> str:
+        return f"{WINDOWS_RULE_PREFIX}{ip}"
+
+    @staticmethod
+    def _netsh(args: list[str], quiet: bool = False) -> bool:
+        """Run a Windows Firewall netsh command; True only on exit code 0."""
+        try:
+            result = subprocess.run(["netsh", *args], check=False, capture_output=True,
+                                    text=True, timeout=15)
+            if result.returncode != 0:
+                if not quiet:
+                    log.warning("netsh failed: %s",
+                                (result.stderr or result.stdout or "").strip())
+                return False
+            return True
+        except (OSError, subprocess.SubprocessError) as exc:
+            if not quiet:
+                log.error("could not run netsh (%s) — Windows Firewall rule not applied", exc)
+            return False
+
+    def _windows_block(self, ip: str) -> bool:
+        """Block inbound traffic from `ip` with a persistent Windows rule.
+
+        Windows Firewall has no nft-style tables, so each block is a named
+        inbound rule. Delete first so repeated/restarted blocks are idempotent.
+        The app must run elevated; a non-admin call fails honestly.
+        """
+        rule = self._windows_rule_name(ip)
+        self._netsh(["advfirewall", "firewall", "delete", "rule", f"name={rule}"], quiet=True)
+        return self._netsh([
+            "advfirewall", "firewall", "add", "rule", f"name={rule}",
+            "dir=in", "action=block", f"remoteip={ip}", "enable=yes", "profile=any",
+        ])
+
+    def _windows_unblock(self, ip: str) -> bool:
+        rule = self._windows_rule_name(ip)
+        return self._netsh(["advfirewall", "firewall", "delete", "rule", f"name={rule}"])
+
+    def _windows_active_blocks(self) -> set[str] | None:
+        """Read our persisted rules back after a restart, without parsing
+        localized netsh labels. PowerShell returns just the display names."""
+        script = ("Get-NetFirewallRule -DisplayName 'LassiNet-Block-*' "
+                  "-ErrorAction SilentlyContinue | ForEach-Object { $_.DisplayName }")
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                check=False, capture_output=True, text=True, timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            log.error("could not list Windows Firewall rules (%s)", exc)
+            return None
+        if result.returncode != 0:
+            log.warning("PowerShell could not list Windows Firewall rules: %s",
+                        (result.stderr or "").strip())
+            return None
+        blocked: set[str] = set()
+        for line in (result.stdout or "").splitlines():
+            name = line.strip()
+            if not name.startswith(WINDOWS_RULE_PREFIX):
+                continue
+            ip = _canonical_ip(name[len(WINDOWS_RULE_PREFIX):])
+            if ip is not None:
+                blocked.add(ip)
+        return blocked
 
     def _pfsense_placeholder(self, ip: str, block: bool) -> bool:
         """pfSense's REST API differs from OPNsense's alias_util API."""

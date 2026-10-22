@@ -197,6 +197,32 @@ def test_default_gateway_never_crashes() -> None:
         assert gw is None or re.fullmatch(r"(\d{1,3}\.){3}\d{1,3}", gw)
 
 
+def test_scapy_route_tuple_order_is_local_then_gateway(monkeypatch) -> None:
+    """Scapy returns (iface, local_ip, gateway); swapping them protected the
+    monitoring host instead of the real router and broke multi-NIC capture."""
+    import ipaddress
+
+    import lassi.live as live
+
+    class FakeRoute:
+        def route(self, destination=None):
+            if destination == "192.168.56.0/24":
+                return ("\\Device\\NPF_HOSTONLY", "192.168.56.1", "0.0.0.0")
+            return ("\\Device\\NPF_LAN", "192.168.0.81", "192.168.0.1")
+
+    class FakeConf:
+        route = FakeRoute()
+
+    monkeypatch.setattr(live, "conf", FakeConf())
+    monkeypatch.setattr(live, "HAS_SCAPY", True)
+    assert live.default_interface() == "\\Device\\NPF_LAN"
+    assert live.local_ip() == "192.168.0.81"
+    assert live.default_gateway() == "192.168.0.1"
+    assert live._gw_for(ipaddress.ip_network("192.168.0.0/24")) == "192.168.0.1"
+    # On-link host-only network: no gateway route, so the local address is hub.
+    assert live._gw_for(ipaddress.ip_network("192.168.56.0/24")) == "192.168.56.1"
+
+
 def test_live_flow_duration_is_elapsed_not_epoch() -> None:
     """duration/pkt_rate must use elapsed flow time, not the absolute start
     timestamp (epoch seconds), which made live features useless."""
@@ -439,6 +465,47 @@ def test_mock_succeeds_and_pfsense_placeholder_fails(monkeypatch) -> None:
     assert Firewall(provider="pfsense").block("10.0.0.9") is False
     assert Firewall(provider="pfsense").unblock("10.0.0.9") is False
     assert Firewall(provider="opnsense").block("10.0.0.9") is False  # unconfigured
+
+
+def test_windows_provider_creates_an_inbound_block_rule(monkeypatch) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "lassi.firewall.Firewall._netsh",
+        staticmethod(lambda args, quiet=False: calls.append(args) or True),
+    )
+    from lassi.firewall import Firewall
+
+    fw = Firewall(provider="windows")
+    assert fw.block("203.0.113.5") is True
+    assert fw.unblock("203.0.113.5") is True
+    added = next(args for args in calls if "add" in args)
+    assert "action=block" in added
+    assert "dir=in" in added
+    assert "remoteip=203.0.113.5" in added
+    # The rule name has no spaces: netsh would split a quoted name incorrectly.
+    assert "name=LassiNet-Block-203.0.113.5" in added
+    assert any(args[3] == "rule" and "name=LassiNet-Block-203.0.113.5" in args
+               for args in calls if "delete" in args)
+
+
+def test_windows_active_blocks_reads_persisted_rule_names(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from lassi.firewall import Firewall
+
+    monkeypatch.setattr(
+        "lassi.firewall.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="LassiNet-Block-203.0.113.5\n"
+                   "LassiNet-Block-2001:db8::1\n"
+                   "Unrelated rule\n",
+            stderr="",
+        ),
+    )
+    assert Firewall(provider="windows").active_blocks() == {
+        "203.0.113.5", "2001:db8::1",
+    }
 
 
 def test_nft_active_blocks_only_reads_drop_saddr(monkeypatch) -> None:
