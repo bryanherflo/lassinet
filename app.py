@@ -9,7 +9,7 @@ Quickstart:
 Modes (env vars):
     LASSI_MODE=demo        simulated devices + attack stories (default, no privileges)
     LASSI_MODE=live        ARP discovery + scapy sniffing (needs `pip install scapy`, admin)
-    LASSI_AUTO_BLOCK=1     auto-block critical alerts in the firewall (default off in live, on in demo)
+    LASSI_AUTO_BLOCK=1     auto-block high and critical sources (default off in live, on in demo)
     LASSI_FW=mock|nftables|opnsense|windows|pfsense    firewall provider (default: mock)
 """
 
@@ -52,6 +52,14 @@ TICK = 2.0  # seconds between engine cycles
 MODE = (os.getenv("LASSI_MODE") or "demo").strip().lower()
 AUTO_BLOCK = (os.getenv("LASSI_AUTO_BLOCK", "1" if MODE == "demo" else "0")
               .strip().lower() in ("1", "true", "yes", "on"))
+# Safety scope for the automatic block. In live mode a false positive that
+# blocks the DNS or DHCP server of the LAN takes the whole network down, so
+# the SOAR path only touches *external* sources unless the operator opts in.
+AUTO_BLOCK_SCOPE = (os.getenv("LASSI_AUTO_BLOCK_SCOPE",
+                               "any" if MODE == "demo" else "external")
+                    .strip().lower() or "external")
+if AUTO_BLOCK_SCOPE not in ("any", "external"):
+    AUTO_BLOCK_SCOPE = "external"
 try:
     PORT = int(os.getenv("LASSI_PORT", "8000"))
     if not 1 <= PORT <= 65535:
@@ -231,6 +239,16 @@ def process_flows(flows: list[dict]) -> None:
                 # firewall rules for one block.
                 with _firewall_lock:
                     if not state.is_blocked(src) and not state.is_protected(src):
+                        if AUTO_BLOCK_SCOPE == "external" and not is_external(src):
+                            # A LAN address is usually the router, a DNS/DHCP
+                            # server or another device the operator depends on.
+                            # Blocking it by mistake takes the network down, so
+                            # the automatic path leaves it alone.
+                            log.info("auto-block skipped for LAN address %s "
+                                     "(scope=external)", src)
+                            audit({"event": "auto_block_skipped", "ip": src,
+                                   "reason": attack, "scope": AUTO_BLOCK_SCOPE})
+                            continue
                         reason = f"{attack} ({confidence})"[:120]
                         if fw.block(src, reason=reason):
                             if state.block_host(src, reason=reason):
@@ -446,6 +464,33 @@ def _restore_firewall_blocks() -> int:
     return restored
 
 
+def _apply_protected_config() -> None:
+    """Protect the addresses that must never be blocked.
+
+    `LASSI_PROTECT` lists extra addresses (comma separated) — typically the
+    DNS/DHCP server of the LAN, the NAS or a hypervisor. The machine running
+    the sensor protects itself as well. With a real firewall provider in front,
+    blocking one of these would cut the network the operator is working on.
+    """
+    raw = (os.getenv("LASSI_PROTECT") or "").strip()
+    for item in raw.replace(";", ",").split(","):
+        ip = _clean_ip(item)
+        if ip is None:
+            if item.strip():
+                log.warning("ignoring invalid LASSI_PROTECT entry %r", item.strip())
+            continue
+        state.protect(ip)
+        log.info("protected address %s (LASSI_PROTECT)", ip)
+    try:
+        from lassi.live import local_ip
+        me = local_ip()
+    except Exception:
+        me = None
+    if me:
+        state.protect(me)
+        log.info("protected this host (%s) from being blocked", me)
+
+
 def _source_for_mode(mode: str, has_scapy: bool) -> tuple[Callable[[], None], str]:
     """Pick a source and an honest mode label before starting the engine.
 
@@ -491,6 +536,15 @@ async def lifespan(app: FastAPI):
     if MODE == "live" and mode_label == "live (scapy)":
         _seed_live_gateway()
         _restore_firewall_blocks()
+    _apply_protected_config()
+    if AUTO_BLOCK:
+        if mode_label.startswith("live"):
+            log.warning("auto-block is ON in live mode (scope=%s): a false positive "
+                        "installs a real firewall rule. Keep LASSI_AUTO_BLOCK=0 unless "
+                        "you trust the detections.", AUTO_BLOCK_SCOPE)
+        if AUTO_BLOCK_SCOPE == "external":
+            log.info("auto-block scope is 'external': only public sources are blocked "
+                     "automatically, LAN addresses need a manual block")
     start_engine(source)
     log.info("LassiNet running in %s on %s:%d", mode_label,
              getattr(app.state, "host", HOST), getattr(app.state, "port", PORT))
@@ -512,6 +566,45 @@ class BlockRequest(BaseModel):
 class RenameRequest(BaseModel):
     ip: str
     name: str
+
+
+class TrustRequest(BaseModel):
+    ip: str
+    trusted: bool = True
+
+
+@app.post("/api/devices/trust")
+def trust_device(req: TrustRequest) -> dict:
+    """Mark a device as trusted (or clear the mark).
+
+    Trust is a server-side decision, not only a colour on the map: a trusted
+    address is never blocked — not by the API, not by the auto-block path — so
+    a false positive cannot take the DNS or DHCP server of the LAN down. The
+    mark is persisted in `data/trusted_devices.json`.
+    """
+    ip = _clean_ip(req.ip)
+    if ip is None:
+        return {"ok": False, "error": "That is not a valid IP address"}
+    trusted = bool(req.trusted)
+    if trusted and state.is_protected(ip) and not state.is_trusted(ip):
+        # Infrastructure is protected anyway; say so instead of pretending
+        # the mark changed something.
+        return {"ok": True, "ip": ip, "trusted": True, "protected": True}
+    if trusted and state.is_blocked(ip):
+        # A trusted device must not stay blocked: remove the firewall rule too.
+        # The rule is removed *before* the mark is set, so the state keeps the
+        # ALLOW entry in the history.
+        with _firewall_lock:
+            if fw.unblock(ip):
+                state.unblock_host(ip)
+                log.info("released the block of %s: the device is trusted now", ip)
+                audit({"event": "block_released", "ip": ip, "reason": "trusted by operator",
+                       "provider": fw.provider})
+            else:
+                log.error("could not remove the firewall rule of %s after trusting it", ip)
+    if not state.set_trusted(ip, trusted):
+        return {"ok": False, "error": "That is not a valid IP address"}
+    return {"ok": True, "ip": ip, "trusted": trusted}
 
 
 @app.post("/api/devices/rename")
@@ -602,7 +695,15 @@ def block(req: BlockRequest) -> dict:
     reason = (req.reason or "manual").strip()[:120] or "manual"
     with _firewall_lock:
         if state.is_protected(ip):
-            return {"ok": False, "error": "The router and Internet nodes cannot be blocked"}
+            # Say *why*: the operator has to know it is a protected address
+            # (router, trusted device, configured DNS/DHCP) and not a failure.
+            if state.is_trusted(ip):
+                why = "trusted devices are never blocked"
+            elif ip in state.protected:
+                why = "this address is protected (LASSI_PROTECT / this host)"
+            else:
+                why = "the router and Internet nodes cannot be blocked"
+            return {"ok": False, "error": f"{ip} cannot be blocked: {why}"}
         if state.is_blocked(ip):
             return {"ok": True, "changed": False, "blocked": True,
                     "rules": state.snapshot()["rules"][:10]}

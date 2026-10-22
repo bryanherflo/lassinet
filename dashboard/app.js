@@ -78,7 +78,9 @@ function attackLabel(name) {
 }
 
 // Infrastructure addresses (edge router, Internet placeholder) are never valid
-// block targets: dropping the router would cut the whole map. Any other IP —
+// block targets: dropping the router would cut the whole map. Trusted devices
+// are protected by the server for the same reason (a false positive on the
+// DNS/DHCP server of the LAN would take the network down). Any other IP —
 // including an external source that is not on the map yet — can be blocked.
 function isBlockableNode(ip) {
   var node = nodes.get(ip);
@@ -86,6 +88,7 @@ function isBlockableNode(ip) {
 }
 function canBlockIp(ip) {
   if (!ip || ip === "0.0.0.0") return false;
+  if (trustedDevices.has(ip)) return false;
   var node = nodes.get(ip);
   return !node || (node.hostRole !== "router" && node.hostRole !== "external");
 }
@@ -108,6 +111,18 @@ var network = new vis.Network(
 var confirmedAttackers = new Set();
 var trustedDevices = new Set();
 var suspiciousDevices = new Set();
+
+// The trust mark lives on the server: a trusted device is never blocked there,
+// not only painted in a different colour. The snapshot is the source of truth,
+// so a restart (or another browser) shows the same protected devices.
+function syncTrusted(data) {
+  if (!data || !Array.isArray(data.trusted)) return;
+  var server = new Set(data.trusted);
+  server.forEach(function(ip) { trustedDevices.add(ip); suspiciousDevices.delete(ip); });
+  Array.from(trustedDevices).forEach(function(ip) {
+    if (!server.has(ip)) trustedDevices.delete(ip);
+  });
+}
 
 var ROLE_ORDER = { server: 0, workstation: 1, iot: 2, printer: 3, attacker: 4, unknown: 5, trusted: 6 };
 var layoutKey = "";
@@ -570,9 +585,24 @@ function showTrustMenu(event, ip) {
 
 function handleTrustAction(ip, action) {
   switch (action) {
-    case "trust": if (trustedDevices.has(ip)) { trustedDevices.delete(ip); revertToOriginalRole(ip); } else { trustedDevices.add(ip); suspiciousDevices.delete(ip); markAsTrusted(ip); } break;
-    case "suspicious": if (suspiciousDevices.has(ip)) { suspiciousDevices.delete(ip); revertToOriginalRole(ip); } else { suspiciousDevices.add(ip); trustedDevices.delete(ip); markAsSuspicious(ip); } break;
-    case "clear": trustedDevices.delete(ip); suspiciousDevices.delete(ip); revertToOriginalRole(ip); break;
+    case "trust": {
+      var willTrust = !trustedDevices.has(ip);
+      if (willTrust) { trustedDevices.add(ip); suspiciousDevices.delete(ip); markAsTrusted(ip); }
+      else { trustedDevices.delete(ip); revertToOriginalRole(ip); }
+      // The server owns the protection: it refuses to block a trusted device
+      // and removes an existing firewall rule when the device is trusted.
+      post("/api/devices/trust", { ip: ip, trusted: willTrust });
+      break;
+    }
+    case "suspicious":
+      if (suspiciousDevices.has(ip)) { suspiciousDevices.delete(ip); revertToOriginalRole(ip); }
+      else { suspiciousDevices.add(ip); trustedDevices.delete(ip); markAsSuspicious(ip); }
+      post("/api/devices/trust", { ip: ip, trusted: false });
+      break;
+    case "clear":
+      trustedDevices.delete(ip); suspiciousDevices.delete(ip); revertToOriginalRole(ip);
+      post("/api/devices/trust", { ip: ip, trusted: false });
+      break;
     case "block": post("/api/firewall/block", { ip: ip, reason: "operator blocked from trust menu" }); break;
     case "unblock": post("/api/firewall/unblock", { ip: ip }); break;
   }
@@ -637,6 +667,7 @@ window.addEventListener("keydown", function(ev) {
 
 function renderTopology(data) {
   var now = Date.now(); fxSync(data); updateFlashes(data, now);
+  syncTrusted(data);
   if (attackBannerEl && attackBannerEl.dataset.src && blockedHosts.has(attackBannerEl.dataset.src)) hideAttackBanner();
   var pos = computeTreeLayout(data);
   // Role changes (e.g. a workstation becoming the gateway) change the sorted
@@ -690,7 +721,8 @@ function fmtAlert(a) {
   var blocked = a.src && blockedHosts.has(a.src);
   var action = "";
   if (sev !== "info" && a.src) {
-    if (!canBlockIp(a.src)) action = '<span class="blocked-tag">\u26D4 Infrastructure IP</span>';
+    if (trustedDevices.has(a.src)) action = '<span class="blocked-tag">\u2713 Trusted (protected)</span>';
+    else if (!canBlockIp(a.src)) action = '<span class="blocked-tag">\u26D4 Infrastructure IP</span>';
     else if (blocked) action = '<span class="blocked-tag">\u26D4 Blocked</span>';
     else action = '<button class="act" data-ip="' + esc(a.src) + '" title="Drop traffic from ' + esc(a.src) + ' at the firewall (reversible)">Block source ' + esc(a.src) + '</button>';
   }
@@ -826,6 +858,9 @@ async function post(url, body) {
       else toast("Unblocked " + body.ip + " \u00B7 traffic is allowed again");
     } else if (url.indexOf("/devices/rename") >= 0) {
       toast("Renamed to " + body.name);
+    } else if (url.indexOf("/devices/trust") >= 0) {
+      toast(body.trusted ? (body.ip + " is trusted \u00B7 it can no longer be blocked")
+                         : (body.ip + " is no longer trusted"));
     }
     refresh();
   } catch (e) {

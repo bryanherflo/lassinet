@@ -201,6 +201,16 @@ def _is_syn(flags: int) -> bool:
     return bool(flags & 0x02) and not bool(flags & 0x10)
 
 
+def _flag_bits(flags: int) -> int:
+    """Number of TCP flag bits set in a packet.
+
+    CICFlowMeter's SYN ratio divides the SYN flag count by the sum of all flag
+    counts of the flow, so the live capture counts the same flag bits to be
+    able to feed the CICIDS model the ratio it was trained on.
+    """
+    return bin(flags & 0xFF).count("1")
+
+
 class LiveCapture:
     """Aggregates packets into per (src,dst,service-ish) flows and emits
     feature dicts compatible with lassi.ml.extract_features()."""
@@ -228,16 +238,20 @@ class LiveCapture:
             key = (ip.src, ip.dst)
             f = self.flows.setdefault(key, {
                 "src": ip.src, "dst": ip.dst, "pkts": 0, "bytes": 0,
-                "syn_ratio": 0.0, "syns": 0, "ack_or_synacks": 0,
+                "syn_ratio": 0.0, "syns": 0, "syn_bits": 0, "flag_bits": 0,
+                "ack_or_synacks": 0,
                 "dst_port_count": 0, "_ports": set(), "start": time.time(),
             })
             f["pkts"] += 1
-            f["bytes"] += len(pkt)
+            f["bytes"] += len(ip)
             if TCP in pkt:
                 t = pkt[TCP]
                 f["_ports"].add(int(t.dport))
                 f["dst_port_count"] = len(f["_ports"])
                 flags = int(t.flags)
+                f["flag_bits"] += _flag_bits(flags)
+                if flags & 0x02:
+                    f["syn_bits"] += 1          # SYN (a SYN+ACK included, as CIC does)
                 if _is_syn(flags):
                     f["syns"] += 1
                 elif flags & 0x10:  # ACK (including SYN+ACK) from the responder
@@ -287,6 +301,8 @@ class LiveCapture:
             out.append({
                 "src": f["src"], "dst": f["dst"], "pkts": f["pkts"], "bytes": f["bytes"],
                 "duration": round(elapsed, 2), "syn_ratio": round(syns / total, 2),
+                # CICIDS convention: SYN flag count over the flow's flag bits.
+                "syn_ratio_cicids": round(f.get("syn_bits", 0) / max(f.get("flag_bits", 0), 1), 4),
                 "dst_port_count": f["dst_port_count"],
                 "mean_pkt_size": round(f["bytes"] / total, 1),
                 "pkt_rate": round(f["pkts"] / elapsed, 2),

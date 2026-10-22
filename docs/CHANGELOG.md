@@ -2,6 +2,25 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.20] — 2026-10-22 · "protected devices, honest auto-block"
+
+### Fixed
+- **Unblock no longer gets stuck.** `netsh` exits non-zero when no rule matches the name and `nft` fails on a handle that is already gone, so a rule deleted by hand (in the firewall GUI or by another tool) left the API answering *"it is still active"* and the dashboard showing a block with no way to clean it up. Both providers now verify the rule is really gone and report success. The dashboard shows the same behaviour for a host that is blocked in the state but has no rule left.
+- **The stale `LassiNet Block *` reference is gone** from the firewall module (the rules are named `LassiNet-Block-<ip>`).
+
+### Added
+- **Trust is now a server-side decision.** *Mark as trusted* used to be a colour on the map with no effect on the server: the device could still be blocked by the API or by the auto-block. The mark is now stored on the server (`data/trusted_devices.json`), a trusted address is **refused by the block API** and **skipped by the auto-block**, and trusting a device that was blocked removes its firewall rule. The dashboard syncs the list from the snapshot, so the protection survives a restart and shows up in every browser.
+- **More protected addresses.** Besides the router and the Internet placeholder, the sensor protects **itself**, the addresses of `LASSI_PROTECT` (your DNS/DHCP server, NAS, hypervisor…) and every trusted device. The block API explains *why* an address cannot be blocked instead of a generic error.
+- **Safe auto-block scope** (`LASSI_AUTO_BLOCK_SCOPE`, default `external` in live mode): the automatic block only touches public sources, because a false positive on a LAN address (the DHCP or DNS server) takes the network down. `any` restores the old behaviour. Starting with auto-block enabled in live mode logs a loud warning.
+- **The model is fed the conventions it was trained with.** The CICIDS projection cannot rebuild the per-source port fan-out (the dataset has no per-source grouping), so `dst_port_count` was a constant `1.0` during training, and its SYN ratio used the flow's flag bits — while the live capture produced a port fan-out and a SYN-over-packets ratio. A model bundle now declares its **profile** (`demo`/`cicids`) and the live flow is mapped onto the training conventions (the capture counts the same flag bits), instead of feeding the model a distribution it never saw. Older bundles without a profile fall back to the file name.
+
+### Tests
+- 96/96 passing (14 new). New coverage: trusted devices cannot be blocked and the trust persists across restarts, protected addresses, idempotent unblock for nftables and Windows Firewall (including the PowerShell check), the CICIDS/demo feature profiles, the model's profile resolution, the live flag-bit ratio and the auto-block scope.
+
+### Docs
+- The auto-block is described as **high and critical** (that is what the code blocks), not "critical". The README, the dashboard help and `.env.example` document the new protection rules, `LASSI_PROTECT`, `LASSI_AUTO_BLOCK_SCOPE` and the model profiles.
+- Cache-busters bumped to `?v=3.21` (CSS, JS, bundled map library); hard-refresh with Ctrl+F5.
+
 ## [0.4.19] — 2026-10-22 · "real network: live capture fix + Windows enforcement"
 
 ### Fixed

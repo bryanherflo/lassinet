@@ -738,3 +738,178 @@ def test_blocked_source_flows_are_dropped():
     before = dict(st.snapshot()["stats"])
     st.add_flow(is_attack=True, src="203.0.113.9", dst="10.0.0.2")
     assert st.snapshot()["stats"] == before
+
+
+# ---- trusted / protected devices --------------------------------------------
+def test_trusted_device_can_never_be_blocked() -> None:
+    """The trust mark is a server-side decision, not only a colour.
+
+    With a real firewall provider in front, a false positive on the DNS or
+    DHCP server of the LAN takes the whole network down.
+    """
+    from lassi.state import State
+
+    st = State()
+    st.upsert_host("192.168.0.53", hostname="dns", role="workstation")
+    assert st.set_trusted("192.168.0.53", True) is True
+    assert st.is_trusted("192.168.0.53") is True
+    assert st.is_protected("192.168.0.53") is True
+    assert st.block_host("192.168.0.53", reason="false positive") is False
+    assert st.is_blocked("192.168.0.53") is False
+    # clearing the mark makes it blockable again
+    assert st.set_trusted("192.168.0.53", False) is True
+    assert st.is_protected("192.168.0.53") is False
+    assert st.block_host("192.168.0.53") is True
+
+
+def test_protected_addresses_cannot_be_blocked() -> None:
+    from lassi.state import State
+
+    st = State()
+    assert st.protect("192.168.0.1") is True
+    assert st.is_protected("192.168.0.1") is True
+    assert st.block_host("192.168.0.1") is False
+    assert "192.168.0.1" in st.snapshot()["protected"]
+
+
+def test_trust_is_persisted_and_survives_restarts(tmp_path, monkeypatch) -> None:
+    import lassi.state as state_module
+
+    monkeypatch.setattr(state_module, "TRUSTED_PATH", tmp_path / "trusted_devices.json")
+    state_module._trusted = set()
+    st = state_module.State()
+    st.set_trusted("192.168.0.53", True)
+    assert (tmp_path / "trusted_devices.json").exists()
+    state_module._load_trusted()
+    assert state_module.trusted_devices() == {"192.168.0.53"}
+    st2 = state_module.State()
+    assert st2.is_trusted("192.168.0.53") is True
+    assert st2.is_protected("192.168.0.53") is True
+    state_module._trusted = set()
+
+
+# ---- idempotent unblock ------------------------------------------------------
+def test_nft_unblock_is_idempotent_when_the_rule_is_already_gone(monkeypatch) -> None:
+    """A rule deleted by hand must not leave the dashboard stuck on "blocked"."""
+    monkeypatch.delenv("LASSI_FW", raising=False)
+    monkeypatch.setattr(
+        "lassi.firewall.Firewall._nft_list",
+        staticmethod(lambda: "ip saddr 10.0.0.90 drop # handle 43\n"),
+    )
+    from lassi.firewall import Firewall
+
+    assert Firewall(provider="nftables").unblock("10.0.0.9") is True
+
+
+def test_windows_unblock_succeeds_when_the_rule_is_already_gone(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from lassi.firewall import Firewall
+
+    monkeypatch.setattr(
+        "lassi.firewall.Firewall._netsh",
+        staticmethod(lambda args, quiet=False: False),        # netsh: no rule matched
+    )
+    monkeypatch.setattr(
+        "lassi.firewall.Firewall._windows_rule_exists",
+        staticmethod(lambda name: False),                     # PowerShell: it is gone
+    )
+    assert Firewall(provider="windows").unblock("203.0.113.5") is True
+
+
+def test_windows_unblock_fails_when_the_rule_still_exists(monkeypatch) -> None:
+    from lassi.firewall import Firewall
+
+    monkeypatch.setattr(
+        "lassi.firewall.Firewall._netsh",
+        staticmethod(lambda args, quiet=False: False),
+    )
+    monkeypatch.setattr(
+        "lassi.firewall.Firewall._windows_rule_exists",
+        staticmethod(lambda name: True),
+    )
+    assert Firewall(provider="windows").unblock("203.0.113.5") is False
+
+
+def test_windows_rule_check_reads_the_powershell_answer(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from lassi.firewall import Firewall
+
+    monkeypatch.setattr(
+        "lassi.firewall.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="no\n", stderr=""),
+    )
+    assert Firewall._windows_rule_exists("LassiNet-Block-1.2.3.4") is False
+    monkeypatch.setattr(
+        "lassi.firewall.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="yes\n", stderr=""),
+    )
+    assert Firewall._windows_rule_exists("LassiNet-Block-1.2.3.4") is True
+
+
+# ---- model profiles (CICIDS feature conventions) -----------------------------
+def test_extract_features_use_the_cicids_conventions() -> None:
+    """The CICIDS model was trained without a port fan-out and with a
+    flag-bit SYN ratio; feeding it the demo conventions is out of
+    distribution."""
+    from lassi.ml import PROFILE_CICIDS, PROFILE_DEMO
+
+    flow = {"pkts": 100, "bytes": 5000, "duration": 10, "syn_ratio": 0.9,
+            "syn_ratio_cicids": 0.05, "dst_port_count": 42,
+            "mean_pkt_size": 50, "pkt_rate": 10}
+    demo = extract_features(flow, PROFILE_DEMO)
+    cicids = extract_features(flow, PROFILE_CICIDS)
+    assert demo[3] == 0.9 and demo[4] == 42        # as they are
+    assert cicids[3] == 0.05                      # CICIDS SYN ratio
+    assert cicids[4] == 1.0                       # constant during training
+
+
+def test_detector_resolves_the_model_profile(monkeypatch) -> None:
+    import lassi.ml as ml
+
+    class FakeModel:
+        def predict(self, X):
+            return [0] * len(X)
+
+        def predict_proba(self, X):
+            return [[1.0, 0.0]] * len(X)
+
+    monkeypatch.setattr(ml.joblib, "load",
+                        lambda path: {"model": FakeModel(), "features": ml.FEATURES,
+                                      "profile": "cicids"})
+    det = Detector(model_path=Path("lassi_model.pkl"))
+    assert det.profile == "cicids"
+    # a bundle without a profile falls back to the file name
+    monkeypatch.setattr(ml.joblib, "load",
+                        lambda path: {"model": FakeModel(), "features": ml.FEATURES})
+    assert Detector(model_path=Path("lassi_model.pkl")).profile == "cicids"
+    assert Detector(model_path=Path("demo_model.pkl")).profile == "demo"
+
+
+def test_live_flow_carries_the_cicids_syn_ratio() -> None:
+    from lassi.live import LiveCapture
+
+    cap = LiveCapture.__new__(LiveCapture)
+    cap.flows = {
+        ("203.0.113.5", "10.0.0.2"): {
+            "src": "203.0.113.5", "dst": "10.0.0.2",
+            "pkts": 10, "bytes": 1000,
+            "syn_ratio": 0.0, "syns": 1, "syn_bits": 2, "flag_bits": 8,
+            "ack_or_synacks": 8, "dst_port_count": 2, "_ports": {80, 443},
+            "start": time.time() - 12,
+        }
+    }
+    flow = cap.drain_flows()[0]
+    assert flow["syn_ratio_cicids"] == 0.25       # 2 SYN / 8 flag bits
+    assert flow["syn_ratio"] == 0.1               # 1 pure SYN / 10 packets
+
+
+def test_flag_bits_counts_the_tcp_flags() -> None:
+    from lassi.live import _flag_bits
+
+    assert _flag_bits(0x02) == 1                 # SYN
+    assert _flag_bits(0x12) == 2                 # SYN+ACK
+    assert _flag_bits(0x18) == 2                 # PSH+ACK
+    assert _flag_bits(0x00) == 0
+

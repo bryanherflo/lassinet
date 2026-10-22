@@ -2,7 +2,7 @@
 
 This file documents the GitHub side of the project: the Actions workflow that
 runs on every push, exactly what it proves, and the gaps that still exist.
-Last reviewed: **0.4.19** (workflow `ci.yml`, unchanged since 0.4.0).
+Last reviewed: **0.4.20** (workflow `ci.yml`, unchanged since 0.4.0).
 
 ---
 
@@ -36,11 +36,11 @@ Runner: `ubuntu-latest`, single Python version, no matrix.
 
 * The code imports and the FastAPI app boots under Python 3.12 on Linux.
 * The model training pipeline is reproducible enough to run in CI.
-* All **82 tests** pass: state/canonicalisation, ML feature sanitisation,
-  firewall providers (mock / nftables / OPNsense / **windows**), live-mode
-  routing and discovery helpers, the REST API (block, unblock, logs, health,
-  live→demo fallback) and the dashboard assets (JS syntax, cache-busters,
-  no-CDN rule).
+* All **96 tests** pass: state/canonicalisation, ML feature sanitisation and
+  model profiles, firewall providers (mock / nftables / OPNsense / **windows**),
+  trusted/protected devices, live-mode routing and discovery helpers, the REST
+  API (block, unblock, trust, logs, health, live→demo fallback) and the
+  dashboard assets (JS syntax, cache-busters, no-CDN rule).
 * The dashboard assets are not broken (the `node --check` step is skipped when
   Node is unavailable, which is the case on the runner — see gaps).
 

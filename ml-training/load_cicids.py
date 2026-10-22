@@ -191,7 +191,13 @@ def main() -> None:
 
     MODELS_DIR.mkdir(exist_ok=True)
     import joblib
-    joblib.dump({"model": model, "features": FEATURES}, MODELS_DIR / "lassi_model.pkl")
+    # The bundle declares its profile: the CICIDS projection cannot rebuild the
+    # per-source port fan-out (dst_port_count is a constant 1.0) and its SYN
+    # ratio uses the flow's flag bits. At inference time lassi.ml maps the
+    # live flow onto the same conventions, so the model is fed the
+    # distribution it was trained with.
+    joblib.dump({"model": model, "features": FEATURES, "profile": "cicids"},
+                MODELS_DIR / "lassi_model.pkl")
     metrics = {
         "accuracy": round(rep["accuracy"], 4),
         "macro_f1": round(rep["macro avg"]["f1-score"], 4),

@@ -110,6 +110,65 @@ def set_device_name(ip: str, name: str) -> bool:
 _load_aliases()
 
 
+# ---- trusted devices (persisted) -------------------------------------------
+# A "trusted" mark is a server-side decision, not only a colour on the map:
+# with real enforcement enabled, a false positive that blocks the DNS or the
+# DHCP server of the LAN takes the whole network down. Trusted addresses are
+# therefore never blocked — not by the API and not by the auto-block path.
+TRUSTED_PATH = Path(os.environ.get("LASSI_TRUSTFILE", "data/trusted_devices.json"))
+_trusted_lock = threading.Lock()
+_trusted: set[str] = set()
+
+
+def _load_trusted() -> None:
+    global _trusted
+    try:
+        if TRUSTED_PATH.exists():
+            raw = json.loads(TRUSTED_PATH.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                raw = list(raw.keys())
+            if not isinstance(raw, list):
+                raise ValueError("trusted devices must be a list")
+            found: set[str] = set()
+            for item in raw:
+                ip = canonical_ip(item)
+                if ip is not None:
+                    found.add(ip)
+            _trusted = found
+    except Exception:
+        _trusted = set()
+
+
+def _save_trusted() -> None:
+    try:
+        TRUSTED_PATH.parent.mkdir(parents=True, exist_ok=True)
+        TRUSTED_PATH.write_text(json.dumps(sorted(_trusted), indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def trusted_devices() -> set[str]:
+    with _trusted_lock:
+        return set(_trusted)
+
+
+def set_trusted_device(ip: str, trusted: bool) -> bool:
+    """Persist (or clear) a trusted device. Returns True when it was stored."""
+    canonical = canonical_ip(ip)
+    if canonical is None:
+        return False
+    with _trusted_lock:
+        if trusted:
+            _trusted.add(canonical)
+        else:
+            _trusted.discard(canonical)
+        _save_trusted()
+    return True
+
+
+_load_trusted()
+
+
 class State:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -120,6 +179,8 @@ class State:
         self.alerts: deque[dict[str, Any]] = deque(maxlen=200)
         self.rules: list[dict[str, Any]] = []               # firewall rules
         self.blocked: set[str] = set()                      # IPs with an active BLOCK rule (even if not discovered as a host)
+        self.trusted: set[str] = trusted_devices()          # never blocked (user marks)
+        self.protected: set[str] = set()                    # never blocked (explicit: DNS/DHCP, this host…)
         self.traffic: deque[dict[str, Any]] = deque(maxlen=30)   # recent flows for the live map animation
         self.stats: dict[str, Any] = {"flows_total": 0, "attacks_total": 0, "blocks_total": 0, "flows_per_sec": 0}
         self.model_metrics: dict[str, Any] | None = None
@@ -139,8 +200,8 @@ class State:
             )
             host["last_seen"] = time.time()
             host.update({k: v for k, v in fields.items() if v is not None})
-            if host.get("role") in ("router", "external"):
-                self.blocked.discard(ip)                     # infrastructure is never quarantined
+            if host.get("role") in ("router", "external") or ip in self.trusted:
+                self.blocked.discard(ip)                     # infrastructure/trusted is never quarantined
                 host["blocked"] = False
             elif ip in self.blocked:                         # a rule may predate discovery
                 host["blocked"] = True
@@ -239,17 +300,63 @@ class State:
             return canonical in self.blocked
 
     def is_protected(self, ip: str) -> bool:
-        """Infrastructure must never be blocked from the dashboard: dropping the
-        edge router would cut the whole map, and 0.0.0.0 is the Internet
-        placeholder rather than a real host."""
+        """Hosts that must never be blocked from the dashboard.
+
+        Dropping the edge router would cut the whole map, `0.0.0.0` is the
+        Internet placeholder rather than a real host, a *trusted* device was
+        marked as such by the operator, and `protected` holds explicitly
+        configured addresses (the LAN's DNS/DHCP server, the machine running
+        the sensor). With real enforcement enabled, blocking the wrong one of
+        them takes the network down.
+        """
         canonical = canonical_ip(ip)
         if canonical is None:
             return False
         if canonical == "0.0.0.0":
             return True
         with self._lock:
+            if canonical in self.trusted or canonical in self.protected:
+                return True
             host = self.hosts.get(canonical)
             return bool(host and host.get("role") in ("router", "external"))
+
+    def is_trusted(self, ip: str) -> bool:
+        canonical = canonical_ip(ip)
+        if canonical is None:
+            return False
+        with self._lock:
+            return canonical in self.trusted
+
+    def set_trusted(self, ip: str, trusted: bool = True) -> bool:
+        """Mark a device as trusted (or clear the mark) and persist it.
+
+        A trusted device is protected: the API refuses to block it and the
+        auto-block path skips it. Returns False for an invalid address.
+        """
+        canonical = canonical_ip(ip)
+        if canonical is None:
+            return False
+        with self._lock:
+            if trusted:
+                self.trusted.add(canonical)
+            else:
+                self.trusted.discard(canonical)
+            if trusted:
+                self.blocked.discard(canonical)     # a trusted host is not blocked
+                host = self.hosts.get(canonical)
+                if host is not None:
+                    host["blocked"] = False
+        set_trusted_device(canonical, trusted)
+        return True
+
+    def protect(self, ip: str) -> bool:
+        """Protect an address permanently (this host, configured DNS/DHCP…)."""
+        canonical = canonical_ip(ip)
+        if canonical is None or canonical == "0.0.0.0":
+            return False
+        with self._lock:
+            self.protected.add(canonical)
+        return True
 
     def block_host(self, ip: str, reason: str = "manual") -> bool:
         """Add a BLOCK rule for `ip`.
@@ -265,6 +372,8 @@ class State:
         with self._lock:
             if canonical in self.blocked:
                 return False
+            if canonical in self.trusted or canonical in self.protected:
+                return False                      # trusted/protected: never blocked
             host = self.hosts.get(canonical)
             if host is not None and host.get("role") in ("router", "external"):
                 return False
@@ -319,6 +428,8 @@ class State:
                 "traffic": list(self.traffic)[::-1],
                 "stats": dict(self.stats),
                 "blocked_ips": sorted(self.blocked),
+                "trusted": sorted(self.trusted),
+                "protected": sorted(self.protected),
                 "model_metrics": self.model_metrics,
                 "mode": self.mode,
             }

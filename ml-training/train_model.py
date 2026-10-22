@@ -77,7 +77,10 @@ def main() -> None:
     macro_f1 = round(report["macro avg"]["f1-score"], 4)
 
     MODELS_DIR.mkdir(exist_ok=True)
-    joblib.dump({"model": model, "features": FEATURES}, MODEL_PATH)
+    # The bundle declares its profile: the synthetic data uses the same feature
+    # conventions as the live extractor (a real port fan-out, SYN over packets).
+    joblib.dump({"model": model, "features": FEATURES, "profile": "demo"},
+                MODEL_PATH)
     metrics = {
         "accuracy": acc, "macro_f1": macro_f1, "train_time_s": train_time,
         "n_samples": int(len(y)), "classes": sorted(set(int(v) for v in y)),

@@ -37,6 +37,25 @@ FEATURES = [
     "dst_port_count", "mean_pkt_size", "pkt_rate", "bytes_per_pkt_scaled",
 ]
 
+# A model bundle declares the *profile* it was trained with, because the same
+# feature name can carry a different convention per dataset:
+#
+#   "demo"   - synthetic data generated with the same conventions as the live
+#              extractor (dst_port_count is a real port fan-out).
+#   "cicids" - CICIDS2017: the per-flow CSV rows carry no per-source
+#              grouping, so the "many ports from one host" signal could not be
+#              reconstructed and dst_port_count was a constant 1.0 during
+#              training. The SYN ratio was computed over the *flag bits* of
+#              the flow, not over its packet count.
+#
+# Feeding a live flow to the CICIDS model with the demo conventions would put
+# the model out of its training distribution (a port fan-out it never saw, a
+# SYN ratio on a different scale), so the input is mapped to the conventions
+# the model was actually trained with.
+PROFILE_DEMO = "demo"
+PROFILE_CICIDS = "cicids"
+PROFILES = (PROFILE_DEMO, PROFILE_CICIDS)
+
 ATTACK_TYPES = {
     0: "benign",
     1: "port_scan",
@@ -48,17 +67,30 @@ ATTACK_TYPES = {
 MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "lassi_model.pkl"
 
 
-def extract_features(flow: dict[str, Any]) -> list[float]:
-    """Extract 8 finite flow features for ML inference."""
+def extract_features(flow: dict[str, Any], profile: str = PROFILE_DEMO) -> list[float]:
+    """Extract 8 finite flow features for ML inference.
+
+    `profile` selects the conventions of the model that will consume them
+    (see PROFILE_CICIDS above). The default is the demo profile, which uses
+    the flow values as they are.
+    """
     pkts = max(_number(flow.get("pkts", 1), 1.0), 1.0)
     bytes_ = max(_number(flow.get("bytes", 0), 0.0), 0.0)
     duration = max(_number(flow.get("duration", 0.1), 0.1), 0.1)
+    syn_ratio = _number(flow.get("syn_ratio", 0.0), 0.0)
+    dst_port_count = _number(flow.get("dst_port_count", 1), 1.0)
+    if profile == PROFILE_CICIDS:
+        # Same conventions as the CICIDS projection: the port fan-out was not
+        # available at training time (constant 1.0) and the SYN ratio was
+        # taken over the flow's flag bits.
+        syn_ratio = _number(flow.get("syn_ratio_cicids", syn_ratio), syn_ratio)
+        dst_port_count = 1.0
     return [
         _number(flow.get("pkts", 0), 0.0),
         bytes_,
         duration,
-        _number(flow.get("syn_ratio", 0.0), 0.0),
-        _number(flow.get("dst_port_count", 1), 1.0),
+        syn_ratio,
+        dst_port_count,
         _number(flow.get("mean_pkt_size", bytes_ / pkts), bytes_ / pkts),
         _number(flow.get("pkt_rate", pkts / duration), pkts / duration),
         bytes_ / pkts / 1000.0,   # KB per packet
@@ -71,6 +103,7 @@ class Detector:
 
     def __init__(self, model_path: Path = MODEL_PATH) -> None:
         self.model = None
+        self.profile = PROFILE_DEMO
         self._model_path = model_path
         self._load_model()
 
@@ -90,12 +123,28 @@ class Detector:
             model = bundle["model"]
             if not hasattr(model, "predict"):
                 raise ValueError("model has no predict() method")
+            self.profile = self._resolve_profile(bundle.get("profile"))
             self.model = model
-            log.info("ML model loaded from %s", self._model_path)
+            log.info("ML model loaded from %s (profile: %s)", self._model_path, self.profile)
         except FileNotFoundError:
             log.warning("Model not found (%s) — using heuristic fallback.", self._model_path)
         except Exception:
             log.exception("Failed to load ML model — using heuristic fallback.")
+
+    def _resolve_profile(self, declared: Any) -> str:
+        """Which feature conventions this model was trained with.
+
+        Older bundles have no `profile` key, so the file name decides:
+        `lassi_model.pkl` is the CICIDS model, `demo_model.pkl` the synthetic
+        one. An unknown profile falls back to the same rule instead of
+        silently guessing the wrong conventions.
+        """
+        if isinstance(declared, str) and declared.strip().lower() in PROFILES:
+            return declared.strip().lower()
+        if declared is not None:
+            log.error("unknown model profile %r; inferring it from the file name",
+                      declared)
+        return PROFILE_CICIDS if "lassi_model" in self._model_path.name else PROFILE_DEMO
 
     def reload(self) -> None:
         """Reload model from disk (useful after retraining)."""
@@ -108,7 +157,7 @@ class Detector:
                 results.append(self._heuristic(flow))
             return results
         try:
-            X = np.array([extract_features(f) for f in flows])
+            X = np.array([extract_features(f, self.profile) for f in flows])
             # Sanitize: replace NaN/inf with 0
             X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
             labels = self.model.predict(X)

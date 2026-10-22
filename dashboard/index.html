@@ -9,8 +9,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.20">
-<script src="vendor/vis-network.min.js?v=3.20"></script>
+<link rel="stylesheet" href="style.css?v=3.21">
+<script src="vendor/vis-network.min.js?v=3.21"></script>
 </head>
 <body>
 <header>
@@ -110,7 +110,7 @@
         <h4>What does Block do?</h4>
         <p><b>Block source</b> on a threat card adds a firewall rule for that alert's <b>source IP</b> — never the victim. <b>Block IP</b> on a device adds the same rule for that device. LassiNet marks it blocked, drops flows from it, stops counting and animating them, and records a <b>BLOCK</b> entry in Firewall rules. Alert history is kept.</p>
         <p>In demo mode the rule is simulated (<b>mock</b> provider): nothing on your PC changes. In live mode <b>nftables</b>, <b>OPNsense</b> or <b>Windows Firewall</b> can enforce blocks; <b>pfSense</b> is still a placeholder and reports an error instead of pretending to block. <b>Unblock</b> - on a blocked device or in a rule - reverses it.</p>
-        <p class="help-tip">Demo tip: critical attacks are auto-blocked by default, so the simulation can go quiet. Unblock the attacker in Firewall rules to let it continue.</p>
+        <p class="help-tip">Demo tip: high and critical attacks are auto-blocked by default, so the simulation can go quiet. Unblock the attacker in Firewall rules to let it continue. In live mode auto-block is <b>off</b> and only touches external sources, so a false positive cannot take your LAN down.</p>
       </div>
       <div class="help-grid">
         <div>
@@ -121,11 +121,11 @@
         </div>
         <div>
           <h4>Device colours</h4>
-          <p>Purple = router · blue = server / Internet · green = workstation / trusted · orange = IoT / suspicious · grey = printer. A red skull marks a confirmed attacker; a dashed red ring and a dimmed node mean the firewall blocked it.</p>
+          <p>Purple = router · blue = server / Internet · green = workstation / trusted · orange = IoT / suspicious · grey = printer. A red skull marks a confirmed attacker; a dashed red ring and a dimmed node mean the firewall blocked it. <b>Trusted</b> devices are protected by the server: they can never be blocked, not even by the auto-block.</p>
         </div>
         <div>
           <h4>Act on a device</h4>
-          <p><b>Click</b> a device to select it and open its action bar. <b>Right-click</b> for the trust menu. <b>Double-click</b> to rename it. <kbd>B</kbd> blocks the selected host (never the router or Internet).</p>
+          <p><b>Click</b> a device to select it and open its action bar. <b>Right-click</b> for the trust menu. <b>Double-click</b> to rename it. <kbd>B</kbd> blocks the selected host (never the router, the Internet or a trusted device).</p>
         </div>
         <div>
           <h4>Right column</h4>
@@ -144,6 +144,6 @@
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="app.js?v=3.20"></script>
+<script src="app.js?v=3.21"></script>
 </body>
 </html>

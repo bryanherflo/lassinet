@@ -105,6 +105,11 @@ class Firewall:
         or a concurrent auto-block). Deleting only the first handle made the API
         report "unblocked" while the source was still dropped, so remove all
         matching handles and fail honestly if any command is rejected.
+
+        Unblocking is idempotent: if the rule is already gone (deleted by hand
+        in the firewall GUI, or by another tool) the source is not blocked
+        anymore, so the operation succeeds instead of leaving the dashboard
+        stuck on "still blocked" with no way to clean it up.
         """
         canonical = _canonical_ip(ip)
         if canonical is None:
@@ -118,8 +123,11 @@ class Firewall:
                 return False
             handles = self._nft_block_handles(listing, ip)
             if not handles:
-                log.warning("no nftables block rule found for %s", ip)
-                return False
+                # Nothing to remove: the rule is already gone, so the source is
+                # not blocked anymore. Reporting a failure here would leave the
+                # dashboard showing a block that no longer exists.
+                log.info("no nftables block rule for %s (already unblocked)", ip)
+                return True
             removed = 0
             for handle in handles:
                 if self._nft(["delete", "rule", "inet", "lassinet", "handle", handle]):
@@ -149,7 +157,7 @@ class Firewall:
         This lets a restarted live sensor rebuild its dashboard state from the
         rules that are actually still in the kernel instead of starting empty
         and later adding duplicates. OPNsense/pfSense return None for now;
-        Windows rules are read back by their `LassiNet Block *` display name.
+        Windows rules are read back by their `LassiNet-Block-*` display name.
         """
         if self.provider != "nftables":
             if self.provider == "windows":
@@ -313,8 +321,44 @@ class Firewall:
         ])
 
     def _windows_unblock(self, ip: str) -> bool:
+        """Delete the rule, and succeed when it is already gone.
+
+        `netsh` exits non-zero when no rule matches the name, so a rule that
+        was removed by hand in the Windows Firewall UI must not leave the
+        dashboard stuck on "still blocked" with no way to clean it up.
+        """
         rule = self._windows_rule_name(ip)
-        return self._netsh(["advfirewall", "firewall", "delete", "rule", f"name={rule}"])
+        if self._netsh(["advfirewall", "firewall", "delete", "rule", f"name={rule}"]):
+            return True
+        exists = self._windows_rule_exists(rule)
+        if exists is False:
+            log.info("no Windows Firewall rule for %s (already unblocked)", ip)
+            return True
+        return False
+
+    @staticmethod
+    def _windows_rule_exists(name: str) -> bool | None:
+        """True/False if the named rule exists; None when it cannot be told."""
+        script = (f"$r = Get-NetFirewallRule -DisplayName '{name}' "
+                  "-ErrorAction SilentlyContinue; if ($r) { 'yes' } else { 'no' }")
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                check=False, capture_output=True, text=True, timeout=15,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            log.error("could not check the Windows Firewall rule (%s)", exc)
+            return None
+        if result.returncode != 0:
+            log.warning("PowerShell could not check the firewall rule: %s",
+                        (result.stderr or "").strip())
+            return None
+        answer = (result.stdout or "").strip().lower()
+        if answer.startswith("yes"):
+            return True
+        if answer.startswith("no"):
+            return False
+        return None
 
     def _windows_active_blocks(self) -> set[str] | None:
         """Read our persisted rules back after a restart, without parsing

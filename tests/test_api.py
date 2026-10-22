@@ -262,6 +262,81 @@ def test_block_normalizes_ipv6(client: TestClient) -> None:
     assert canonical not in client.get("/api/state").json()["blocked_ips"]
 
 
+# ---- trusted devices (server-side protection) --------------------------------
+def test_trusting_a_device_protects_it_from_blocking(client: TestClient) -> None:
+    ip = "203.0.113.90"
+    try:
+        data = client.post("/api/devices/trust", json={"ip": ip, "trusted": True}).json()
+        assert data["ok"] is True and data["trusted"] is True
+        blocked = client.post("/api/firewall/block", json={"ip": ip}).json()
+        assert blocked["ok"] is False
+        assert "trusted" in blocked["error"].lower()
+        assert ip not in client.get("/api/state").json()["blocked_ips"]
+        assert ip in client.get("/api/state").json()["trusted"]
+    finally:
+        client.post("/api/devices/trust", json={"ip": ip, "trusted": False})
+    assert ip not in client.get("/api/state").json()["trusted"]
+
+
+def test_trusting_a_blocked_device_releases_the_firewall_rule(client: TestClient, monkeypatch) -> None:
+    ip = "203.0.113.91"
+    removed: list[str] = []
+
+    class FakeFirewall:
+        provider = "mock"
+
+        def block(self, ip: str, reason: str = "manual") -> bool:
+            return True
+
+        def unblock(self, ip: str) -> bool:
+            removed.append(ip)
+            return True
+
+    monkeypatch.setattr(lassi_app, "fw", FakeFirewall())
+    assert client.post("/api/firewall/block", json={"ip": ip}).json()["ok"] is True
+    try:
+        data = client.post("/api/devices/trust", json={"ip": ip, "trusted": True}).json()
+        assert data["ok"] is True
+        assert removed == [ip]
+        assert ip not in client.get("/api/state").json()["blocked_ips"]
+    finally:
+        client.post("/api/firewall/unblock", json={"ip": ip})
+        client.post("/api/devices/trust", json={"ip": ip, "trusted": False})
+
+
+def test_auto_block_skips_lan_sources_when_the_scope_is_external(monkeypatch) -> None:
+    """A false positive on the DNS/DHCP server of the LAN must not be able to
+    install a real firewall rule."""
+    blocked: list[str] = []
+
+    class FakeFirewall:
+        provider = "windows"
+
+        def block(self, ip: str, reason: str = "manual") -> bool:
+            blocked.append(ip)
+            return True
+
+        def unblock(self, ip: str) -> bool:
+            return True
+
+    class HighDetector:
+        def predict(self, flows):
+            return [{"severity": "high", "attack": "port_scan",
+                     "confidence": 0.99, "engine": "rules"} for _ in flows]
+
+    monkeypatch.setattr(lassi_app, "fw", FakeFirewall())
+    monkeypatch.setattr(lassi_app, "detector", HighDetector())
+    monkeypatch.setattr(lassi_app, "AUTO_BLOCK", True)
+    monkeypatch.setattr(lassi_app, "AUTO_BLOCK_SCOPE", "external")
+    lassi_app.process_flows([{"src": "192.168.0.53", "dst": "192.168.0.81", "bytes": 10}])
+    assert blocked == []
+    # an external source is still blocked automatically
+    lassi_app.process_flows([{"src": "8.8.8.8", "dst": "192.168.0.81", "bytes": 10}])
+    assert blocked == ["8.8.8.8"]
+    lassi_app.state.unblock_host("8.8.8.8")
+
+
+
 def test_dashboard_served(client: TestClient) -> None:
     response = client.get("/")
     assert response.status_code == 200

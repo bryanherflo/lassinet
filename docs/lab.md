@@ -102,3 +102,23 @@ python app.py
   Note the semantics: the rule blocks **inbound** traffic from that source on
   this host. Outbound connections the machine initiates are not affected, and
   a host behind NAT only sees the traffic that actually reaches it.
+
+## Protecting the addresses your network depends on
+
+With a real provider in front, a false positive that blocks the DHCP or DNS
+server of your LAN takes the network down. Three mechanisms prevent that:
+
+```powershell
+# 1) never block these addresses (comma separated)
+$env:LASSI_PROTECT = "192.168.0.1,192.168.0.53"
+
+# 2) mark a device as trusted from the dashboard (right-click -> Mark as
+#    trusted). The server refuses to block it and the auto-block skips it.
+
+# 3) keep the automatic block off in live mode, or restrict it to external
+#    sources (the default in live mode)
+$env:LASSI_AUTO_BLOCK = "0"
+$env:LASSI_AUTO_BLOCK_SCOPE = "external"   # "any" = LAN sources too
+```
+
+The machine running LassiNet always protects itself.
