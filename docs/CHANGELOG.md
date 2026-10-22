@@ -2,6 +2,18 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.24] — 2026-10-22 — "validated on a real OPNsense appliance"
+
+### Verified
+- **The `opnsense` provider was driven against a real OPNsense 26.7 VM** (VirtualBox, isolated host-only network, no WAN). No mocks, no monkeypatching: the provider's `block()` added the address to the `lassinet_blocked` alias, `pfctl -t lassinet_blocked -T show` listed it, and a `ping` from the blocked address was **really dropped** (3/3 packets lost with the block, 0 % lost again after `unblock()`). `unblock()` was idempotent. TLS with the appliance's self-signed certificate, Basic auth with the generated key/secret, `{"status":"done"}`, the alias content read back through `/api/firewall/alias_util/list` — the entire contract, end to end.
+
+### Docs
+- **`docs/lab.md` gained the three things only a real appliance teaches** (they look like "the code does not work" from the outside):
+  1. **Rule order.** A block rule appended at the end of the list is evaluated *after* the wizard's "Default allow LAN to any" pass rule. pf is first-match, so the block never fires. The rule must be above it (`sort_order` `400000.0000001` vs `400000.0000005`). This was reproduced: the address was in the table and the appliance still answered pings until the rule was moved.
+  2. **Create the alias through the API** (`POST /api/firewall/alias/add_item`): the MVC model silently drops items without a valid dashed `uuid`, and `configd` does not re-read a hand-edited `config.xml`.
+  3. **`proto any` invalidates the entire ruleset.** A rule stored with `<protocol>any</protocol>` is rendered as `proto any`; pf rejects the file, so *nothing* from it loads (no table, no rule) even though the config looks correct. Leave the protocol empty for "any"; `pfctl -nvf /tmp/rules.debug` names the offending line.
+- `docs/overview.md` now says how each provider was verified and carries the rule-order warning in the OPNsense notes.
+
 ## [0.4.23] — 2026-10-22 · "complete functional documentation"
 
 ### Added

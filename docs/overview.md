@@ -128,7 +128,7 @@ which engine produced each alert (`ml` vs `rules`).
 |---|---|---|
 | `mock` | Logs the action, changes nothing (demo) | tests |
 | `nftables` | Adds/removes a rule `ip saddr <ip> drop` in the table `inet lassinet`, chain `lassinet_block` | **real kernel** (nftables 1.1.6): rule created, read back, removed, and the verdict really drops traffic |
-| `opnsense` | Adds/removes the address in an existing OPNsense alias via `POST /api/firewall/alias_util/add\|delete/<alias>` | **OPNsense 26.7 source** + an integration test over a real socket and a real TLS handshake |
+| `opnsense` | Adds/removes the address in an existing OPNsense alias via `POST /api/firewall/alias_util/add\|delete/<alias>` | **real OPNsense 26.7 appliance**: the alias changes, the `pf` table follows and the ping from the blocked address is really dropped; plus the source and an integration test over a real socket and TLS handshake |
 | `windows` | Adds/removes a persistent inbound Windows Firewall rule `LassiNet-Block-<ip>` | **real Windows Firewall** (elevated shell + the `windows` CI runner) |
 | `pfsense` | Placeholder — pfSense uses a different REST API | not implemented |
 
@@ -155,7 +155,11 @@ which engine produced each alert (`ml` vs `rules`).
   name is configurable with `LASSI_NFT_CHAIN`.
 * **OPNsense** — the alias must already exist and be referenced by a block
   rule; LassiNet only manages its contents. The API key's user needs the
-  matching privileges. For a lab with a self-signed certificate set
+  matching privileges. **The block rule has to sit *above* the
+  "Default allow LAN to any" rule**: pf is first-match, so a block rule
+  appended at the end of the list never fires (a real appliance test proved
+  exactly that until the rule was moved). `pfctl -t <alias> -T show` shows the
+  addresses pf is really matching. For a lab with a self-signed certificate set
   `OPNSENSE_VERIFY_TLS=0` (never on a production firewall).
 * **Windows** — the process must run elevated, otherwise `netsh` is rejected
   and the API reports the error instead of pretending the source was blocked.

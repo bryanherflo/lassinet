@@ -59,9 +59,10 @@ python app.py
 
 ## Wiring real firewall enforcement
 
-* **OPNsense** — create an alias named `lassinet_blocked` (Host, Network or
-  External type) and a block rule that uses it as the source. Then generate an
-  API key/secret in the web UI and set:
+* **OPNsense** — create an alias named `lassinet_blocked` (type `host`) and a
+  **block** rule that uses it as the source, and place that rule **above the
+  "Default allow LAN to any" rule** (see below). Then generate an API
+  key/secret in the web UI and set:
   ```bash
   LASSI_FW=opnsense \
   OPNSENSE_URL=https://192.168.56.1 \
@@ -74,6 +75,10 @@ python app.py
   or the firewall rule. For a lab with a self-signed certificate, set
   `OPNSENSE_VERIFY_TLS=0`; never disable verification on a production firewall.
   `pfsense` is still a placeholder because its REST API is different.
+  ```bash
+  # the API key the provider uses must exist in the appliance
+  curl -k -u "$KEY:$SECRET" https://<firewall>/api/firewall/alias_util/list/lassinet_blocked
+  ```
 * **Linux nftables** — `LASSI_FW=nftables`; create the table and a base chain
   named `lassinet_block` with the hook for your deployment. LassiNet adds/removes
   rules but does not create firewall infrastructure:
@@ -108,6 +113,41 @@ python app.py
   Note the semantics: the rule blocks **inbound** traffic from that source on
   this host. Outbound connections the machine initiates are not affected, and
   a host behind NAT only sees the traffic that actually reaches it.
+
+## What a real OPNsense 26.7 appliance taught us
+
+The whole path was validated against an OPNsense 26.7 VM (VirtualBox,
+host-only network, WAN unplugged, so the appliance could not reach any real
+network): the provider's `block()`/`unblock()` changed the alias, the `pf`
+table followed (`pfctl -t lassinet_blocked -T show`) and a `ping` from the
+blocked address was **really dropped** — 3/3 packets lost with the block, 0 %
+lost again once the address was removed. TLS with the self-signed certificate,
+Basic auth with the generated key/secret, `{"status":"done"}` and the alias
+content through `/api/firewall/alias_util/list` all behaved as documented, and
+the unblock was idempotent.
+
+Three things only show up on a real appliance and look like "the provider is
+broken":
+
+1. **Rule order decides everything.** A block rule appended at the end of the
+   list sits *after* the wizard's "Default allow LAN to any" pass rule; pf is
+   first-match, so the block never fires and the traffic keeps flowing. Move
+   the rule above the default one: in the UI drag it to the top, or lower its
+   sequence so its `sort_order` compares lower (e.g. `400000.0000001` against
+   `400000.0000005`). This was reproduced: the address was in the table and
+   the appliance still answered pings until the rule was moved up.
+2. **Create the alias through the API, not by editing `config.xml`.**
+   `POST /api/firewall/alias/add_item` with
+   `{"alias":{"enabled":"1","name":"lassinet_blocked","type":"host","content":"203.0.113.5"}}`.
+   The MVC model silently ignores items without a valid `uuid` (dashed,
+   `8-4-4-4-12`) and `configd` does not re-read a hand-edited file, so a
+   hand-written alias never appears. The API generates the uuid and reloads.
+3. **`proto any` invalidates the whole ruleset.** A rule stored with
+   `<protocol>any</protocol>` is rendered as `proto any`; pf rejects the file,
+   so **nothing** from it loads — no alias table and no rule — even though the
+   config looks perfect. Leave the protocol empty for "any". If a reload does
+   nothing, run `pfctl -nvf /tmp/rules.debug` and read the line it complains
+   about.
 
 ## Protecting the addresses your network depends on
 
