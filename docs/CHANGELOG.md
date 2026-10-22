@@ -2,6 +2,11 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.23] — 2026-10-22 · "complete functional documentation"
+
+### Added
+- **`docs/overview.md`**: one document that describes *everything* the project does — the flow→features→model→alert→block pipeline, both operating modes (demo and live) with their differences, the five firewall providers and how each one is verified, the protection rules (router, Internet, the sensor itself, `LASSI_PROTECT`, trusted devices) and the scoped auto-block, the dashboard (map, feeds, badges, shortcuts, persistence), the HTTP API, the two models with their metrics and the `demo`/`cicids` profiles, the test suite and the two CI jobs, and an honest list of the limits that remain (host-level visibility, the semantics of the Windows rule, scapy throughput, no authentication, lab sensor and not a production IPS). The README links to it.
+
 ## [0.4.22] — 2026-10-22 · "the real model, a real CI job, the real OPNsense contract"
 
 ### Added

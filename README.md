@@ -58,6 +58,8 @@ python -m pytest tests/ -q
 
 The same suite runs on every push through GitHub Actions on **Ubuntu and Windows** (the Windows runner is administrator, so the Windows Firewall provider is tested against the real firewall, not a mock); what that pipeline does — and what it still does **not** cover (no macOS runner, no lint/type/coverage gates, no dependency scanning) — is documented in [`docs/ci.md`](docs/ci.md).
 
+> **Want the full picture?** [`docs/overview.md`](docs/overview.md) describes *everything* the project does: the pipeline, both modes, the firewall providers, the safety rules, the dashboard, the API, the models, the tests — and an honest list of what is verified against real systems and what is not.
+
 Open **http://localhost:8000** — within seconds you will see devices joining the map, an attacker appear, attack scenarios detected by the ML engine, and auto-blocks fired.
 
 **About the packet dots on the map** (and honesty about what they show): the travelling dots are *not* decoration — they are rendered **only** from the engine's real flow stream. Every dot corresponds to an actual flow (source, destination, byte size, verdict) that passed through the detection pipeline. In **demo mode** that network is simulated (the badge says *"demo (simulated)"*: the simulator generates the flows, but they still go through the same ML detection → alert → firewall path as real packets). In **live mode** (`LASSI_MODE=live`) the same pipeline feeds the dots from **physically sniffed packets**, so the traffic you see is the traffic on your wire.
@@ -175,7 +177,7 @@ lassinet/
 │   └── load_cicids.py     # real-data path: CICIDS2017 → 8 LassiNet features
 ├── models/                # lassi_model.pkl (live) / demo_model.pkl (demo) + metrics (generated)
 ├── dashboard/             # static UI (bundled vis-network), no build step
-└── docs/                  # architecture + lab guide + CI reference
+└── docs/                  # overview + lab guide + CI reference
 ```
 
 ## 🔬 Method notes
