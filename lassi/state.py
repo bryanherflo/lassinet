@@ -12,7 +12,11 @@ from typing import Any
 
 
 def canonical_ip(value: Any) -> str | None:
-    """Return the canonical text form of an IP, or None for garbage.\n\n    IPv4-mapped IPv6 addresses are folded to IPv4 so `::ffff:10.0.0.1` cannot\n    bypass a block or infrastructure rule stored for `10.0.0.1`.\n    """
+    """Return the canonical text form of an IP, or None for garbage.
+
+    IPv4-mapped IPv6 addresses are folded to IPv4 so `::ffff:10.0.0.1` cannot
+    bypass a block or infrastructure rule stored for `10.0.0.1`.
+    """
     try:
         address = ipaddress.ip_address(str(value).strip())
     except (TypeError, ValueError):

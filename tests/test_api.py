@@ -195,6 +195,12 @@ def test_logs_skip_corrupt_lines(client: TestClient, tmp_path, monkeypatch) -> N
 def test_logs_endpoint_returns_only_the_requested_tail(client: TestClient, tmp_path, monkeypatch) -> None:
     import lassi.state as state_module
 
+    # The demo engine may append an alert between our file write and the
+    # request; silence both audit entry points so this test only observes the
+    # fixture file (the production endpoint is still exercised).
+    monkeypatch.setattr(state_module, "audit", lambda event: None)
+    monkeypatch.setattr(lassi_app, "audit", lambda event: None)
+
     logfile = tmp_path / "events.jsonl"
     logfile.write_text("".join(
         '{"event":"line-%d"}\n' % i for i in range(10)
