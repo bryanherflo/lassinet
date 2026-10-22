@@ -49,7 +49,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (96 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (98 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt
@@ -112,6 +112,15 @@ Live mode performs an **auto-detected ARP sweep** - it starts on the subnet the 
 The capture interface and the sweep both follow the **default route**, so a laptop with Ethernet, Wi-Fi and virtual adapters still listens on the NIC that actually carries the traffic (`LASSI_IFACE` overrides it). The machine running LassiNet shows up as a workstation and the real gateway as the router hub; both are protected from blocking.
 
 **Windows Firewall setup (real enforcement on Windows):** set `LASSI_FW=windows` and run the app from an **Administrator** shell - `netsh` is rejected without elevation and the API then reports the error instead of marking the source as blocked. Each blocked source becomes a persistent inbound rule named `LassiNet-Block-<ip>` (`dir=in action=block remoteip=<ip> profile=any`) that is removed again on unblock, and surviving rules are read back on startup. The rule blocks **inbound** traffic from that source on this host; outbound connections the machine starts itself are not affected.
+
+**Linux nftables setup (real enforcement on Linux):** set `LASSI_FW=nftables` and create the table and the base chain yourself - LassiNet only adds and removes rules:
+
+```bash
+sudo nft add table inet lassinet
+sudo nft add chain inet lassinet lassinet_block '{ type filter hook input priority 0; policy accept; }'
+```
+
+The chain must **not** be called `drop`: that is a reserved word in the nft syntax and the chain cannot even be created. What drops the traffic is the verdict at the end of each rule (`ip saddr <ip> drop`). The chain name can be changed with `LASSI_NFT_CHAIN`.
 
 If `scapy` is not installed, LassiNet logs the reason and falls back to demo mode instead of pretending to capture; the badge shows `demo (fallback: scapy missing)`. If the sniffer starts but fails later (usually missing admin/root privileges or a bad `LASSI_IFACE`), the badge changes to `live (capture error)`, `GET /health` returns `ok: false` with `capture_error`, and the engine stops ARP-sweeping. A normal live sensor reports `capture_running: true`.
 

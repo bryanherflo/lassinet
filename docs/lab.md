@@ -75,17 +75,23 @@ python app.py
   `OPNSENSE_VERIFY_TLS=0`; never disable verification on a production firewall.
   `pfsense` is still a placeholder because its REST API is different.
 * **Linux nftables** — `LASSI_FW=nftables`; create the table and a base chain
-  named `drop` with the hook for your deployment. LassiNet adds/removes rules
-  but does not create firewall infrastructure:
+  named `lassinet_block` with the hook for your deployment. LassiNet adds/removes
+  rules but does not create firewall infrastructure:
   ```bash
   sudo nft add table inet lassinet
   # protect this host (input); use hook forward instead if this host is a gateway
-  sudo nft add chain inet lassinet drop '{ type filter hook input priority 0; policy accept; }'
+  sudo nft add chain inet lassinet lassinet_block '{ type filter hook input priority 0; policy accept; }'
   ```
   A base chain has one hook, so choose `input` (local host) or `forward`
   (traffic routed through the machine) according to what you want to protect.
   On restart, LassiNet reads the existing `ip saddr ... drop` rules back into
   the dashboard so active blocks are not hidden or duplicated.
+  > The chain **must not** be called `drop`: that is a reserved word in the nft
+  > syntax (`nft add chain inet lassinet drop {...}` fails with *syntax error,
+  > unexpected drop*, and no quoting or escaping helps). The name is
+  > configurable with `LASSI_NFT_CHAIN` if you prefer another one. What drops
+  > the traffic is the **verdict** at the end of the rule
+  > (`ip saddr <ip> drop`), not the name of the chain.
 * **Windows Firewall** — `LASSI_FW=windows`; the process must run **elevated**
   (Administrator PowerShell), otherwise `netsh` is rejected and the API reports
   the error instead of marking the source as blocked:

@@ -2,6 +2,17 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.21] — 2026-10-22 · "nftables: the chain name was a reserved word"
+
+### Fixed
+- **The nftables provider could never install a rule.** `drop` is a *reserved word* in the nft syntax: `nft add chain inet lassinet drop {...}` fails with *"syntax error, unexpected drop"*, and neither quoting (`"drop"`) nor escaping (`\drop`) is accepted by nft 1.1.6. The provider used that chain name, so **every** `nft add rule` was rejected — the nftables path was documented and unit-tested, but it had never actually worked on a real kernel. The chain is now `lassinet_block` (configurable with `LASSI_NFT_CHAIN`); what drops the traffic is the **verdict** at the end of the rule (`ip saddr <ip> drop`), not the name of the chain. The lab guide, the README and `.env.example` show the corrected setup.
+
+### Verified on a real kernel
+- nftables 1.1.6 in an isolated Linux namespace: `block` installs the rule, `active_blocks` reads it back from the kernel, `unblock` removes it, both directions are idempotent and no rule is left behind. The verdict really drops: with the rule active, a TCP connection to a local listener **timed out** instead of connecting.
+
+### Tests
+- 98/98 passing (2 new). New coverage: the nft chain name is not a reserved word and is used in every command, and it can be renamed.
+
 ## [0.4.20] — 2026-10-22 · "protected devices, honest auto-block"
 
 ### Fixed

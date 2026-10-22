@@ -381,12 +381,52 @@ def test_nft_rule_picks_ip_family(monkeypatch) -> None:
     assert fw.block("10.0.0.9") is True
     assert fw.block("2001:db8::1") is True
     # The dashboard blocks sources (attackers), so nft must match saddr and
-    # finish with the drop verdict (the chain itself is also named `drop`).
+    # finish with the drop verdict.
     assert {"ip", "saddr", "10.0.0.9"} <= set(captured[0])
     assert {"ip6", "saddr", "2001:db8::1"} <= set(captured[1])
     assert all(args[-1] == "drop" for args in captured)
     assert all(args.index("saddr") < len(args) - 1 for args in captured)
     assert all("daddr" not in args for args in captured)
+
+
+def test_nft_chain_is_not_a_reserved_word(monkeypatch) -> None:
+    """`drop` is a reserved word in the nft syntax.
+
+    `nft add chain inet lassinet drop {...}` fails with "syntax error,
+    unexpected drop" and no quoting or escaping helps, so the provider could
+    never install a rule on a real kernel. The chain therefore has another
+    name; the *verdict* at the end of the rule is what drops the traffic.
+    """
+    import lassi.firewall as firewall_module
+
+    reserved = {"drop", "accept", "reject", "queue", "jump", "goto", "return",
+                "counter", "log", "limit", "filter", "nat", "mangle"}
+    assert firewall_module.NFT_CHAIN not in reserved
+    assert firewall_module.NFT_CHAIN == "lassinet_block"
+
+    captured: list[list[str]] = []
+    monkeypatch.delenv("LASSI_FW", raising=False)
+    monkeypatch.setattr("lassi.firewall.Firewall._nft",
+                        staticmethod(lambda args: captured.append(args) or True))
+    from lassi.firewall import Firewall
+
+    Firewall(provider="nftables").block("10.0.0.9")
+    assert captured[0] == ["add", "rule", "inet", "lassinet", "lassinet_block",
+                            "ip", "saddr", "10.0.0.9", "drop"]
+
+
+def test_nft_chain_name_is_configurable(monkeypatch) -> None:
+    import lassi.firewall as firewall_module
+
+    monkeypatch.delenv("LASSI_FW", raising=False)
+    monkeypatch.setattr(firewall_module, "NFT_CHAIN", "my_chain")
+    captured: list[list[str]] = []
+    monkeypatch.setattr("lassi.firewall.Firewall._nft",
+                        staticmethod(lambda args: captured.append(args) or True))
+    from lassi.firewall import Firewall
+
+    Firewall(provider="nftables").block("10.0.0.9")
+    assert "my_chain" in captured[0]
 
 
 def test_nft_unblock_deletes_all_matching_handles(monkeypatch) -> None:
@@ -403,8 +443,8 @@ def test_nft_unblock_deletes_all_matching_handles(monkeypatch) -> None:
     from lassi.firewall import Firewall
 
     assert Firewall(provider="nftables").unblock("10.0.0.9") is True
-    assert ["delete", "rule", "inet", "lassinet", "handle", "42"] in calls
-    assert ["delete", "rule", "inet", "lassinet", "handle", "44"] in calls
+    assert ["delete", "rule", "inet", "lassinet", "lassinet_block", "handle", "42"] in calls
+    assert ["delete", "rule", "inet", "lassinet", "lassinet_block", "handle", "44"] in calls
     assert all("43" not in args for args in calls)
 
 

@@ -35,6 +35,17 @@ log = logging.getLogger("lassi.firewall")
 # the Windows Firewall UI.
 WINDOWS_RULE_PREFIX = "LassiNet-Block-"
 
+# nftables: the table and the chain that holds the block rules.
+#
+# The chain used to be called "drop" — but `drop` is a *reserved word* in the
+# nft syntax: `nft add chain inet lassinet drop {...}` fails with
+# "syntax error, unexpected drop" and no quoting or escaping helps, so the
+# provider could never install a rule on a real kernel. The chain is now
+# named `lassinet_block`; the thing that drops the traffic is the *verdict*
+# at the end of the rule (`ip saddr <ip> drop`).
+NFT_TABLE = "lassinet"
+NFT_CHAIN = (os.getenv("LASSI_NFT_CHAIN") or "lassinet_block").strip() or "lassinet_block"
+
 
 def _canonical_ip(value: Any) -> str | None:
     try:
@@ -82,9 +93,10 @@ class Firewall:
             return False
         ip = canonical
         if self.provider == "nftables":
-            # The base chain is named `drop`; the final `drop` is the verdict.
-            # Without it nft accepts a match-only rule and traffic is NOT dropped.
-            return self._nft(["add", "rule", "inet", "lassinet", "drop",
+            # The chain holds the rules; the final `drop` is the verdict.
+            # Without it nft accepts a match-only rule and traffic is NOT
+            # dropped.
+            return self._nft(["add", "rule", "inet", NFT_TABLE, NFT_CHAIN,
                               _family(ip), "saddr", ip, "drop"])
         if self.provider == "opnsense":
             return self._opnsense_alias(ip, add=True)
@@ -130,7 +142,7 @@ class Firewall:
                 return True
             removed = 0
             for handle in handles:
-                if self._nft(["delete", "rule", "inet", "lassinet", "handle", handle]):
+                if self._nft(["delete", "rule", "inet", NFT_TABLE, NFT_CHAIN, "handle", handle]):
                     removed += 1
                 else:
                     log.warning("could not delete nftables handle %s for %s", handle, ip)
@@ -216,7 +228,7 @@ class Firewall:
     @staticmethod
     def _nft_list() -> str | None:
         try:
-            result = subprocess.run(["nft", "-a", "list", "table", "inet", "lassinet"],
+            result = subprocess.run(["nft", "-a", "list", "table", "inet", NFT_TABLE],
                                     check=False, capture_output=True, text=True, timeout=10)
             if result.returncode != 0:
                 log.warning("nft list failed: %s", (result.stderr or "").strip())

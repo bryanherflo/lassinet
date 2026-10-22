@@ -36,7 +36,7 @@ Runner: `ubuntu-latest`, single Python version, no matrix.
 
 * The code imports and the FastAPI app boots under Python 3.12 on Linux.
 * The model training pipeline is reproducible enough to run in CI.
-* All **96 tests** pass: state/canonicalisation, ML feature sanitisation and
+* All **98 tests** pass: state/canonicalisation, ML feature sanitisation and
   model profiles, firewall providers (mock / nftables / OPNsense / **windows**),
   trusted/protected devices, live-mode routing and discovery helpers, the REST
   API (block, unblock, trust, logs, health, live→demo fallback) and the
