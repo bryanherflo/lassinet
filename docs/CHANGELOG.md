@@ -2,6 +2,18 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.25] — 2026-10-22 — "the suite runs everywhere it can"
+
+### Fixed
+- **The TLS test no longer skips on a machine that can run it.** It found `openssl` only through `PATH`; on Windows the binary ships with Git for Windows and is not exported, so the self-signed-certificate test was skipped locally even though the tool was installed. It now also looks in the usual Git-for-Windows, `/usr` and Homebrew locations.
+- **The test count was stale in `docs/ci.md`** ("98 tests") and off by one in the README and `docs/overview.md`; all three now say 105.
+
+### Added
+- **Test for the honest-failure path of the Windows provider**: in a non-elevated shell `netsh` is rejected, and the provider must return `False` and leave no rule behind instead of claiming a block that never happened. It runs on a normal desktop shell and is skipped on the elevated CI runner, which runs the two real-firewall tests instead — between them, both outcomes are covered.
+
+### Tests
+- **105 tests**: 103 pass + 2 skipped on a non-elevated Windows shell (those two need administrator). The Ubuntu job runs 102 (the three Windows-only ones skip) and the elevated Windows job runs 104 (the non-elevated one skips) — every test runs in at least one of the two jobs.
+
 ## [0.4.24] — 2026-10-22 — "validated on a real OPNsense appliance"
 
 ### Verified

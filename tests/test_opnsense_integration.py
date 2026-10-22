@@ -163,9 +163,33 @@ def test_opnsense_reports_a_missing_alias(opnsense, monkeypatch) -> None:
     assert state.addresses == []
 
 
+def _find_openssl() -> str | None:
+    """Locate the openssl CLI.
+
+    `shutil.which` only sees PATH: on Windows the binary usually ships with
+    Git for Windows and is *not* exported, so the TLS test used to skip on a
+    perfectly capable machine. Look in the usual install locations too.
+    """
+    found = shutil.which("openssl")
+    if found:
+        return found
+    candidates = [
+        r"C:\Program Files\Git\usr\bin\openssl.exe",
+        r"C:\Program Files\Git\mingw64\bin\openssl.exe",
+        r"C:\Program Files (x86)\Git\usr\bin\openssl.exe",
+        "/usr/bin/openssl",
+        "/usr/local/bin/openssl",
+        "/opt/homebrew/bin/openssl",
+    ]
+    for candidate in candidates:
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
 def _self_signed_cert(tmp_path: Path) -> tuple[str, str] | None:
     """Generate a throwaway certificate for 127.0.0.1 (needs the openssl CLI)."""
-    openssl = shutil.which("openssl")
+    openssl = _find_openssl()
     if openssl is None:
         return None
     certfile = tmp_path / "cert.pem"

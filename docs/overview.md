@@ -277,12 +277,14 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **104 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **105 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows
-  Firewall) and one needs the `openssl` CLI (it generates a throwaway
-  certificate for the TLS test); they are skipped elsewhere.
+  Firewall) and are skipped elsewhere; a third one runs only when *not*
+  elevated and checks that the provider reports the refusal honestly. The TLS
+  test generates a throwaway certificate with `openssl`, which it looks for on
+  the PATH and in the usual Git-for-Windows/Homebrew locations.
 * **CI runs on every push** with two jobs: `test` (ubuntu-latest) and
   `windows` (windows-latest). The Windows runner is administrator, so the
   `windows` provider is exercised against the **real Windows Firewall**
