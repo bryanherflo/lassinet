@@ -13,14 +13,14 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 - **Attack flashes stay aligned with new detections.** Auto-block confirmation cards are skipped when matching fresh attacks, and a server restart (counter reset) no longer stops future flashes. A banner disappears when its source becomes blocked.
 - **Model metrics follow the active model.** When `LASSI_MODE=live` falls back to demo (missing scapy), the dashboard now loads `demo_metrics.json` instead of showing stale live metrics.
 - **`/api/logs` reads only a bounded tail** instead of loading a potentially huge `events.jsonl` into memory on every poll.
-- **Model and feature validation.** A model bundle with mismatched features or no `predict()` is rejected with a heuristic fallback; failed reloads clear the old model; missing/NaN/Inf flow values cannot raise.
+- **Model and feature validation.** A model bundle with mismatched features or no `predict()` is rejected with a heuristic fallback; failed reloads clear the old model; a live→demo fallback always loads the demo weights (or clears the model if they are missing) instead of keeping the CICIDS model; missing/NaN/Inf flow values cannot raise.
 - **IPs are canonicalized and validated in state and firewall providers**, including persisted device-name keys; `0.0.0.0`, `None`, and malformed addresses are rejected consistently.
 - **Live discovery is more resilient:** an invalid `LASSI_SUBNET` falls back to auto-detection, a failed ARP sweep tries the next candidate, and scapy's `0.0.0.0` placeholders are filtered from gateway/local addresses.
 - **Configuration is normalized:** `.env` is loaded when `python-dotenv` is present, `LASSI_MODE`/`LASSI_FW` are stripped, invalid ports fall back to 8000, and non-finite discovery/timeout values are ignored.
 - **The dashboard no longer has a CDN fallback**: only the bundled `vendor/vis-network.min.js` is loaded, matching the offline/no-CDN promise.
 
 ### Tests
-- 78/78 passing. New regressions cover the nftables verdict, demo/real-firewall isolation, IP canonicalization, rate timing, bad byte counts, invalid-subnet fallback, sweep-failure fallback, malformed feature inputs, mismatched model bundles, bounded log tailing, and rejecting malformed flows before the firewall. Repo hygiene removed a tracked debug screenshot and a stale model backup; the simulator now uses a local RNG instead of reseeding Python's global generator.
+- 79/79 passing. New regressions cover the nftables verdict, demo/real-firewall isolation, IP canonicalization, live→demo model switching, rate timing, bad byte counts, invalid-subnet fallback, sweep-failure fallback, malformed feature inputs, mismatched model bundles, bounded log tailing, and rejecting malformed flows before the firewall. Repo hygiene removed a tracked debug screenshot and a stale model backup; the simulator now uses a local RNG instead of reseeding Python's global generator.
 
 ### UI
 - Cache-busters bumped to `?v=3.19` (CSS, JS, bundled map library); hard-refresh with Ctrl+F5.

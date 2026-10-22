@@ -174,6 +174,18 @@ def _train_demo_model_if_missing() -> None:
     log.info("demo model trained and loaded")
 
 
+def _use_demo_model() -> None:
+    """Switch to the demo model, even if its weights are unavailable.
+
+    A requested live mode that falls back to the simulator must not keep the
+    CICIDS model: its classes were trained on a different distribution, and a
+    failed/missing demo bundle would otherwise leave the live model silently
+    running and (worse) paired with demo metrics.
+    """
+    detector.model = Detector(model_path=MODELS_DIR / "demo_model.pkl").model
+    _load_metrics("demo")
+
+
 # --------------------------------------------------------------------------
 # Engine (background thread; works identically for demo & live sources)
 # --------------------------------------------------------------------------
@@ -472,10 +484,8 @@ async def lifespan(app: FastAPI):
         if mode_label != "demo (simulated)":
             # Requested live but fell back: use the demo model, not the live
             # CICIDS model that may have been loaded from LASSI_MODE=live.
-            demo_path = MODELS_DIR / "demo_model.pkl"
-            if demo_path.exists():
-                detector.model = Detector(model_path=demo_path).model
-            _load_metrics("demo")
+            # This also clears the live model if the demo bundle is missing.
+            _use_demo_model()
     if MODE != "demo" and mode_label != "live (scapy)":
         log.error("LASSI_MODE=%s is not usable for live capture; %s", MODE, mode_label)
     if MODE == "live" and mode_label == "live (scapy)":

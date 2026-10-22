@@ -38,6 +38,21 @@ def test_metrics_are_hidden_when_the_model_is_not_loaded(monkeypatch) -> None:
     lassi_app.state.model_metrics = previous       # keep later tests independent
 
 
+def test_demo_fallback_never_keeps_the_live_model(monkeypatch) -> None:
+    previous = lassi_app.state.model_metrics
+
+    class MissingDemoDetector:
+        def __init__(self, model_path) -> None:
+            self.model = None
+
+    monkeypatch.setattr(lassi_app, "Detector", MissingDemoDetector)
+    monkeypatch.setattr(lassi_app.detector, "model", object())
+    lassi_app._use_demo_model()
+    assert lassi_app.detector.model is None
+    assert lassi_app.state.model_metrics is None
+    lassi_app.state.model_metrics = previous
+
+
 def test_source_selection_falls_back_honestly() -> None:
     source, label = lassi_app._source_for_mode("live", False)
     assert source is lassi_app.demo_loop
