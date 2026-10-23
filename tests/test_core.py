@@ -708,6 +708,61 @@ def test_model_is_loadable_and_classifies() -> None:
     assert verdict["attack"] == "port_scan"
 
 
+class _FixedModel:
+    """Stand-in classifier: always predicts `label` with probability `prob`."""
+
+    def __init__(self, label: int, prob: float) -> None:
+        self.label = label
+        self.prob = prob
+
+    def predict(self, X):
+        return [self.label for _ in range(len(X))]
+
+    def predict_proba(self, X):
+        import numpy as np
+        return np.array([[1.0 - self.prob, self.prob] for _ in range(len(X))])
+
+
+def _detector_with(label: int, prob: float, monkeypatch) -> Detector:
+    import lassi.ml as ml
+    monkeypatch.setattr(
+        ml.joblib, "load",
+        lambda path: {"model": _FixedModel(label, prob), "features": ml.FEATURES},
+    )
+    return Detector(model_path=Path("fake-model.pkl"))
+
+
+def test_model_does_not_claim_an_attack_on_a_tiny_flow(monkeypatch) -> None:
+    """Two packets cannot be a DDoS.
+
+    Measured on a real home LAN: seven false positives in five minutes, every
+    one a one-port web/DNS flow of a couple of packets.
+    """
+    det = _detector_with(3, 0.95, monkeypatch)          # 3 -> ddos, very sure
+    flow = {"pkts": 2, "bytes": 120, "duration": 0.2, "syn_ratio": 0.5,
+            "dst_port_count": 1, "mean_pkt_size": 60, "pkt_rate": 10}
+    verdict = det.predict([flow])[0]
+    assert verdict["attack"] == "benign"
+    assert verdict["severity"] == "low"
+
+
+def test_model_does_not_claim_an_attack_when_it_is_guessing(monkeypatch) -> None:
+    det = _detector_with(2, 0.5, monkeypatch)           # 2 -> brute_force, 50/50
+    flow = {"pkts": 200, "bytes": 20000, "duration": 5, "syn_ratio": 0.2,
+            "dst_port_count": 1, "mean_pkt_size": 100, "pkt_rate": 40}
+    verdict = det.predict([flow])[0]
+    assert verdict["attack"] == "benign"
+
+
+def test_model_claims_an_attack_with_evidence_and_confidence(monkeypatch) -> None:
+    det = _detector_with(1, 0.9, monkeypatch)           # 1 -> port_scan
+    flow = {"pkts": 120, "bytes": 8000, "duration": 4, "syn_ratio": 0.9,
+            "dst_port_count": 60, "mean_pkt_size": 66, "pkt_rate": 30}
+    verdict = det.predict([flow])[0]
+    assert verdict["attack"] == "port_scan"
+    assert verdict["severity"] == "medium"
+
+
 def test_audit_log_records_alerts_and_blocks(tmp_path, monkeypatch):
     import json
     import lassi.state as st

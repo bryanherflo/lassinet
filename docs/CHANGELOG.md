@@ -2,6 +2,19 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.26] — 2026-10-23 — "no more invented attacks"
+
+### Fixed
+- **The detector claimed attacks on perfectly normal traffic.** On the author's own LAN (live mode, real CICIDS model) it raised **25 alerts in 40 minutes** — roughly one every 100 seconds — and every single one was a false positive: one-port web/DNS flows of a couple of packets, scored between 0.43 and 0.88. The old code promoted *any* non-benign class to an alert: below 0.65 it only downgraded the severity to `medium`, and `medium` is an alert. The documentation already promised that a prediction is "only promoted when the confidence is high enough"; the code did not.
+- Both gates now apply to the ML verdict (the rule engine and the no-model fallback are untouched):
+  - **Evidence** (`MIN_EVIDENCE_PKTS = 10`): a flow with fewer than 10 packets is not a scan, a flood or a brute force. It is still counted, shown and displayed — just not called an attack.
+  - **Confidence** (`CONFIDENT = 0.65`): below that the model is guessing, so it does not claim an attack either.
+- Measured after the change, same machine and LAN: **0 alerts in 6 minutes / 904 flows**, and the real-model test still classifies a 130-packet port scan as `port_scan` (so sensitivity is not gone, only the guessing).
+
+### Tests
+- Three new tests pin the behaviour: a two-packet flow scored 0.95 by the model is *not* an attack, a 200-packet flow scored 0.50 is *not* an attack, and a 120-packet flow scored 0.90 *is* one (with the expected severity). 108 tests in total.
+- `docs/overview.md` §2.2 now states both conditions and carries the measurement.
+
 ## [0.4.25] — 2026-10-22 — "the suite runs everywhere it can"
 
 ### Fixed

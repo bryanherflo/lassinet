@@ -82,8 +82,20 @@ values can reach the model) and asks the RandomForest for a class:
 | 3 | ddos | critical |
 | 4 | data_exfiltration | critical |
 
-A prediction is only promoted to an alert when the confidence is high enough
-(≥ 0.65). **When no model file exists, a deterministic rule engine takes
+A prediction is only promoted to an alert when two conditions hold:
+
+* **there is enough evidence** — at least 10 packets in the flow. A two-packet
+  TLS handshake cannot be a scan, a flood or a brute force, whatever the
+  classifier scores it;
+* **the model is not guessing** — confidence ≥ 0.65.
+
+Measured on a real home LAN: with only the probability check (and no evidence
+gate) the sensor raised **25 alerts in 40 minutes**, every one of them a false
+positive — one-port web/DNS flows of a couple of packets scored between 0.43
+and 0.88. With both gates it raised **0 alerts in 6 minutes / 900 flows**, and
+the real-model test still classifies a 130-packet port scan as `port_scan`.
+
+**When no model file exists, a deterministic rule engine takes
 over** (`port_scan` = high SYN ratio + many ports, `brute_force` = many
 packets to one port, `ddos` = high rate with one port, `data_exfiltration` =
 huge upload), so the platform is never "dead" — and the dashboard badge says
@@ -277,7 +289,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **105 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **108 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows

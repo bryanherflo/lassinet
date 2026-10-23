@@ -37,6 +37,15 @@ FEATURES = [
     "dst_port_count", "mean_pkt_size", "pkt_rate", "bytes_per_pkt_scaled",
 ]
 
+# A verdict may only *claim* an attack when there is something to judge and the
+# model is reasonably sure. Both gates come from a measurement on a real home
+# LAN: seven "attacks" in five minutes, every one a one-port web/DNS flow of a
+# couple of packets scored between 0.43 and 0.88. A two-packet TLS handshake is
+# not a DDoS, whatever the classifier says, and a 0.43 probability is a guess.
+# Below these limits the flow is still counted and shown, just not as an attack.
+MIN_EVIDENCE_PKTS = 10
+CONFIDENT = 0.65
+
 # A model bundle declares the *profile* it was trained with, because the same
 # feature name can carry a different convention per dataset:
 #
@@ -167,13 +176,16 @@ class Detector:
             for flow, label, prob in zip(flows, labels, probs):
                 kind = ATTACK_TYPES.get(int(label), "unknown")
                 confidence = _number(prob, 0.0)
+                # Enough packets to be a scan/flood/brute force, and a model
+                # that is not merely guessing (see MIN_EVIDENCE_PKTS above).
+                evidence = _number(flow.get("pkts", 0), 0.0) >= MIN_EVIDENCE_PKTS
                 res = self._heuristic(flow)  # base fields
-                if confidence >= 0.65 and kind != "benign":
+                if kind != "benign" and confidence >= CONFIDENT and evidence:
                     res.update(severity=self._severity(kind), attack=kind,
                                confidence=round(confidence, 2), engine="ml")
                 else:
-                    res.update(severity="low" if kind == "benign" else "medium",
-                               attack=kind, confidence=round(confidence, 2), engine="ml")
+                    res.update(severity="low", attack="benign",
+                               confidence=round(confidence, 2), engine="ml")
                 results.append(res)
         except Exception:
             log.exception("ML inference failed — falling back to heuristics")
