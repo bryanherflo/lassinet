@@ -12,6 +12,7 @@ same structure, so the model works identically in both modes:
     }
 """
 
+import ipaddress
 import logging
 import math
 from pathlib import Path
@@ -32,18 +33,38 @@ def _number(value: Any, default: float) -> float:
     return number if math.isfinite(number) else default
 
 
+def _is_internal(value: Any) -> bool:
+    """RFC1918 / loopback / link-local, i.e. "our side" of the flow.
+
+    Exfiltration is internal -> outside. Without this check a big *download*
+    (outside -> internal, thousands of packets, megabytes) looks identical.
+    """
+    try:
+        return ipaddress.ip_address(str(value)).is_private
+    except ValueError:
+        return False
+
+
 FEATURES = [
     "pkts", "bytes", "duration", "syn_ratio",
     "dst_port_count", "mean_pkt_size", "pkt_rate", "bytes_per_pkt_scaled",
 ]
 
-# A verdict may only *claim* an attack when there is something to judge and the
-# model is reasonably sure. Both gates come from a measurement on a real home
-# LAN: seven "attacks" in five minutes, every one a one-port web/DNS flow of a
-# couple of packets scored between 0.43 and 0.88. A two-packet TLS handshake is
-# not a DDoS, whatever the classifier says, and a 0.43 probability is a guess.
-# Below these limits the flow is still counted and shown, just not as an attack.
-MIN_EVIDENCE_PKTS = 10
+# A verdict may only *claim* an attack when the model is reasonably sure and a
+# second, independent detector agrees that the *shape* of the flow is credible.
+# Both gates come from measurements on a real home LAN:
+#
+#   * the model alone raised 25 alerts in 40 minutes, every one a false
+#     positive: one-port web/DNS flows of a couple of packets scored 0.43-0.88,
+#     and two ordinary HTTPS sessions to CDNs scored 0.97 and 1.00 as
+#     "brute_force". A download is not a flood however sure the classifier is.
+#   * below 0.65 the model is guessing (0.43 is not evidence of anything).
+#
+# The deterministic rules in `_heuristic` are that second opinion: they look at
+# SYN ratio, port fan-out, packet rate and volume. A real scan, flood or brute
+# force trips them; a TLS session does not. The model still decides *which*
+# attack and how severe it is (engine `ml+rules`); when only the rules fire,
+# the alert keeps `engine="rules"`.
 CONFIDENT = 0.65
 
 # A model bundle declares the *profile* it was trained with, because the same
@@ -176,16 +197,19 @@ class Detector:
             for flow, label, prob in zip(flows, labels, probs):
                 kind = ATTACK_TYPES.get(int(label), "unknown")
                 confidence = _number(prob, 0.0)
-                # Enough packets to be a scan/flood/brute force, and a model
-                # that is not merely guessing (see MIN_EVIDENCE_PKTS above).
-                evidence = _number(flow.get("pkts", 0), 0.0) >= MIN_EVIDENCE_PKTS
-                res = self._heuristic(flow)  # base fields
-                if kind != "benign" and confidence >= CONFIDENT and evidence:
+                res = self._heuristic(flow)          # second opinion, run first
+                credible = res.get("attack") != "benign"
+                if credible and kind != "benign" and confidence >= CONFIDENT:
                     res.update(severity=self._severity(kind), attack=kind,
-                               confidence=round(confidence, 2), engine="ml")
-                else:
+                               confidence=round(confidence, 2),
+                               engine="ml+rules")
+                elif not credible:
+                    # The model claims something the shape of the flow does not
+                    # support (or it is guessing): do not call it an attack.
                     res.update(severity="low", attack="benign",
                                confidence=round(confidence, 2), engine="ml")
+                # else: the rules are sure and the model is not -> keep the
+                # rule verdict (engine "rules"): one sure detector is enough.
                 results.append(res)
         except Exception:
             log.exception("ML inference failed — falling back to heuristics")
@@ -195,7 +219,13 @@ class Detector:
 
     @staticmethod
     def _heuristic(flow: dict[str, Any]) -> dict[str, Any]:
-        """Rule-based fallback used when no model is trained yet."""
+        """Deterministic rules: the second opinion in front of every alert.
+
+        These thresholds are deliberately conservative because they now *gate*
+        the model's verdict (see CONFIDENT above). Measured on a real LAN: a
+        25 pkt/s rule called every large download a DDoS, and a "big volume"
+        rule called the same download an exfiltration. A download is neither.
+        """
         syn_ratio = _number(flow.get("syn_ratio", 0), 0.0)
         dst_port_count = int(_number(flow.get("dst_port_count", 0), 0.0))
         pkt_rate = _number(flow.get("pkt_rate", 0), 0.0)
@@ -204,11 +234,14 @@ class Detector:
 
         if syn_ratio > 0.9 and dst_port_count > 8:
             return {"severity": "high", "attack": "port_scan", "confidence": 0.9, "engine": "rules"}
-        if dst_port_count == 1 and pkt_rate > 25 and pkts > 200:
+        # A SYN flood: many SYN retries at a high rate. A TLS download has the
+        # same rate and volume but almost no SYN, which is the discriminator.
+        if dst_port_count == 1 and pkt_rate > 100 and pkts > 500 and syn_ratio > 0.5:
             return {"severity": "high", "attack": "ddos", "confidence": 0.85, "engine": "rules"}
         if dst_port_count == 1 and pkts > 100 and syn_ratio > 0.8:
             return {"severity": "high", "attack": "brute_force", "confidence": 0.8, "engine": "rules"}
-        if pkts > 1000 and bytes_ > 5_000_000:
+        if (pkts > 1000 and bytes_ > 5_000_000
+                and _is_internal(flow.get("src")) and not _is_internal(flow.get("dst"))):
             return {"severity": "high", "attack": "data_exfiltration", "confidence": 0.75, "engine": "rules"}
         return {"severity": "low", "attack": "benign", "confidence": 0.6, "engine": "rules"}
 

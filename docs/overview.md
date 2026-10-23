@@ -82,24 +82,37 @@ values can reach the model) and asks the RandomForest for a class:
 | 3 | ddos | critical |
 | 4 | data_exfiltration | critical |
 
-A prediction is only promoted to an alert when two conditions hold:
+A prediction is only promoted to an alert when **two independent detectors
+agree**:
 
-* **there is enough evidence** — at least 10 packets in the flow. A two-packet
-  TLS handshake cannot be a scan, a flood or a brute force, whatever the
-  classifier scores it;
-* **the model is not guessing** — confidence ≥ 0.65.
+* **the model is not guessing** — confidence ≥ 0.65;
+* **a deterministic rule corroborates the shape of the flow** — a scan needs
+  many destination ports and SYN retries, a flood needs a high packet rate
+  *with* a SYN-heavy flow, a brute force needs many connection attempts, an
+  exfiltration needs megabytes **from** an internal host **to** an outside one.
+  A TLS download has the rate and volume of a flood but almost no SYN, so it
+  is not an attack.
 
-Measured on a real home LAN: with only the probability check (and no evidence
-gate) the sensor raised **25 alerts in 40 minutes**, every one of them a false
-positive — one-port web/DNS flows of a couple of packets scored between 0.43
-and 0.88. With both gates it raised **0 alerts in 6 minutes / 900 flows**, and
-the real-model test still classifies a 130-packet port scan as `port_scan`.
+The model still decides *which* attack it is and how severe (badge
+`ml+rules`); when only the rules fire, the alert is kept with `engine="rules"`.
+Neither detector can wake the dashboard up alone.
 
-**When no model file exists, a deterministic rule engine takes
-over** (`port_scan` = high SYN ratio + many ports, `brute_force` = many
-packets to one port, `ddos` = high rate with one port, `data_exfiltration` =
-huge upload), so the platform is never "dead" — and the dashboard badge says
-which engine produced each alert (`ml` vs `rules`).
+Measured on a real home LAN (all of this was found the hard way):
+
+| Rules of the game | Alerts on a quiet LAN |
+|---|---|
+| model only (any non-benign class) | **25 in 40 min**, all false positives (0.43–0.88 on 2-packet web/DNS flows) |
+| model + confidence | still 2, both ordinary HTTPS sessions scored **0.97** and **1.00** as `brute_force` |
+| model + confidence + rules corroboration | **0 in 4 min / 952 flows**, while the demo still raises every attack class (`ml+rules`) and the real-model test still classifies a 130-packet port scan |
+
+The rules themselves needed calibrating for the same reason: the old `ddos`
+rule fired at **25 packets/s** (a normal download) and the old exfiltration
+rule would have flagged a **download** (outside → inside) as an upload. Both
+were fixed when the rules became the gate.
+
+**When no model file exists, the same rule engine takes over on its own**, so
+the platform is never "dead" — the badge says which engine produced each alert
+(`ml+rules` vs `rules`).
 
 ---
 
@@ -289,7 +302,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **108 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **112 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows

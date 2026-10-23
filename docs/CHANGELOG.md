@@ -2,6 +2,18 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.27] — 2026-10-23 — "two detectors or nothing"
+
+### Fixed
+- **0.4.26 was not enough.** Confidence + a 10-packet floor removed most of the noise, but on the same LAN two alerts still fired in the next ten minutes: ordinary HTTPS sessions to CDNs (108.157.95.226, 142.251.142.134) that the CICIDS model scored **0.97 and 1.00** as `brute_force`. A download has as many packets as a flood; a packet count cannot tell them apart.
+- The model's verdict now needs **corroboration from the deterministic rules** (`_heuristic`): a scan needs many destination ports + SYN retries, a flood needs a high rate *with* a SYN-heavy flow, a brute force needs many attempts, an exfiltration needs megabytes from an internal host to an outside one. Confidence ≥ 0.65 still applies. The model keeps naming the attack and its severity (engine `ml+rules`); when only the rules fire the alert survives with `engine="rules"`. Neither detector can alert alone.
+- **The rules had their own false positives**, invisible until they became the gate: `ddos` fired at **25 pkt/s** with >200 packets (every large download) and `data_exfiltration` would have flagged a **download** (outside → inside, thousands of packets, megabytes). The DDoS rule now also requires `syn_ratio > 0.5`, and exfiltration requires an internal source — new helper `_is_internal()` (RFC1918/loopback/link-local, via `ipaddress`).
+- Measured after the change, same machine and LAN: **0 alerts in 4 minutes / 952 flows**, while the demo raises 47 alerts of every class and the real-model test still classifies a 130-packet port scan as `port_scan`.
+
+### Tests
+- **The test suite no longer writes into the real audit log or device files.** Found while checking a live run: a plain `python -m pytest` had injected 43 fixture records into `logs/events.jsonl` (fake blocks of 10.0.0.x, alerts from 8.8.8.8 / 203.0.113.90, `"a" -> "b"`), i.e. the operator's `/api/logs` was serving test fixtures. New `tests/conftest.py` redirects `EVENTS_LOG_PATH`, `ALIAS_PATH` and `TRUSTED_PATH` to a temp dir for the whole session (verified with the servers stopped: the file does not change during a run). The 43 records were removed from this dev log; the previous file is kept as `logs/events.pretest-0.4.26.jsonl`.
+- Five tests pin the new behaviour: a 2-packet flow scored 0.95 is not an attack; a 20-packet HTTPS session scored 0.99 as `brute_force` is not an attack; a 200-packet flow scored 0.50 is not; a 120-packet scan scored 0.90 is (engine `ml+rules`); a scan the model calls benign is still reported by the rules. Plus the calibrated rules: a 4 000-packet / 6 MB download is benign while a SYN flood and a real upload are still detected. **112 tests** in total.
+
 ## [0.4.26] — 2026-10-23 — "no more invented attacks"
 
 ### Fixed

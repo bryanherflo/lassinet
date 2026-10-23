@@ -693,6 +693,29 @@ def test_heuristic_detects_port_scan_without_model() -> None:
     assert verdict["engine"] == "rules"
 
 
+def test_heuristic_does_not_call_a_big_download_a_ddos_or_exfiltration() -> None:
+    """Measured on a real LAN: 25 pkt/s of a normal download was "ddos" and the
+    same download's volume was "data_exfiltration"."""
+    det = Detector(model_path=Path("/nonexistent"))
+    download = {"src": "104.20.32.17", "dst": "192.168.0.81", "pkts": 4000,
+                "bytes": 6_000_000, "duration": 10, "syn_ratio": 0.02,
+                "dst_port_count": 1, "mean_pkt_size": 1200, "pkt_rate": 400}
+    assert det.predict([download])[0]["attack"] == "benign"
+
+
+def test_heuristic_still_flags_a_syn_flood_and_an_upload() -> None:
+    det = Detector(model_path=Path("/nonexistent"))
+    flood = {"src": "10.0.0.9", "dst": "10.0.0.2", "pkts": 3000, "bytes": 180000,
+             "duration": 3, "syn_ratio": 0.95, "dst_port_count": 1,
+             "mean_pkt_size": 58, "pkt_rate": 1000}
+    assert det.predict([flood])[0]["attack"] == "ddos"
+
+    upload = {"src": "10.0.0.4", "dst": "185.215.88.170", "pkts": 3000,
+              "bytes": 12_000_000, "duration": 300, "syn_ratio": 0.02,
+              "dst_port_count": 1, "mean_pkt_size": 1300, "pkt_rate": 10}
+    assert det.predict([upload])[0]["attack"] == "data_exfiltration"
+
+
 def test_model_is_loadable_and_classifies() -> None:
     for candidate in ROOT / "models" / "demo_model.pkl", ROOT / "models" / "lassi_model.pkl":
         if candidate.exists():
@@ -754,13 +777,39 @@ def test_model_does_not_claim_an_attack_when_it_is_guessing(monkeypatch) -> None
     assert verdict["attack"] == "benign"
 
 
-def test_model_claims_an_attack_with_evidence_and_confidence(monkeypatch) -> None:
+def test_model_claims_an_attack_when_the_rules_corroborate(monkeypatch) -> None:
     det = _detector_with(1, 0.9, monkeypatch)           # 1 -> port_scan
-    flow = {"pkts": 120, "bytes": 8000, "duration": 4, "syn_ratio": 0.9,
+    flow = {"pkts": 120, "bytes": 8000, "duration": 4, "syn_ratio": 0.95,
             "dst_port_count": 60, "mean_pkt_size": 66, "pkt_rate": 30}
     verdict = det.predict([flow])[0]
     assert verdict["attack"] == "port_scan"
     assert verdict["severity"] == "medium"
+    assert verdict["engine"] == "ml+rules"
+
+
+def test_model_does_not_claim_brute_force_on_a_normal_https_session(monkeypatch) -> None:
+    """The exact false positive measured at 12:44 on the author's LAN.
+
+    A 20-packet TLS session to a CDN, one port, almost no SYN: the CICIDS model
+    scores it "brute_force" with 0.97-1.00 confidence. The rules see a download.
+    """
+    det = _detector_with(2, 0.99, monkeypatch)          # 2 -> brute_force, 99 %
+    flow = {"pkts": 20, "bytes": 24000, "duration": 2.0, "syn_ratio": 0.05,
+            "dst_port_count": 1, "mean_pkt_size": 1200, "pkt_rate": 10}
+    verdict = det.predict([flow])[0]
+    assert verdict["attack"] == "benign"
+    assert verdict["severity"] == "low"
+
+
+def test_rules_keep_their_verdict_when_the_model_says_benign(monkeypatch) -> None:
+    """One sure detector is enough: a real scan is not lost because the model
+    does not recognise it."""
+    det = _detector_with(0, 0.99, monkeypatch)          # 0 -> benign, 99 %
+    flow = {"pkts": 200, "bytes": 12000, "duration": 6, "syn_ratio": 0.95,
+            "dst_port_count": 40, "mean_pkt_size": 60, "pkt_rate": 33}
+    verdict = det.predict([flow])[0]
+    assert verdict["attack"] == "port_scan"
+    assert verdict["engine"] == "rules"
 
 
 def test_audit_log_records_alerts_and_blocks(tmp_path, monkeypatch):
