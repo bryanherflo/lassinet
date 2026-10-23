@@ -11,6 +11,8 @@ import os
 import time
 from typing import Any
 
+from lassi.devices import classify
+
 log = logging.getLogger("lassi.live")
 
 try:
@@ -100,8 +102,14 @@ def _sweep(cidr: str, timeout: int = 2) -> list[dict[str, Any]]:
         ip = _valid_ipv4(received.psrc)
         if ip is None:
             continue
-        hosts.append({"ip": ip, "mac": received.hwsrc, "hostname": ip,
-                      "role": "workstation", "open_ports": []})
+        host = {"ip": ip, "mac": received.hwsrc, "hostname": ip,
+                "role": "workstation", "open_ports": []}
+        # ARP gives no hostname, but the MAC vendor can still name the kind of
+        # device (a Raspberry Pi, a Sonos, an IP camera…). Empty means "no idea".
+        kind = classify(hostname=ip, mac=received.hwsrc)
+        if kind:
+            host["kind"] = kind
+        hosts.append(host)
     return hosts
 
 

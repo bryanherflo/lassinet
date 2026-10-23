@@ -9,8 +9,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.22">
-<script src="vendor/vis-network.min.js?v=3.22"></script>
+<link rel="stylesheet" href="style.css?v=3.23">
+<script src="vendor/vis-network.min.js?v=3.23"></script>
 </head>
 <body>
 <header>
@@ -70,6 +70,9 @@
         <div class="li suspicious"><span class="dot">?</span><span>Suspicious</span></div>
         <div class="li blocked" title="Firewall block: traffic from this IP is dropped"><span class="dot"></span><span>Blocked</span></div>
         <div class="legend-sep"></div>
+        <div class="legend-sub">Device icons</div>
+        <div class="legend-icons" id="legend-icons"></div>
+        <div class="legend-sep"></div>
         <div class="li flow"><span class="dot"></span><span>Normal flow</span></div>
         <div class="li attack-flow"><span class="dot"></span><span>Attack flow</span></div>
       </div>
@@ -79,6 +82,7 @@
       <span class="sel-dot"></span>
       <span class="sel-name" id="sel-name"></span>
       <span class="sel-ip" id="sel-ip"></span>
+      <span class="sel-kind" id="sel-kind" hidden></span>
       <button type="button" id="sel-block" class="sel-btn danger">Block</button>
       <button type="button" id="sel-actions" class="sel-btn" aria-haspopup="menu">Actions…</button>
       <button type="button" id="sel-close" class="sel-close" aria-label="Clear selection" title="Clear selection">×</button>
@@ -144,6 +148,6 @@
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="app.js?v=3.22"></script>
+<script src="app.js?v=3.23"></script>
 </body>
 </html>

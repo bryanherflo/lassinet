@@ -230,6 +230,16 @@ the infrastructure:
   router), the Internet uplink, and **moving dots that are rendered only
   from real flows** — one dot per flow that went through the detection
   pipeline. Blocked sources stop emitting dots and animations.
+* **Device icons**: the map draws a different glyph for phones, tablets,
+  laptops, desktops, servers, TVs, consoles, printers, cameras, speakers,
+  watches, NAS and single-board computers (plus the router, the Internet
+  cloud and the attacker skull). The kind is inferred offline by
+  `lassi/devices.py` from two signals only — the device name (operator rename
+  or the name discovery found) and the MAC vendor prefix — and it is a
+  *display* hint: blocking, trust and protection never depend on it. When the
+  evidence is ambiguous (an Apple OUI cannot tell an iPhone from a MacBook, a
+  randomized MAC has no vendor at all) the icon falls back to the device role
+  instead of guessing.
 * **Right column**: *Threats* (every detection with severity, confidence,
   detection engine and a one-click *Block source*), *Firewall rules* (active
   blocks only, with an *Unblock* button) and *System log* (the full event
@@ -302,7 +312,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **117 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **125 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows

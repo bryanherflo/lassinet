@@ -219,6 +219,16 @@ main {
 #legend .li.suspicious .dot { background: var(--orange); color: #161b22; font-weight: 700; box-shadow: 0 0 12px var(--orange); }
 #legend .li.blocked .dot { background: transparent; border: 2px dashed var(--red); color: var(--red); box-shadow: none; }
 .legend-sep { height: 1px; background: var(--border); margin: var(--space-xs) var(--space-sm); }
+.legend-sub {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px;
+  color: var(--muted); padding: 0 var(--space-sm); margin-top: var(--space-xs);
+}
+.legend-icons {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 4px var(--space-sm); padding: 0 var(--space-sm);
+}
+.legend-icons .lg { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-dim); }
+.legend-icons .lg img { width: 18px; height: 18px; flex: none; }
 #legend .li.flow .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 #legend .li.attack-flow .dot { background: var(--red); box-shadow: 0 0 10px var(--red); }
 #legend .li span { font-weight: 500; font-size: 12px; }
@@ -259,6 +269,12 @@ main {
   overflow: hidden; text-overflow: ellipsis; max-width: 190px;
 }
 #selection-bar .sel-ip { font-family: var(--font-mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+#selection-bar .sel-kind {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .8px;
+  color: var(--text-dim); background: var(--panel-elevated);
+  border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+}
+#selection-bar .sel-kind[hidden] { display: none; }
 .sel-btn {
   font-family: inherit; font-size: 11px; font-weight: 600; white-space: nowrap;
   padding: 5px 11px; border-radius: 999px; cursor: pointer;

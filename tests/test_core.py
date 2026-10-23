@@ -651,6 +651,17 @@ def test_simulator_reveals_devices_progressively() -> None:
     assert len(d4) >= len(d1)
 
 
+def test_demo_devices_carry_the_icon_kind() -> None:
+    """The demo map shows every icon: a phone must not look like a laptop."""
+    sim = Simulator()
+    devices: list[dict] = []
+    for _ in range(6):
+        devices = sim.devices()
+    kinds = {d.get("kind") for d in devices}
+    assert {"router", "server", "desktop", "laptop", "phone", "tablet", "tv",
+            "console", "speaker", "camera", "printer"} <= kinds
+
+
 def test_simulator_flows_are_wellformed() -> None:
     for flow in Simulator().flows():
         assert {"src", "dst", "pkts", "bytes", "label"} <= set(flow)
@@ -966,6 +977,15 @@ def test_loopback_and_unspecified_can_never_be_blocked() -> None:
         assert st.is_protected(ip) is True, ip
         assert st.block_host(ip) is False, ip
     assert st.snapshot()["blocked_ips"] == []
+
+
+def test_snapshot_exposes_the_device_kind_for_the_icon() -> None:
+    from lassi.state import State
+
+    st = State()
+    st.upsert_host("10.0.0.7", hostname="iphone-ana", role="workstation", kind="phone")
+    node = next(n for n in st.snapshot()["nodes"] if n["ip"] == "10.0.0.7")
+    assert node["kind"] == "phone"
 
 
 def test_trust_is_persisted_and_survives_restarts(tmp_path, monkeypatch) -> None:

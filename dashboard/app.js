@@ -2,16 +2,71 @@
 "use strict";
 
 const ROLE_STYLE = {
-  router:      { color: "#b18cff", label: "Router",        shape: "circularImage", icon: "__router__" },
-  server:      { color: "#58a6ff", label: "Server",        shape: "circularImage", icon: "\u{1F5A5}\uFE0F" },
-  workstation: { color: "#3fb950", label: "Workstation",   shape: "circularImage", icon: "\u{1F4BB}" },
-  iot:         { color: "#d29922", label: "IoT",           shape: "circularImage", icon: "\u{1F4E1}" },
-  printer:     { color: "#8b949e", label: "Printer",       shape: "circularImage", icon: "\u{1F5A8}\uFE0F" },
-  attacker:    { color: "#f85149", label: "Attacker",      shape: "circularImage", icon: "\u{1F480}" },
-  unknown:     { color: "#8b949e", label: "Unknown",       shape: "circularImage", icon: "\u2753" },
-  external:    { color: "#58a6ff", label: "Internet",      shape: "circularImage", icon: "\u2601\uFE0F" },
-  trusted:     { color: "#3fb950", label: "Trusted",       shape: "circularImage", icon: "\u{1F4BB}" },
+  router:      { color: "#b18cff", label: "Router",        glyph: "router" },
+  server:      { color: "#58a6ff", label: "Server",        glyph: "server" },
+  workstation: { color: "#3fb950", label: "Workstation",   glyph: "desktop" },
+  iot:         { color: "#d29922", label: "IoT",           glyph: "iot" },
+  printer:     { color: "#8b949e", label: "Printer",       glyph: "printer" },
+  attacker:    { color: "#f85149", label: "Attacker",      glyph: "attacker" },
+  unknown:     { color: "#8b949e", label: "Unknown",       glyph: "unknown" },
+  external:    { color: "#58a6ff", label: "Internet",      glyph: "external" },
+  trusted:     { color: "#3fb950", label: "Trusted",       glyph: "desktop" },
 };
+
+// Device kinds come from the server (`lassi/devices.py`, inferred from the
+// name and the MAC vendor) and get their own glyph, so a phone no longer looks
+// like a laptop. Line art instead of emoji on purpose: same drawing on
+// Windows, Linux and macOS, and it matches the purpose-drawn router glyph.
+const GLYPHS = {
+  phone:    '<rect x="20" y="9" width="24" height="46" rx="5.5"/><path d="M28.5 14h7"/><circle cx="32" cy="48" r="2.4"/>',
+  tablet:   '<rect x="13" y="12" width="38" height="40" rx="4.5"/><circle cx="32" cy="46" r="1.9"/>',
+  laptop:   '<rect x="14" y="14" width="36" height="25" rx="2.5"/><path d="M9.5 43h45l-3.2 5.5H12.7z"/><path d="M27 46h10"/>',
+  desktop:  '<rect x="10" y="13" width="44" height="28" rx="3"/><path d="M32 41v6M22 48h20"/>',
+  server:   '<rect x="17" y="8" width="30" height="48" rx="3"/><path d="M23 16h18M23 24h18M23 32h18"/><circle cx="38" cy="45" r="2"/><path d="M23 45h8"/>',
+  printer:  '<rect x="15" y="27" width="34" height="18" rx="3"/><rect x="21" y="12" width="22" height="15" rx="2"/><rect x="21" y="45" width="22" height="7" rx="1.5"/><circle cx="43" cy="33" r="1.6"/>',
+  camera:   '<rect x="10" y="20" width="44" height="26" rx="5"/><path d="M20 20l5-6h14l5 6"/><circle cx="32" cy="33" r="7.5"/>',
+  tv:       '<rect x="9" y="14" width="46" height="30" rx="3"/><path d="M32 44v6M22 50h20"/>',
+  console:  '<path d="M14 24h36c4 0 6 4 6 8v3c0 5-4 7-8 6l-7-3H21l-7 3c-4 1-8-1-8-6v-3c0-4 2-8 8-8z"/><path d="M20 29v8M16 33h8"/><circle cx="40" cy="30" r="2"/><circle cx="45" cy="35" r="2"/>',
+  speaker:  '<rect x="19" y="10" width="26" height="44" rx="10"/><circle cx="32" cy="38" r="6"/><circle cx="32" cy="20" r="2.4"/>',
+  watch:    '<rect x="21" y="17" width="22" height="30" rx="7"/><path d="M26 17v-5h12v5M26 47v5h12v-5"/><circle cx="32" cy="32" r="5"/>',
+  nas:      '<rect x="17" y="10" width="30" height="18" rx="2"/><rect x="17" y="30" width="30" height="18" rx="2"/><circle cx="24" cy="19" r="1.6"/><circle cx="24" cy="39" r="1.6"/><path d="M30 19h12M30 39h12"/>',
+  sbc:      '<rect x="14" y="15" width="36" height="34" rx="3"/><circle cx="32" cy="32" r="6"/><path d="M14 23h-6M14 32h-6M14 41h-6M50 23h6M50 32h6M50 41h6"/>',
+  iot:      '<rect x="20" y="24" width="24" height="18" rx="5"/><path d="M26 24v-9M38 24v-9M32 42v11"/>',
+  external: '<path d="M20 41h24a8 8 0 0 0 0-16 11 11 0 0 0-21-2 7 7 0 0 0-3 18z"/>',
+  attacker: '<path d="M20 31a12 12 0 0 1 24 0v6a5 5 0 0 1-5 5h-2v5h-4v-5h-2v5h-4v-5h-2a5 5 0 0 1-5-5z"/><circle cx="26.5" cy="31" r="2.4"/><circle cx="37.5" cy="31" r="2.4"/>',
+  unknown:  '<path d="M24.5 25a7.5 7.5 0 1 1 11 6.6c-2 1-3.5 2.4-3.5 5.4"/><circle cx="32" cy="45" r="2.2"/>',
+};
+
+// Human labels for the legend and the selection bar. Order = legend order.
+const KIND_LABELS = {
+  phone: "Phone", tablet: "Tablet", laptop: "Laptop", desktop: "Desktop",
+  server: "Server", tv: "TV", console: "Console", printer: "Printer",
+  camera: "Camera", speaker: "Speaker", watch: "Watch", nas: "NAS",
+  sbc: "SBC", iot: "Smart device",
+};
+const LEGEND_KINDS = Object.keys(KIND_LABELS);
+
+var GLYPH_CACHE = {};
+function glyphIconURI(name) {
+  if (name === "router") return routerIconURI();
+  var key = Object.prototype.hasOwnProperty.call(GLYPHS, name) ? name : "unknown";
+  if (GLYPH_CACHE[key]) return GLYPH_CACHE[key];
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+    '<circle cx="32" cy="32" r="31" fill="#161b22"/>' +
+    '<g fill="none" stroke="#e6edf3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">' +
+    GLYPHS[key] + '</g></svg>';
+  return (GLYPH_CACHE[key] = "data:image/svg+xml," + encodeURIComponent(svg));
+}
+
+// Which glyph a node shows: the confirmed-attacker skull wins, then the
+// inferred device kind, then the role's own icon.
+function nodeGlyph(host, displayRole, isAttacker) {
+  if (isAttacker) return "attacker";
+  if (host.kind === "router" || host.kind === "external") return host.kind;
+  if (host.kind && GLYPHS[host.kind]) return host.kind;
+  var style = ROLE_STYLE[displayRole] || ROLE_STYLE.workstation;
+  return style.glyph;
+}
 
 // A purpose-drawn gateway glyph reads better than a flat hexagon and keeps the
 // same circular language as every other device. Rendered as an inline SVG so
@@ -41,18 +96,6 @@ function routerIconURI() {
     '<circle cx="27.5" cy="43.6" r="1.15" fill="#b18cff"/>' +
     '</svg>';
   return (ROUTER_ICON = "data:image/svg+xml," + encodeURIComponent(svg));
-}
-
-var ICON_CACHE = {};
-function iconURI(ch, fill) {
-  fill = fill || "#161b22";
-  if (ch === "__router__") return routerIconURI();
-  var key = ch + "|" + fill;
-  if (ICON_CACHE[key]) return ICON_CACHE[key];
-  var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">' +
-    '<circle cx="24" cy="24" r="23" fill="' + fill + '"/>' +
-    '<text x="24" y="31" font-size="23" text-anchor="middle" font-family="\'Segoe UI Emoji\',\'Apple Color Emoji\',sans-serif">' + ch + '</text></svg>';
-  return (ICON_CACHE[key] = "data:image/svg+xml," + encodeURIComponent(svg));
 }
 
 // Escape untrusted strings (hostnames, IPs coming from the capture) before
@@ -133,13 +176,44 @@ function computeTreeLayout(data) {
   var leaves = data.nodes.filter(function(h) { return h.role !== "router" && h.role !== "external"; })
     .sort(function(a, b) { return (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) || a.ip.localeCompare(b.ip); });
   var pos = {};
-  if (ext) pos[ext.ip] = { x: 0, y: -280 };
+  if (ext) pos[ext.ip] = { x: 0, y: -220 };
   if (router) pos[router.ip] = { x: 0, y: 0 };
   var n = leaves.length;
-  var containerWidth = (document.getElementById("map") ? document.getElementById("map").clientWidth : 800);
-  var spacing = Math.max(160, Math.min(280, containerWidth / Math.max(n * 0.7, 3)));
-  leaves.forEach(function(h, i) { pos[h.ip] = { x: (i - (n - 1) / 2) * spacing, y: 260 }; });
+  if (!n) return pos;
+  var mapEl = document.getElementById("map");
+  var width = mapEl ? mapEl.clientWidth : 800;
+  // The legend floats over the right edge (~290 px). A single row of 12 nodes
+  // made fit() zoom out until the icons were unreadable (and the last nodes
+  // hid behind the legend), so wrap the leaves into balanced rows.
+  var usable = Math.max(420, width - 300);
+  var perRowMax = Math.max(3, Math.min(7, Math.floor(usable / 125)));
+  var rows = Math.max(1, Math.ceil(n / perRowMax));
+  var assigned = [];
+  leaves.forEach(function(h, i) {
+    var row = Math.min(rows - 1, Math.floor(i * rows / n));
+    (assigned[row] = assigned[row] || []).push(h);
+  });
+  assigned.forEach(function(rowHosts, r) {
+    var count = rowHosts.length;
+    var step = Math.min(230, usable / Math.max(count, 1));
+    rowHosts.forEach(function(h, c) {
+      pos[h.ip] = { x: (c - (count - 1) / 2) * step, y: 190 + r * 150 };
+    });
+  });
   return pos;
+}
+
+// Fit the tree in the space the floating legend leaves free. `fit()` alone
+// centres on the whole canvas, which puts the rightmost nodes under the legend.
+function fitMapView(animate) {
+  network.fit({ animation: animate ? { duration: 500, easingFunction: "easeOutQuad" } : false });
+  var legend = document.getElementById("legend");
+  var legendW = (legend && !legend.classList.contains("collapsed")) ? legend.offsetWidth + 16 : 0;
+  if (legendW > 0) {
+    var view = network.getViewPosition();
+    var scale = network.getScale() || 1;
+    network.moveTo({ position: { x: view.x + (legendW / 2) / scale, y: view.y }, animation: false });
+  }
 }
 
 var lastAttacks = -1;
@@ -374,8 +448,28 @@ var GROUP_ROLES = new Set(["server", "workstation", "iot", "printer", "attacker"
 function drawGroupBoxes() {
   if (!fxRoles.size) return;
   var pos = network.getPositions(); var groups = new Map();
-  fxRoles.forEach(function(role, ip) { if (!GROUP_ROLES.has(role) || !pos[ip]) return; var d = network.canvasToDOM(pos[ip]); if (!groups.has(role)) groups.set(role, []); groups.get(role).push(d); });
-  groups.forEach(function(pts, role) { var xs = pts.map(function(p) { return p.x; }), ys = pts.map(function(p) { return p.y; }); var x0 = Math.min.apply(null, xs) - 60, x1 = Math.max.apply(null, xs) + 60; var y0 = Math.min.apply(null, ys) - 40, y1 = Math.max.apply(null, ys) + 55; var col = (ROLE_STYLE[role] || ROLE_STYLE.workstation).color; fctx.beginPath(); if (fctx.roundRect) fctx.roundRect(x0, y0, x1 - x0, y1 - y0, 18); else fctx.rect(x0, y0, x1 - x0, y1 - y0); fctx.fillStyle = col + "0d"; fctx.fill(); fctx.strokeStyle = col + "35"; fctx.lineWidth = 1.5; fctx.setLineDash([6, 6]); fctx.stroke(); fctx.setLineDash([]); });
+  fxRoles.forEach(function(role, ip) {
+    if (!GROUP_ROLES.has(role) || !pos[ip]) return;
+    var d = network.canvasToDOM(pos[ip]);
+    // One box per role *per row*: the layout wraps rows, so a role that spans
+    // two rows must not become one giant box around the router.
+    var key = role + "|" + Math.round(d.y / 40);
+    if (!groups.has(key)) groups.set(key, { role: role, pts: [] });
+    groups.get(key).pts.push(d);
+  });
+  groups.forEach(function(group) {
+    var pts = group.pts;
+    var xs = pts.map(function(p) { return p.x; }), ys = pts.map(function(p) { return p.y; });
+    var x0 = Math.min.apply(null, xs) - 60, x1 = Math.max.apply(null, xs) + 60;
+    var y0 = Math.min.apply(null, ys) - 40, y1 = Math.max.apply(null, ys) + 55;
+    var col = (ROLE_STYLE[group.role] || ROLE_STYLE.workstation).color;
+    fctx.beginPath();
+    if (fctx.roundRect) fctx.roundRect(x0, y0, x1 - x0, y1 - y0, 18);
+    else fctx.rect(x0, y0, x1 - x0, y1 - y0);
+    fctx.fillStyle = col + "0d"; fctx.fill();
+    fctx.strokeStyle = col + "35"; fctx.lineWidth = 1.5;
+    fctx.setLineDash([6, 6]); fctx.stroke(); fctx.setLineDash([]);
+  });
 }
 
 var selectedNodeIp = null, selectionPulse = 0;
@@ -453,6 +547,9 @@ function updateSelectionBar() {
   bar.classList.toggle("blocked", blocked);
   document.getElementById("sel-name").textContent = node.hostname || String(node.label || selectedNodeIp).split("\n")[0];
   document.getElementById("sel-ip").textContent = selectedNodeIp;
+  var kindEl = document.getElementById("sel-kind");
+  var kindLabel = node.kind ? (KIND_LABELS[node.kind] || "") : "";
+  if (kindEl) { kindEl.textContent = kindLabel; kindEl.hidden = !kindLabel; }
   var btn = document.getElementById("sel-block");
   btn.textContent = blocked ? "Unblock IP" : "Block IP";
   btn.className = "sel-btn " + (blocked ? "safe" : "danger");
@@ -570,7 +667,8 @@ function showTrustMenu(event, ip) {
   var menu = document.createElement("div");
   menu.id = "trust-menu"; menu.className = "trust-menu"; menu.setAttribute("role", "menu");
   menu.innerHTML = '<div class="trust-menu-header">' + esc(hostname) + ' <span class="trust-menu-ip">' + esc(ip) + '</span></div>' +
-    '<div class="trust-menu-role">Current role: <strong>' + esc(roleLabel) + '</strong></div>' + rows;
+    '<div class="trust-menu-role">Current role: <strong>' + esc(roleLabel) + '</strong>' +
+    (node.kind && KIND_LABELS[node.kind] ? ' \u00B7 ' + esc(KIND_LABELS[node.kind]) : '') + '</div>' + rows;
   document.body.appendChild(menu);
 
   // keep the menu inside the viewport (offsetWidth/Height ignore the pop animation scale)
@@ -612,7 +710,8 @@ function handleTrustAction(ip, action) {
 function nodeInfoTitle(node, headline) {
   var ports = node.openPorts && node.openPorts.length ? node.openPorts.join(", ") : "\u2014";
   var infra = node.hostRole === "router" || node.hostRole === "external";
-  return headline + "\nMAC: " + (node.mac || "n/a") + "\nports: " + ports +
+  var kind = node.kindLabel ? "\ntype: " + node.kindLabel : "";
+  return headline + kind + "\nMAC: " + (node.mac || "n/a") + "\nports: " + ports +
     (infra ? "\ndouble-click to rename" : "\nclick for actions \u00B7 right-click for trust menu \u00B7 double-click to rename");
 }
 
@@ -659,7 +758,7 @@ window.addEventListener("keydown", function(ev) {
     else post("/api/firewall/block", { ip: selectedNodeIp, reason: "operator blocked selected node" });
   }
   else if (ev.key === "Escape") { selectedNodeIp = null; updateSelectionBar(); network.unselectAll(); closeTrustMenu(); hideAttackBanner(); }
-  else if (key === "r") network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } });
+  else if (key === "r") fitMapView(true);
   else if (key === "m") toggleMapMinimize();
   else if (key === "l") toggleLegend();
   else if (key === "d") toggleFx();
@@ -689,27 +788,26 @@ function renderTopology(data) {
     var nodeColor = { background: style.color, border: isBlocked || flashing ? "#f85149" : (isUnknown ? "#d29922" : (isTrusted ? style.color : style.color)), highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } };
     var base = { color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : flashing ? 4 : (h.role === "router" || isAttacker || isUnknown ? 3 : 2), font: { color: isBlocked ? "#8b949e" : "#d7dee8", size: 14, face: "Segoe UI", strokeWidth: 3, strokeColor: "#0b0f14", vadjust: 4 }, shadow: { enabled: true, color: isBlocked ? "#f8514966" : flashing ? "#f8514988" : (h.role === "router" ? "#8b5cf688" : (isAttacker ? "#f8514944" : (isUnknown ? "#d2992244" : (isTrusted ? "#3fb95044" : "#00000066")))), size: isBlocked ? 20 : flashing ? 16 : (h.role === "router" ? 18 : (isAttacker ? 14 : (isUnknown ? 12 : 10))), x: 0, y: 3 }, shapeProperties: { useBorderWithImage: true, borderDashes: h.role === "external" ? [4, 4] : false } };
     var headline = isBlocked ? "\u{1F6AB} BLOCKED" : (isAttacker ? "ATTACKER (confirmed)" : isTrusted ? "TRUSTED (marked by user)" : isUnknown ? "SUSPICIOUS / UNKNOWN" : style.label);
-    var title = nodeInfoTitle({ mac: h.mac, openPorts: h.open_ports || [], hostRole: h.role }, headline);
-    var nodeSize = h.role === "router" ? 27 : h.role === "external" ? 23 : (isAttacker ? 20 : 18);
+    var kindLabel = h.kind ? (KIND_LABELS[h.kind] || "") : "";
+    var title = nodeInfoTitle({ mac: h.mac, openPorts: h.open_ports || [], hostRole: h.role, kindLabel: kindLabel }, headline);
+    var nodeSize = h.role === "router" ? 27 : h.role === "external" ? 23 : (isAttacker ? 22 : 20);
+    var img = glyphIconURI(nodeGlyph(h, displayRole, isAttacker));
     if (!nodes.get(h.ip)) {
-      var nodeData = { id: h.ip, label: h.hostname + "\n" + h.ip, title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, openPorts: h.open_ports || [], shape: style.shape, size: nodeSize, x: pos[h.ip].x, y: pos[h.ip].y };
-      if (style.shape === "circularImage") nodeData.image = iconURI(style.icon);
+      var nodeData = { id: h.ip, label: h.hostname + "\n" + h.ip, title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], shape: "circularImage", size: nodeSize, image: img, x: pos[h.ip].x, y: pos[h.ip].y };
       for (var k in base) nodeData[k] = base[k];
       nodes.add(nodeData);
     } else {
       var label = h.hostname + "\n" + h.ip;
       var existing = nodes.get(h.ip);
-      var updateObj = { id: h.ip, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, openPorts: h.open_ports || [], title: title, size: nodeSize };
+      var updateObj = { id: h.ip, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], title: title, size: nodeSize };
       if (existing.label !== label) updateObj.label = label;
-      if (existing.shape !== style.shape) updateObj.shape = style.shape;
-      var img = style.shape === "circularImage" ? iconURI(style.icon) : null;
-      if (img && existing.image !== img) updateObj.image = img;
+      if (existing.image !== img) updateObj.image = img;
       for (var k2 in base) updateObj[k2] = base[k2];
       nodes.update(updateObj);
     }
     seen.add(h.ip);
   } for (var ni = 0; ni < nodes.get().length; ni++) if (!seen.has(nodes.get()[ni].id)) nodes.remove(nodes.get()[ni].id);
-  if (layoutChanged) { layoutKey = key; for (var id in pos) if (nodes.get(id)) network.moveNode(id, pos[id].x, pos[id].y); network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 560); }
+  if (layoutChanged) { layoutKey = key; for (var id in pos) if (nodes.get(id)) network.moveNode(id, pos[id].x, pos[id].y); fitMapView(true); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 560); }
   var seenEdges = new Set(); for (var ei = 0; ei < data.edges.length; ei++) { var e = data.edges[ei]; var isLink = e.kind === "link"; var id = (isLink ? "L|" : "T|") + e.from + "|" + e.to; if (!edges.get(id)) { edges.add({ id: id, from: e.from, to: e.to, dashes: !isLink, width: isLink ? 3 : 1.6, arrows: isLink ? "" : { to: { enabled: true, scaleFactor: 0.5, type: "arrow" } }, color: { color: isLink ? "#484f58" : "#6e7681", highlight: "#58a6ff", hover: "#58a6ff" }, smooth: isLink ? false : { enabled: true, type: "continuous", roundness: 0.3 }, selectionWidth: 3 }); } seenEdges.add(id); } edges.get().forEach(function(e) { if (!seenEdges.has(e.id)) edges.remove(e.id); }); }
 
 
@@ -922,7 +1020,7 @@ function setMapMinimized(min) {
   btn.setAttribute("aria-label", btn.title);
   btn.setAttribute("aria-expanded", String(!min));
   // let the CSS transition finish before vis re-measures the canvas
-  setTimeout(function() { sizeFx(); network.redraw(); if (!min) { network.fit({ animation: { duration: 400, easingFunction: "easeOutQuad" } }); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 460); } }, 320);
+  setTimeout(function() { sizeFx(); network.redraw(); if (!min) { fitMapView(true); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 460); } }, 320);
 }
 function toggleMapMinimize() { setMapMinimized(!document.getElementById("map-container").classList.contains("minimized")); }
 
@@ -933,6 +1031,8 @@ function setLegendCollapsed(collapsed) {
   btn.title = collapsed ? "Show legend (L)" : "Hide legend (L)";
   btn.setAttribute("aria-label", btn.title);
   btn.setAttribute("aria-expanded", String(!collapsed));
+  // The fit depends on the legend width, so recompute it when it opens/closes.
+  setTimeout(function() { fitMapView(false); }, 30);
 }
 function toggleLegend() { setLegendCollapsed(!document.getElementById("legend").classList.contains("collapsed")); }
 function setFxEnabled(on) {
@@ -947,7 +1047,7 @@ function setFxEnabled(on) {
   if (!FX_ENABLED) { ambientDots.length = 0; attackPaths.length = 0; }
 }
 function toggleFx() { setFxEnabled(!FX_ENABLED); }
-function fitMap() { network.fit({ animation: { duration: 500, easingFunction: "easeOutQuad" } }); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 560); }
+function fitMap() { fitMapView(true); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 560); }
 var pollTimer = null; function startPolling() { if (pollTimer) return; pollTimer = setInterval(refresh, 2000); } function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 async function refresh() { try { var res = await fetch("/api/state"); if (!res.ok) throw new Error("HTTP " + res.status); apply(await res.json()); } catch (e) { console.warn("refresh failed:", e); } }
 function setConnStatus(state) {
@@ -958,8 +1058,31 @@ function setConnStatus(state) {
   el.title = state === "live" ? "Live \u2014 WebSocket stream connected" : state === "polling" ? "WebSocket unavailable \u2014 refreshing over /api/state" : "Connecting to the live stream\u2026";
 }
 function apply(data) { renderTopology(data); renderFeeds(data); renderLog(data); renderStats(data); updateSelectionBar(); }
+// The legend lists the icon set once, built from the same glyph map the map
+// uses (so the SVG is never duplicated in the HTML).
+function buildLegendIcons() {
+  var box = document.getElementById("legend-icons");
+  if (!box) return;
+  box.replaceChildren();
+  LEGEND_KINDS.forEach(function(kind) {
+    var row = document.createElement("span");
+    row.className = "lg";
+    var img = document.createElement("img");
+    img.src = glyphIconURI(kind);
+    img.alt = "";
+    img.width = 18;
+    img.height = 18;
+    var label = document.createElement("span");
+    label.textContent = KIND_LABELS[kind] || kind;
+    row.appendChild(img);
+    row.appendChild(label);
+    box.appendChild(row);
+  });
+}
+
 (function() {
   refresh().catch(function() {});
+  buildLegendIcons();
   document.getElementById("btn-toggle-map").onclick = toggleMapMinimize;
   document.getElementById("btn-toggle-legend").onclick = toggleLegend;
   document.getElementById("btn-fit-map").onclick = fitMap;

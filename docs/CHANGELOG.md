@@ -2,6 +2,19 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.29] — 2026-10-23 — "every device gets its own icon"
+
+### Added
+- **Device-type icons on the map.** Phones, tablets, laptops, desktops, servers, TVs, consoles, printers, cameras, speakers, watches, NAS, single-board computers and smart devices now have their own glyph, so a phone no longer looks like a laptop. They are **drawn as inline SVG** (like the existing router glyph) instead of emoji: the same shape on Windows, Linux and macOS, no dependency on the system emoji font, and the icon is cached per kind. The legend gained a *Device icons* section and the selection bar shows the type next to the name.
+- **`lassi/devices.py`**: a best-effort classifier that infers the kind from two offline signals — the device name (operator rename or the name discovery found) and the MAC vendor prefix (Raspberry Pi, Sonos, Roku, Hikvision/Dahua, Synology/QNAP, Nintendo, Espressif, HP/Epson…). It is a display hint only: it never affects blocking, trust or protection. Ambiguous evidence stays unknown on purpose (an Apple OUI cannot tell an iPhone from a MacBook; a randomized MAC has no vendor), and a rename re-classifies the device so "iPhone de Ana" becomes a phone.
+- **Live discovery passes the MAC vendor** through the same classifier, so a Sonos or an IP camera shows up correctly even when ARP gives no hostname.
+
+### Changed
+- **The demo household is richer** (phone, tablet, laptop, TV, console, smart speaker) so every icon can be seen without a network. The map now **wraps the leaf row into balanced rows** and fits around the floating legend: with twelve devices the old single row made `fit()` zoom out until the icons were unreadable, and the rightmost nodes hid behind the legend. Role group boxes are drawn per row (one box no longer surrounds the router).
+
+### Tests
+- New `tests/test_devices.py` (name patterns, OUI vendors, randomized MACs, role fallback, no invented icons) plus demo/snapshot kind tests. **125 tests** in total.
+
 ## [0.4.28] — 2026-10-23 — "bugs found by looking for them"
 
 ### Fixed

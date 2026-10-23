@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from lassi.devices import classify
 from lassi.firewall import Firewall
 from lassi.ml import Detector
 from lassi.state import State, audit, is_external
@@ -636,7 +637,13 @@ def rename_device(req: RenameRequest) -> dict:
     if not state.rename_host(ip, name):
         return {"ok": False, "error": "device is not on the map yet — wait for discovery"}
     set_device_name(ip, name)              # persisted to data/device_names.json
-    return {"ok": True, "ip": ip, "name": name}
+    # The name is the best device-type clue: re-classify so the icon follows
+    # ("iPhone de Ana" -> phone). An inconclusive name keeps the current icon.
+    host = state.hosts.get(ip) or {}
+    kind = classify(hostname=name, mac=host.get("mac"))
+    if kind:
+        state.upsert_host(ip, kind=kind)
+    return {"ok": True, "ip": ip, "name": name, "kind": kind}
 
 
 @app.middleware("http")

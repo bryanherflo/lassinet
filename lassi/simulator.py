@@ -30,7 +30,13 @@ OFF = {
     "hr": 4,          # pc-hr
     "camera": 5,      # cam-lobby
     "printer": 6,     # hp-print
+    "phone": 7,       # iphone-ana
+    "tablet": 8,      # ipad-lounge
     "attacker": 9,    # unknown
+    "tv": 10,         # smart-tv
+    "console": 11,    # ps5-lounge
+    "speaker": 12,    # echo-kitchen
+    "laptop": 13,     # macbook-sam
 }
 
 # public egress destinations — valid from *any* private LAN
@@ -72,17 +78,37 @@ class Simulator:
     def devices(self) -> list[dict[str, Any]]:
         self.tick += 1
         base = [
-            {"ip": self.ip["router"],   "role": "router",      "hostname": "edge-gw",    "open_ports": [22, 80, 443, 53]},
-            {"ip": self.ip["web"],      "role": "server",      "hostname": "web-srv",    "open_ports": [22, 80, 443]},
-            {"ip": self.ip["finance"],  "role": "workstation", "hostname": "pc-finance", "open_ports": []},
-            {"ip": self.ip["hr"],       "role": "workstation", "hostname": "pc-hr",      "open_ports": []},
-            {"ip": self.ip["camera"],   "role": "iot",         "hostname": "cam-lobby",  "open_ports": [554]},
-            {"ip": self.ip["printer"],  "role": "printer",     "hostname": "hp-print",   "open_ports": [9100]},
+            {"ip": self.ip["router"],   "role": "router",      "hostname": "edge-gw",
+             "open_ports": [22, 80, 443, 53], "kind": "router"},
+            {"ip": self.ip["web"],      "role": "server",      "hostname": "web-srv",
+             "open_ports": [22, 80, 443], "kind": "server"},
+            {"ip": self.ip["finance"],  "role": "workstation", "hostname": "pc-finance",
+             "open_ports": [], "kind": "desktop"},
+            {"ip": self.ip["hr"],       "role": "workstation", "hostname": "pc-hr",
+             "open_ports": [], "kind": "desktop"},
+            {"ip": self.ip["laptop"],   "role": "workstation", "hostname": "macbook-sam",
+             "open_ports": [], "kind": "laptop"},
+            {"ip": self.ip["phone"],    "role": "workstation", "hostname": "iphone-ana",
+             "open_ports": [], "kind": "phone"},
+            {"ip": self.ip["tablet"],   "role": "workstation", "hostname": "ipad-lounge",
+             "open_ports": [], "kind": "tablet"},
+            {"ip": self.ip["tv"],       "role": "iot",         "hostname": "smart-tv",
+             "open_ports": [], "kind": "tv"},
+            {"ip": self.ip["console"],  "role": "iot",         "hostname": "ps5-lounge",
+             "open_ports": [], "kind": "console"},
+            {"ip": self.ip["speaker"],  "role": "iot",         "hostname": "echo-kitchen",
+             "open_ports": [], "kind": "speaker"},
+            {"ip": self.ip["camera"],   "role": "iot",         "hostname": "cam-lobby",
+             "open_ports": [554], "kind": "camera"},
+            {"ip": self.ip["printer"],  "role": "printer",     "hostname": "hp-print",
+             "open_ports": [9100], "kind": "printer"},
         ]
         # the attacker "appears" on the map after a couple of ticks, like a real incident
         if self.tick >= 2:
-            base.append({"ip": self.ip["attacker"], "role": "attacker", "hostname": "unknown", "open_ports": []})
-        limit = min(len(base), 3 + self.tick)
+            base.append({"ip": self.ip["attacker"], "role": "attacker", "hostname": "unknown",
+                         "open_ports": [], "kind": ""})
+        # reveal the household gradually instead of dropping 12 nodes at once
+        limit = min(len(base), 6 + 2 * self.tick)
         return base[:limit]
 
     def flows(self) -> list[dict[str, Any]]:
@@ -92,7 +118,9 @@ class Simulator:
         flows: list[dict[str, Any]] = []
 
         # Normal traffic: internal hosts talking to server/router/external
-        internal_hosts = [self.ip["router"], self.ip["finance"], self.ip["hr"], self.ip["camera"]]
+        internal_hosts = [self.ip["router"], self.ip["finance"], self.ip["hr"],
+                          self.ip["laptop"], self.ip["phone"], self.ip["tablet"],
+                          self.ip["tv"], self.ip["console"], self.ip["camera"]]
         for _ in range(25):
             src = self.random.choice(internal_hosts)
             dst = self.random.choice([self.ip["web"], self.ip["router"], *EXTERNAL_TARGETS])
