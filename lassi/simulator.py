@@ -12,12 +12,15 @@ exactly like in live mode.
 """
 
 import ipaddress
+import logging
 import os
 import random
 import time
 from typing import Any
 
 DEFAULT_NET = "10.0.0.0/24"
+
+log = logging.getLogger("lassi.simulator")
 
 # fixed host-offsets inside the chosen demo subnet
 OFF = {
@@ -39,10 +42,21 @@ LABELS = {"port_scan": 1, "brute_force": 2, "ddos": 3, "data_exfiltration": 4}
 
 
 def _parse_net(net: str | None) -> ipaddress.IPv4Network:
+    """The demo needs room for its fixed host offsets (up to +9).
+
+    A /29 or smaller cannot hold them, so the hosts would land *outside* the
+    configured network. Fall back to the default (and say why) instead of
+    inventing addresses that do not belong to the subnet.
+    """
     try:
-        return ipaddress.ip_network(net or os.environ.get("LASSI_DEMO_NET", DEFAULT_NET), strict=False)
+        parsed = ipaddress.ip_network(net or os.environ.get("LASSI_DEMO_NET", DEFAULT_NET), strict=False)
     except ValueError:
         return ipaddress.ip_network(DEFAULT_NET)
+    if parsed.version != 4 or parsed.prefixlen > 28:
+        log.warning("demo network %s is too small for the simulated hosts; "
+                    "using %s", parsed, DEFAULT_NET)
+        return ipaddress.ip_network(DEFAULT_NET)
+    return parsed
 
 
 class Simulator:

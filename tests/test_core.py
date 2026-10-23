@@ -370,6 +370,16 @@ def test_sim_falls_back_on_garbage_net(monkeypatch) -> None:
     assert next(d for d in sim.devices() if d["role"] == "router")["ip"].startswith("10.0.0.")
 
 
+def test_sim_small_subnet_falls_back_so_hosts_stay_inside_it() -> None:
+    """A /29 cannot hold the fixed host offsets: hosts would land outside the
+    configured network (10.9.9.0/29 + 9 = 10.9.9.9, a different subnet)."""
+    import ipaddress
+
+    sim = Simulator(net="10.9.9.0/29")
+    for ip in sim.ip.values():
+        assert ipaddress.ip_address(ip) in ipaddress.ip_network("10.0.0.0/24")
+
+
 def test_nft_rule_picks_ip_family(monkeypatch) -> None:
     captured: list[list[str]] = []
     monkeypatch.delenv("LASSI_FW", raising=False)
@@ -812,6 +822,36 @@ def test_rules_keep_their_verdict_when_the_model_says_benign(monkeypatch) -> Non
     assert verdict["engine"] == "rules"
 
 
+class _BadLabels:
+    """Classifier that returns one non-numeric label in the middle of a batch."""
+
+    def predict(self, X):
+        return [1, 2, "oops", 0]
+
+    def predict_proba(self, X):
+        import numpy as np
+        return np.array([[0.1, 0.9], [0.1, 0.9], [0.1, 0.9], [0.9, 0.1]])
+
+
+def test_one_bad_model_label_does_not_shift_the_verdicts(monkeypatch) -> None:
+    """A partially built result list used to be extended with a *second* pass
+    over every flow, so `zip(flows, verdicts)` paired an attack with the wrong
+    source. Verdicts must stay one-to-one with the flows."""
+    import lassi.ml as ml
+
+    monkeypatch.setattr(ml.joblib, "load",
+                        lambda path: {"model": _BadLabels(), "features": ml.FEATURES})
+    det = Detector(model_path=Path("fake-model.pkl"))
+    scan = {"pkts": 500, "bytes": 30000, "duration": 10, "syn_ratio": 0.98,
+            "dst_port_count": 40, "mean_pkt_size": 60, "pkt_rate": 50}
+    normal = {"pkts": 60, "bytes": 5000, "duration": 3, "syn_ratio": 0.03,
+              "dst_port_count": 1, "mean_pkt_size": 83, "pkt_rate": 20}
+    flows = [scan, normal, normal, scan]
+    verdicts = det.predict(flows)
+    assert len(verdicts) == len(flows)
+    assert [v["attack"] for v in verdicts] == ["port_scan", "benign", "benign", "port_scan"]
+
+
 def test_audit_log_records_alerts_and_blocks(tmp_path, monkeypatch):
     import json
     import lassi.state as st
@@ -914,6 +954,18 @@ def test_protected_addresses_cannot_be_blocked() -> None:
     assert st.is_protected("192.168.0.1") is True
     assert st.block_host("192.168.0.1") is False
     assert "192.168.0.1" in st.snapshot()["protected"]
+
+
+def test_loopback_and_unspecified_can_never_be_blocked() -> None:
+    """Blocking 127.0.0.1 (or ::1) cuts the machine from itself, including the
+    dashboard that asked for it. Found by trying it against a live instance."""
+    from lassi.state import State
+
+    st = State()
+    for ip in ("127.0.0.1", "127.5.5.5", "::1", "::"):
+        assert st.is_protected(ip) is True, ip
+        assert st.block_host(ip) is False, ip
+    assert st.snapshot()["blocked_ips"] == []
 
 
 def test_trust_is_persisted_and_survives_restarts(tmp_path, monkeypatch) -> None:

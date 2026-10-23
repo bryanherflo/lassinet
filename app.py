@@ -117,6 +117,15 @@ def _clean_ip(value: Any) -> str | None:
     return str(address)
 
 
+def _is_loopback(ip: str) -> bool:
+    """Loopback/unspecified: blocking it cuts the machine from itself."""
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_unspecified
+
+
 def _seed_demo_router() -> None:
     """Protect the demo gateway before the API accepts block requests.
 
@@ -587,14 +596,19 @@ def trust_device(req: TrustRequest) -> dict:
         return {"ok": False, "error": "That is not a valid IP address"}
     trusted = bool(req.trusted)
     if trusted and state.is_protected(ip) and not state.is_trusted(ip):
-        # Infrastructure is protected anyway; say so instead of pretending
-        # the mark changed something.
-        return {"ok": True, "ip": ip, "trusted": True, "protected": True}
-    if trusted and state.is_blocked(ip):
-        # A trusted device must not stay blocked: remove the firewall rule too.
-        # The rule is removed *before* the mark is set, so the state keeps the
-        # ALLOW entry in the history.
-        with _firewall_lock:
+        # Infrastructure is protected anyway. Do not pretend the mark was
+        # stored: say what actually happened (it was not stored).
+        return {"ok": True, "ip": ip, "trusted": False, "protected": True,
+                "note": "this address is already protected (infrastructure); "
+                        "no trust mark was stored"}
+    # Everything that touches the firewall or the trust set happens under the
+    # same lock the auto-block path takes, so the engine cannot re-block the
+    # device between "unblock" and "trusted".
+    with _firewall_lock:
+        if trusted and state.is_blocked(ip):
+            # A trusted device must not stay blocked: remove the firewall rule
+            # too. The rule is removed *before* the mark is set, so the state
+            # keeps the ALLOW entry in the history.
             if fw.unblock(ip):
                 state.unblock_host(ip)
                 log.info("released the block of %s: the device is trusted now", ip)
@@ -602,8 +616,11 @@ def trust_device(req: TrustRequest) -> dict:
                        "provider": fw.provider})
             else:
                 log.error("could not remove the firewall rule of %s after trusting it", ip)
-    if not state.set_trusted(ip, trusted):
-        return {"ok": False, "error": "That is not a valid IP address"}
+                return {"ok": False, "ip": ip, "trusted": state.is_trusted(ip),
+                        "error": "the firewall rule could not be removed; "
+                                 "the device is still blocked"}
+        if not state.set_trusted(ip, trusted):
+            return {"ok": False, "error": "That is not a valid IP address"}
     return {"ok": True, "ip": ip, "trusted": trusted}
 
 
@@ -699,6 +716,8 @@ def block(req: BlockRequest) -> dict:
             # (router, trusted device, configured DNS/DHCP) and not a failure.
             if state.is_trusted(ip):
                 why = "trusted devices are never blocked"
+            elif _is_loopback(ip):
+                why = "loopback and unspecified addresses cannot be blocked"
             elif ip in state.protected:
                 why = "this address is protected (LASSI_PROTECT / this host)"
             else:

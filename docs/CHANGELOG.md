@@ -2,6 +2,24 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.4.28] — 2026-10-23 — "bugs found by looking for them"
+
+### Fixed
+- **A verdict could be attributed to the wrong flow.** When the model raised in the middle of a batch (e.g. one non-numeric label), `Detector.predict` added a *second* heuristic pass on top of the results it had already built: 4 flows produced 6 verdicts, and `process_flows` zipped the first 4 — so flow 3 got the verdict computed for flow 1. A scan could be reported against a different source than the one that caused it. Now a bad label only makes that row `unknown` (it never names an attack) and the fallback replaces the list instead of extending it. Found with a fake model returning `[1, 2, "oops", 0]`.
+- **Loopback could be blocked.** `POST /api/firewall/block {"ip": "127.0.0.1"}` was accepted by a live instance; with a real provider that cuts the machine (and the dashboard) from itself. Loopback and unspecified addresses (`127.0.0.0/8`, `::1`, `::`) are protected now, `State.block_host` refuses them too (it had its own copy of the protection rules), and the API says why.
+- **Trusting infrastructure lied.** `POST /api/devices/trust` on the gateway answered `{"trusted": true}` without storing anything. It now answers `{"ok": true, "trusted": false, "protected": true, "note": …}` — the truth. The trust/unblock path also runs under the same lock as the auto-block path, closing the window where the engine could re-block a device between the unblock and the mark.
+- **The alert card hid the second detector.** `fmtAlert` printed `engine: ml` for `ml+rules`, which is 0.4.27's whole point. It now shows the real engine. Cache-busters bumped to `?v=3.22` — hard-refresh with **Ctrl+F5**.
+- **A tiny `LASSI_DEMO_NET` produced hosts outside the subnet.** A `/29` or smaller cannot hold the simulator's fixed host offsets; the demo now falls back to `10.0.0.0/24` and logs why.
+
+### Tests
+- Five new tests pin these: verdict alignment with a bad label, loopback protection (state and API), the honest trust answer for infrastructure, and the small-subnet fallback. **117 tests** in total.
+
+### Reviewed, reported, deliberately not changed
+- **Stale devices never leave the map**: a phone that leaves the LAN stays as a node forever (`last_seen` is tracked but nothing expires it).
+- **No alert de-duplication**: an attack that produces 100 flows writes 100 alerts and 100 log lines.
+- **`state.rules` and the audit log grow without rotation** (bounded in the UI, not on disk).
+- **`touch_edge` / `state.edges` is dead code**: the map deliberately draws only infrastructure links.
+
 ## [0.4.27] — 2026-10-23 — "two detectors or nothing"
 
 ### Fixed

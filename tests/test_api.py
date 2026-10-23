@@ -278,6 +278,31 @@ def test_trusting_a_device_protects_it_from_blocking(client: TestClient) -> None
     assert ip not in client.get("/api/state").json()["trusted"]
 
 
+def test_trusting_infrastructure_is_a_noop_and_says_so(client: TestClient) -> None:
+    """The API used to answer `trusted: true` without storing anything.
+
+    The infrastructure is protected anyway, so the honest answer is "no mark
+    was stored" — a script must not believe the device was trusted.
+    """
+    nodes = client.get("/api/state").json()["nodes"]
+    gateway = next(n["ip"] for n in nodes if n["role"] == "router")
+    data = client.post("/api/devices/trust", json={"ip": gateway, "trusted": True}).json()
+    assert data["ok"] is True
+    assert data["trusted"] is False
+    assert data["protected"] is True
+    assert gateway not in client.get("/api/state").json()["trusted"]
+    # and it still cannot be blocked
+    blocked = client.post("/api/firewall/block", json={"ip": gateway}).json()
+    assert blocked["ok"] is False
+
+
+def test_loopback_cannot_be_blocked_through_the_api(client: TestClient) -> None:
+    data = client.post("/api/firewall/block", json={"ip": "127.0.0.1"}).json()
+    assert data["ok"] is False
+    assert "loopback" in data["error"].lower()
+    assert "127.0.0.1" not in client.get("/api/state").json()["blocked_ips"]
+
+
 def test_trusting_a_blocked_device_releases_the_firewall_rule(client: TestClient, monkeypatch) -> None:
     ip = "203.0.113.91"
     removed: list[str] = []

@@ -195,11 +195,18 @@ class Detector:
             if len(labels) != len(flows) or len(probs) != len(flows):
                 raise ValueError("model returned a different number of predictions than flows")
             for flow, label, prob in zip(flows, labels, probs):
-                kind = ATTACK_TYPES.get(int(label), "unknown")
+                try:
+                    kind = ATTACK_TYPES.get(int(label), "unknown")
+                except (TypeError, ValueError):
+                    # A model that returns a non-numeric label cannot name an
+                    # attack. Do not let one bad row poison the batch either.
+                    kind = "unknown"
                 confidence = _number(prob, 0.0)
                 res = self._heuristic(flow)          # second opinion, run first
                 credible = res.get("attack") != "benign"
-                if credible and kind != "benign" and confidence >= CONFIDENT:
+                claimed = (kind not in ("benign", "unknown")
+                           and confidence >= CONFIDENT and credible)
+                if claimed:
                     res.update(severity=self._severity(kind), attack=kind,
                                confidence=round(confidence, 2),
                                engine="ml+rules")
@@ -213,8 +220,9 @@ class Detector:
                 results.append(res)
         except Exception:
             log.exception("ML inference failed — falling back to heuristics")
-            for flow in flows:
-                results.append(self._heuristic(flow))
+            # Never append to a partially filled list: that would shift every
+            # verdict by one and attribute an attack to the wrong source.
+            results = [self._heuristic(flow) for flow in flows]
         return results
 
     @staticmethod

@@ -717,7 +717,8 @@ function fmtAlert(a) {
   var div = document.createElement("div");
   var sev = (a.severity || "info").toLowerCase();
   var icon = SEV_ICONS[sev] || "\u2139\uFE0F";
-  var engineTag = a.engine === "rules" ? "rules" : "ml";
+  var engineName = (a.engine === "rules" || a.engine === "ml+rules") ? a.engine : "ml";
+  var engineClass = engineName === "rules" ? "rules" : "ml";
   var blocked = a.src && blockedHosts.has(a.src);
   var action = "";
   if (sev !== "info" && a.src) {
@@ -729,7 +730,7 @@ function fmtAlert(a) {
   div.className = "alert " + sev;
   div.innerHTML = '<div class="top"><b>' + icon + " " + esc(attackLabel(a.attack)) + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span></div>' +
     '<div class="meta">' + esc(a.time) + " \u00B7 " + esc(a.src) + " \u2192 " + esc(a.dst) +
-    ' \u00B7 engine: <span class="engine-tag ' + engineTag + '">' + engineTag + '</span> \u00B7 conf: ' + esc(a.confidence) + '</div>' +
+    ' \u00B7 engine: <span class="engine-tag ' + engineClass + '">' + engineName + '</span> \u00B7 conf: ' + esc(a.confidence) + '</div>' +
     action;
   return div;
 }

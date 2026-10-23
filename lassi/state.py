@@ -314,6 +314,14 @@ class State:
             return False
         if canonical == "0.0.0.0":
             return True
+        try:
+            address = ipaddress.ip_address(canonical)
+        except ValueError:
+            return False
+        if address.is_loopback or address.is_unspecified:
+            # Blocking 127.0.0.1 (or ::1) would cut the machine from itself —
+            # including the dashboard that asked for it. Not a block target.
+            return True
         with self._lock:
             if canonical in self.trusted or canonical in self.protected:
                 return True
@@ -368,6 +376,12 @@ class State:
         canonical = canonical_ip(ip)
         if canonical is None or canonical == "0.0.0.0":
             return False
+        try:
+            address = ipaddress.ip_address(canonical)
+        except ValueError:
+            return False
+        if address.is_loopback or address.is_unspecified:
+            return False                      # never cut the host from itself
         reason = (str(reason or "manual").strip() or "manual")[:120]
         with self._lock:
             if canonical in self.blocked:
