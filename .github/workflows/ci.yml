@@ -16,19 +16,7 @@ jobs:
       - name: Train model (smoke)
         run: python ml-training/train_model.py
       - name: Run tests
-        shell: bash
-        run: |
-          set +e
-          python -m pytest tests/ -q --tb=short > pytest.log 2>&1
-          code=$?
-          if [ "$code" -ne 0 ]; then
-            echo "::error::pytest exited with $code"
-            grep -E "^(FAILED|ERROR)|^E |Traceback|assert|Error" pytest.log | tail -45 | while IFS= read -r line; do
-              echo "::error::$line"
-            done
-            tail -30 pytest.log
-          fi
-          exit $code
+        run: python -m pytest tests/ -q
 
   # The Windows runner is administrator, so the `windows` firewall provider is
   # exercised against the real Windows Firewall instead of a mock.
@@ -45,16 +33,4 @@ jobs:
       - name: Train model (smoke)
         run: python ml-training/train_model.py
       - name: Run tests (real Windows Firewall)
-        shell: bash
-        run: |
-          set +e
-          python -m pytest tests/ -q --tb=short > pytest.log 2>&1
-          code=$?
-          if [ "$code" -ne 0 ]; then
-            echo "::error::pytest exited with $code"
-            grep -E "^(FAILED|ERROR)|^E |Traceback|assert|Error" pytest.log | tail -45 | while IFS= read -r line; do
-              echo "::error::$line"
-            done
-            tail -30 pytest.log
-          fi
-          exit $code
+        run: python -m pytest tests/ -q

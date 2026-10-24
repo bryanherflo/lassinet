@@ -12,6 +12,7 @@ from a MacBook, and a randomized MAC carries no vendor at all.
 """
 
 import re
+from typing import Any
 
 KINDS = (
     "phone", "tablet", "laptop", "desktop", "server",

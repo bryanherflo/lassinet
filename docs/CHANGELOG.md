@@ -2,6 +2,12 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.5.1] — 2026-10-24
+
+### Fixed
+- `lassi/devices.py` used `Any` in `classify()` without importing it. Python 3.12 — what CI runs — evaluates annotations at import time, so the whole suite died during collection with `NameError: name 'Any' is not defined`; the 3.15 laptop defers them (PEP 649) and hid it. New `tests/test_annotations.py` resolves every annotation with `typing.get_type_hints()`, so the strict behaviour is reproduced locally on any interpreter.
+- No behaviour change: `classify()` already received `Any` from its callers; only the import was missing.
+
 ## [0.5.0] — 2026-10-24 — "find the devices, then find them on the map"
 
 ### Added
@@ -21,7 +27,7 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 - The demo household's exfiltration story is 25-60 MB so it still trips the calibrated rule.
 
 ### Tests
-- New `tests/test_devices.py` (name patterns, OUI vendors, ports, UPnP hints, randomized MACs) and `tests/test_discovery.py` (PTR cleaning, port hints, mDNS parsing incl. compression pointers, SSDP parsing/dedup, cache, retry TTL, gateway never probed, enrichment disabled). The whole suite runs with enrichment off, so no test can probe the real network. **150 tests** in total.
+- New `tests/test_devices.py` (name patterns, OUI vendors, ports, UPnP hints, randomized MACs) and `tests/test_discovery.py` (PTR cleaning, port hints, mDNS parsing incl. compression pointers, SSDP parsing/dedup, cache, retry TTL, gateway never probed, enrichment disabled). The whole suite runs with enrichment off, so no test can probe the real network. **158 tests** in total (including the annotation guard above).
 - Cache-busters bumped to `?v=3.24`; hard-refresh with **Ctrl+F5**.
 
 ## [0.4.29] — 2026-10-23 — "every device gets its own icon"
