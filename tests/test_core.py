@@ -1139,3 +1139,103 @@ def test_flag_bits_counts_the_tcp_flags() -> None:
     assert _flag_bits(0x18) == 2                 # PSH+ACK
     assert _flag_bits(0x00) == 0
 
+
+def test_stale_devices_leave_the_map_but_protected_ones_stay() -> None:
+    """A phone that left used to stay on the map forever: the device count and
+    the topology have to describe the network in front of you."""
+    import lassi.state as st
+
+    state = st.State()
+    state.register_egress("10.0.0.1")            # Internet node + router uplink
+    state.upsert_host("10.0.0.1", hostname="edge-gw", role="router")
+    state.upsert_host("10.0.0.2", hostname="phone", role="workstation")
+    state.upsert_host("10.0.0.3", hostname="nas", role="server")
+    state.upsert_host("10.0.0.4", hostname="cam", role="server")
+    state.upsert_host("10.0.0.5", hostname="tv", role="workstation")
+    state.block_host("10.0.0.3", reason="test")
+    state.trusted.add("10.0.0.4")
+    state.protected.add("10.0.0.5")
+    state.add_link("10.0.0.1", "10.0.0.2")
+    state.add_flow(src="10.0.0.2", dst="10.0.0.3", bytes=10)
+    old = time.time() - 3600
+    for ip in ("10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4", "10.0.0.5", "0.0.0.0"):
+        state.hosts[ip]["last_seen"] = old
+
+    assert state.expire_hosts(ttl=1800) == ["10.0.0.2"]
+    assert "10.0.0.2" not in state.hosts
+    assert {"10.0.0.1", "10.0.0.3", "10.0.0.4", "10.0.0.5", "0.0.0.0"} <= set(state.hosts)
+    assert ("10.0.0.1", "10.0.0.2") not in state.links
+    assert all(t["src"] != "10.0.0.2" and t["dst"] != "10.0.0.2" for t in state.traffic)
+    assert state.expire_hosts(ttl=0) == []        # 0 disables expiry
+
+
+def test_snapshot_expires_stale_hosts_and_exposes_last_seen(monkeypatch) -> None:
+    import lassi.state as st
+
+    monkeypatch.setattr(st, "DEVICE_TTL", 60)
+    state = st.State()
+    state.upsert_host("10.0.0.7", hostname="pc")
+    state.upsert_host("10.0.0.8", hostname="ghost")
+    state.hosts["10.0.0.8"]["last_seen"] = time.time() - 120
+    nodes = {n["ip"]: n for n in state.snapshot()["nodes"]}
+    assert "10.0.0.8" not in nodes                 # snapshot sweeps the map
+    assert nodes["10.0.0.7"]["last_seen"] == pytest.approx(time.time(), abs=30)
+
+
+def test_repeated_detections_share_one_card(monkeypatch, tmp_path) -> None:
+    """Same attack/source/destination/severity/engine inside the window ->
+    one card with a counter; the audit log still gets every line."""
+    import json
+
+    import lassi.state as st
+
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", tmp_path / "events.jsonl")
+    monkeypatch.setattr(st, "ALERT_DEDUPE_WINDOW", 120)
+    state = st.State()
+    alert = {"attack": "exfiltration", "severity": "high", "src": "10.0.0.9",
+             "dst": "203.0.113.5", "engine": "ml+rules", "confidence": 0.9}
+    state.add_alert(dict(alert, time="12:00:00"))
+    state.add_alert(dict(alert, time="12:00:05"))
+    state.add_alert(dict(alert, time="12:00:10"))
+    assert len(state.alerts) == 1
+    assert state.alerts[0]["count"] == 3
+    assert state.alerts[0]["time"] == "12:00:10"   # shows the latest sighting
+    state.add_alert(dict(alert, src="10.0.0.10", time="12:00:12"))
+    assert [a["src"] for a in state.alerts] == ["10.0.0.10", "10.0.0.9"]
+    audit = [json.loads(line) for line in
+             st.EVENTS_LOG_PATH.read_text(encoding="utf-8").splitlines()]
+    collapsed = [e["collapsed"] for e in audit if e["event"] == "alert"]
+    assert collapsed == [False, True, True, False]  # the file keeps every detection
+
+
+def test_alert_dedupe_expires_and_can_be_disabled(monkeypatch) -> None:
+    import lassi.state as st
+
+    clock = {"now": 1000.0}
+
+    class Clock:
+        @staticmethod
+        def time() -> float:
+            return clock["now"]
+
+        @staticmethod
+        def strftime(_fmt: str) -> str:
+            return "12:00:00"
+
+    monkeypatch.setattr(st, "ALERT_DEDUPE_WINDOW", 60)
+    monkeypatch.setattr(st, "time", Clock)
+    state = st.State()
+    alert = {"attack": "ddos", "severity": "high", "src": "10.0.0.9", "dst": "10.0.0.2"}
+    state.add_alert(dict(alert))
+    state.add_alert(dict(alert))
+    assert len(state.alerts) == 1 and state.alerts[0]["count"] == 2
+    clock["now"] += 61                            # outside the window: new card
+    state.add_alert(dict(alert))
+    assert len(state.alerts) == 2
+
+    monkeypatch.setattr(st, "ALERT_DEDUPE_WINDOW", 0)
+    off = st.State()
+    off.add_alert(dict(alert))
+    off.add_alert(dict(alert))
+    assert len(off.alerts) == 2                   # 0 keeps every detection
+

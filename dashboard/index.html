@@ -9,8 +9,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.26">
-<script src="vendor/vis-network.min.js?v=3.26"></script>
+<link rel="stylesheet" href="style.css?v=3.27">
+<script src="vendor/vis-network.min.js?v=3.27"></script>
 </head>
 <body>
 <header>
@@ -90,6 +90,7 @@
       <span class="sel-name" id="sel-name"></span>
       <span class="sel-ip" id="sel-ip"></span>
       <span class="sel-kind" id="sel-kind" hidden></span>
+      <span class="sel-seen" id="sel-seen" hidden></span>
       <button type="button" id="sel-block" class="sel-btn danger">Block</button>
       <button type="button" id="sel-actions" class="sel-btn" aria-haspopup="menu">Actions…</button>
       <button type="button" id="sel-close" class="sel-close" aria-label="Clear selection" title="Clear selection">×</button>
@@ -159,6 +160,6 @@
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="app.js?v=3.26"></script>
+<script src="app.js?v=3.27"></script>
 </body>
 </html>

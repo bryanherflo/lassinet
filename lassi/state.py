@@ -169,6 +169,25 @@ def set_trusted_device(ip: str, trusted: bool) -> bool:
 _load_trusted()
 
 
+# ---- freshness (how long a device stays on the map) -------------------------
+def _env_seconds(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+# Live discovery runs every 30 s, so a phone that leaves the house stays
+# visible for half an hour before it is forgotten. `0` keeps every device
+# forever (the behaviour before 0.6.0).
+DEVICE_TTL = _env_seconds("LASSI_DEVICE_TTL", 1800)
+
+# Identical detections inside this window collapse into one card with a
+# counter; the audit log still gets one line per detection. `0` disables it.
+ALERT_DEDUPE_WINDOW = _env_seconds("LASSI_ALERT_DEDUPE", 120)
+
+
+# ---- shared state -----------------------------------------------------------
 class State:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -185,6 +204,8 @@ class State:
         self.stats: dict[str, Any] = {"flows_total": 0, "attacks_total": 0, "blocks_total": 0, "flows_per_sec": 0}
         self.model_metrics: dict[str, Any] | None = None
         self._flow_window: int = 0
+        self._last_alert_key: tuple[str, ...] | None = None
+        self._last_alert_at = 0.0
 
     # ---- hosts / topology -------------------------------------------------
     def upsert_host(self, ip: str, **fields: Any) -> None:
@@ -274,10 +295,34 @@ class State:
                 self.stats["attacks_total"] += 1
 
     def add_alert(self, alert: dict[str, Any]) -> None:
+        """Record one detection, collapsing immediate repeats of the same one.
+
+        The engine fires once per detected flow, so a single cloud upload used
+        to fill the feed with identical cards and hide everything else.
+        Detections with the same attack/source/destination/severity/engine
+        inside `ALERT_DEDUPE_WINDOW` share the newest card and a counter; the
+        audit log still gets one line per detection, so the file stays the
+        complete record.
+        """
         alert["time"] = alert.get("time") or time.strftime("%H:%M:%S")
+        alert["count"] = int(alert.get("count") or 1)
+        key = tuple(str(alert.get(field) or "")
+                    for field in ("attack", "src", "dst", "severity", "engine"))
+        collapsed = False
         with self._lock:
-            self.alerts.appendleft(alert)
-        audit({"event": "alert", **alert})
+            now = time.time()
+            newest = self.alerts[0] if self.alerts else None
+            if (ALERT_DEDUPE_WINDOW > 0 and newest is not None
+                    and self._last_alert_key == key
+                    and now - self._last_alert_at <= ALERT_DEDUPE_WINDOW):
+                newest["count"] = int(newest.get("count") or 1) + 1
+                newest["time"] = alert["time"]
+                collapsed = True
+            else:
+                self.alerts.appendleft(alert)
+            self._last_alert_key = key
+            self._last_alert_at = now
+        audit({"event": "alert", **alert, "collapsed": collapsed})
 
     def tick_rate(self, interval: float = 2.0) -> None:
         """Publish flows/s for the last engine interval, then reset the window."""
@@ -418,7 +463,47 @@ class State:
         return True
 
     # ---- snapshot for UI ----------------------------------------------------
+    def expire_hosts(self, ttl: float | None = None) -> list[str]:
+        """Forget LAN devices that have not been seen for `ttl` seconds.
+
+        A phone that left the house (or a DHCP lease that moved to another
+        address) used to leave a permanent ghost on the map, so the device
+        counter and the topology stopped describing the real network. The
+        gateway, the Internet placeholder, blocked addresses (an active rule
+        must stay visible and unblockable) and protected infrastructure are
+        never dropped. `ttl <= 0` disables expiry.
+        """
+        seconds = DEVICE_TTL if ttl is None else float(ttl)
+        if not (seconds > 0):
+            return []
+        cutoff = time.time() - seconds
+        with self._lock:
+            removed = [
+                ip for ip, host in self.hosts.items()
+                if host.get("role") not in ("router", "external")
+                and ip not in self.blocked
+                and ip not in self.trusted
+                and ip not in self.protected
+                and float(host.get("last_seen") or 0) <= cutoff
+            ]
+            if not removed:
+                return []
+            for ip in removed:
+                self.hosts.pop(ip, None)
+            gone = set(removed)
+            self.links = {(a, b) for a, b in self.links if a not in gone and b not in gone}
+            self.edges = {(a, b) for a, b in self.edges if a not in gone and b not in gone}
+            self.traffic = deque(
+                (t for t in self.traffic
+                 if t.get("src") not in gone and t.get("dst") not in gone),
+                maxlen=self.traffic.maxlen,
+            )
+        for ip in removed:
+            audit({"event": "host_expired", "ip": ip, "ttl_s": seconds})
+        return removed
+
     def snapshot(self) -> dict[str, Any]:
+        self.expire_hosts()
         with self._lock:
             nodes = []
             for h in self.hosts.values():

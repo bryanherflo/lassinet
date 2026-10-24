@@ -2,6 +2,28 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.6.0] — 2026-10-24
+
+### Added
+- **Device freshness**: a LAN device not heard from for `LASSI_DEVICE_TTL` seconds (default
+  30 min) leaves the map, so the device counter and the topology keep describing the network
+  in front of you instead of accumulating sleeping phones. The gateway, the Internet node,
+  blocked addresses (an active rule must stay visible) and trusted/protected devices are never
+  dropped; their links and traffic samples go with them and each departure is written to the
+  audit log (`host_expired`). `LASSI_DEVICE_TTL=0` keeps the old behaviour.
+- **"last seen"** on the node tooltip and in the selection bar, so a silent device looks
+  stale instead of just quiet.
+- **Alert de-duplication**: identical detections (attack, source, destination, severity,
+  engine) inside `LASSI_ALERT_DEDUPE` seconds (default 120) share one card with a `×N`
+  counter in the feed and in the log. The JSONL audit log still gets one line per detection
+  (`collapsed: true` for a repeat): the counter never hides history. `0` disables it.
+
+### Changed
+- `State.snapshot()` sweeps expired hosts before building the payload, so every
+  consumer (`/api/state` and the WebSocket) sees the same, current map.
+- README environment table and `docs/overview.md` (§6 dashboard, §10 limits) document the
+  two new settings and what they do not do.
+
 ## [0.5.3] — 2026-10-24
 
 ### Fixed

@@ -79,6 +79,18 @@ function nodeLabel(hostname, ip) {
   return !name || name === ip ? String(ip) : name + "\n" + ip;
 }
 
+// "seen 4m ago" for a device the sensor has not heard from in a while: on a
+// real LAN a sleeping phone looks exactly like a quiet one.
+function fmtSeen(epochSeconds) {
+  var ts = Number(epochSeconds);
+  if (!isFinite(ts) || ts <= 0) return "";
+  var seconds = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return Math.round(seconds / 60) + "m ago";
+  if (seconds < 86400) return Math.round(seconds / 3600) + "h ago";
+  return Math.round(seconds / 86400) + "d ago";
+}
+
 // A purpose-drawn gateway glyph reads better than a flat hexagon and keeps the
 // same circular language as every other device. Rendered as an inline SVG so
 // the dashboard still ships with no build step and no external assets.
@@ -584,6 +596,12 @@ function updateSelectionBar() {
   var kindEl = document.getElementById("sel-kind");
   var kindLabel = node.kind ? (KIND_LABELS[node.kind] || "") : "";
   if (kindEl) { kindEl.textContent = kindLabel; kindEl.hidden = !kindLabel; }
+  var seenEl = document.getElementById("sel-seen");
+  if (seenEl) {
+    var seen = fmtSeen(node.lastSeen);
+    seenEl.textContent = seen ? "seen " + seen : "";
+    seenEl.hidden = !seen;
+  }
   var btn = document.getElementById("sel-block");
   btn.textContent = blocked ? "Unblock IP" : "Block IP";
   btn.className = "sel-btn " + (blocked ? "safe" : "danger");
@@ -746,6 +764,7 @@ function nodeInfoTitle(node, headline) {
   var infra = node.hostRole === "router" || node.hostRole === "external";
   var kind = node.kindLabel ? "\ntype: " + node.kindLabel : "";
   return headline + kind + "\nMAC: " + (node.mac || "n/a") + "\nports: " + ports +
+    (node.lastSeen ? "\nlast seen " + node.lastSeen : "") +
     (infra ? "\ndouble-click to rename" : "\nclick for actions \u00B7 right-click for trust menu \u00B7 double-click to rename");
 }
 
@@ -824,17 +843,17 @@ function renderTopology(data) {
     var base = { color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : flashing ? 4 : (h.role === "router" || isAttacker || isUnknown ? 3 : 2), font: { color: isBlocked ? "#8b949e" : "#d7dee8", size: 14, face: "Segoe UI", strokeWidth: 3, strokeColor: "#0b0f14", vadjust: 4 }, shadow: { enabled: true, color: isBlocked ? "#f8514966" : flashing ? "#f8514988" : (h.role === "router" ? "#8b5cf688" : (isAttacker ? "#f8514944" : (isUnknown ? "#d2992244" : (isTrusted ? "#3fb95044" : "#00000066")))), size: isBlocked ? 20 : flashing ? 16 : (h.role === "router" ? 18 : (isAttacker ? 14 : (isUnknown ? 12 : 10))), x: 0, y: 3 }, shapeProperties: { useBorderWithImage: true, borderDashes: h.role === "external" ? [4, 4] : false } };
     var headline = isBlocked ? "\u{1F6AB} BLOCKED" : (isAttacker ? "ATTACKER (confirmed)" : isTrusted ? "TRUSTED (marked by user)" : isUnknown ? "SUSPICIOUS / UNKNOWN" : style.label);
     var kindLabel = h.kind ? (KIND_LABELS[h.kind] || "") : "";
-    var title = nodeInfoTitle({ mac: h.mac, openPorts: h.open_ports || [], hostRole: h.role, kindLabel: kindLabel }, headline);
+    var title = nodeInfoTitle({ mac: h.mac, openPorts: h.open_ports || [], hostRole: h.role, kindLabel: kindLabel, lastSeen: fmtSeen(h.last_seen) }, headline);
     var nodeSize = h.role === "router" ? 27 : h.role === "external" ? 23 : (isAttacker ? 22 : 20);
     var img = glyphIconURI(nodeGlyph(h, displayRole, isAttacker));
     if (!nodes.get(h.ip)) {
-      var nodeData = { id: h.ip, label: nodeLabel(h.hostname, h.ip), title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], shape: "circularImage", size: nodeSize, image: img, x: pos[h.ip].x, y: pos[h.ip].y };
+      var nodeData = { id: h.ip, label: nodeLabel(h.hostname, h.ip), title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], lastSeen: h.last_seen, shape: "circularImage", size: nodeSize, image: img, x: pos[h.ip].x, y: pos[h.ip].y };
       for (var k in base) nodeData[k] = base[k];
       nodes.add(nodeData);
     } else {
       var label = nodeLabel(h.hostname, h.ip);
       var existing = nodes.get(h.ip);
-      var updateObj = { id: h.ip, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], title: title, size: nodeSize };
+      var updateObj = { id: h.ip, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], lastSeen: h.last_seen, title: title, size: nodeSize };
       if (existing.label !== label) updateObj.label = label;
       if (existing.image !== img) updateObj.image = img;
       for (var k2 in base) updateObj[k2] = base[k2];
@@ -853,6 +872,10 @@ function fmtAlert(a) {
   var engineName = (a.engine === "rules" || a.engine === "ml+rules") ? a.engine : "ml";
   var engineClass = engineName === "rules" ? "rules" : "ml";
   var blocked = a.src && blockedHosts.has(a.src);
+  var repeats = Number(a.count) > 1
+    ? '<span class="repeat-badge" title="The same detection fired ' + esc(a.count) +
+      ' times \u2014 collapsed into one card">\u00d7' + esc(a.count) + "</span>"
+    : "";
   var action = "";
   if (sev !== "info" && a.src) {
     if (trustedDevices.has(a.src)) action = '<span class="blocked-tag">\u2713 Trusted (protected)</span>';
@@ -861,7 +884,7 @@ function fmtAlert(a) {
     else action = '<button class="act" data-ip="' + esc(a.src) + '" title="Drop traffic from ' + esc(a.src) + ' at the firewall (reversible)">Block source ' + esc(a.src) + '</button>';
   }
   div.className = "alert " + sev;
-  div.innerHTML = '<div class="top"><b>' + icon + " " + esc(attackLabel(a.attack)) + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span></div>' +
+  div.innerHTML = '<div class="top"><b>' + icon + " " + esc(attackLabel(a.attack)) + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span>' + repeats + '</div>' +
     '<div class="meta">' + esc(a.time) + " \u00B7 " + esc(a.src) + " \u2192 " + esc(a.dst) +
     ' \u00B7 engine: <span class="engine-tag ' + engineClass + '">' + engineName + '</span> \u00B7 conf: ' + esc(a.confidence) + '</div>' +
     action;
@@ -884,8 +907,9 @@ function renderLog(data) {
     else {
       var conf = typeof a.confidence === "number" ? a.confidence.toFixed(2) : "?";
       var sev = a.severity || "info";
+      var times = Number(a.count) > 1 ? " \u00d7" + a.count : "";
       rows.push({ time: a.time, cls: sev === "critical" || sev === "high" ? sev : "warn",
-                  msg: sev.toUpperCase().padEnd(8) + ' ' + attackLabel(a.attack) + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + ' \u00B7 engine ' + (a.engine || "rules") + ' conf ' + conf });
+                  msg: sev.toUpperCase().padEnd(8) + ' ' + attackLabel(a.attack) + ' \u00B7 ' + a.src + ' \u2192 ' + a.dst + times + ' \u00B7 engine ' + (a.engine || "rules") + ' conf ' + conf });
     }
   }
   for (var j = 0; j < data.rules.length; j++) {
@@ -952,7 +976,7 @@ function renderFeeds(data) {
   var alertsEl = document.getElementById("alerts");
   var shown = data.alerts.slice(0, 30);
   renderKeyed(alertsEl, shown, function(a) {
-    return rowKey([a.time, a.attack, a.src, a.dst, a.severity, a.engine, a.confidence,
+    return rowKey([a.time, a.attack, a.src, a.dst, a.severity, a.engine, a.confidence, a.count || 1,
                    canBlockIp(a.src) ? "blockable" : "infra",
                    a.src && blockedHosts.has(a.src) ? "blocked" : "allowed"]);
   }, fmtAlert, "no threats yet \u2014 watching\u2026");

@@ -265,7 +265,10 @@ the infrastructure:
   IP, type or role, move with ↑/↓ and press Enter. It focuses and selects the
   node on the map and opens its action bar — no hunting for a small dot.
 * **Right column**: *Threats* (every detection with severity, confidence,
-  detection engine and a one-click *Block source*), *Firewall rules* (active
+  detection engine and a one-click *Block source*; identical detections —
+  attack, source, destination, severity, engine — inside
+  `LASSI_ALERT_DEDUPE` share one card with a `×N` counter, while the JSONL log
+  keeps a line per detection), *Firewall rules* (active
   blocks only, with an *Unblock* button) and *System log* (the full event
   stream).
 * **Badges**: operating mode (`live (scapy)` / `demo (simulated)`), stream
@@ -276,6 +279,12 @@ the infrastructure:
   trust menu, double-click renames it.
 * **Persistence**: device names (`data/device_names.json`) and trusted
   devices (`data/trusted_devices.json`) survive restarts.
+* **Freshness**: a LAN device not heard from for `LASSI_DEVICE_TTL` (30 min by
+  default) leaves the map, so the device count and the topology keep
+  describing the network in front of you instead of growing a graveyard of
+  sleeping phones. The gateway, the Internet node, blocked addresses (an
+  active rule must stay visible) and trusted/protected devices are never
+  dropped. Hover a node — or select it — to read *last seen*.
 
 ---
 
@@ -379,3 +388,7 @@ See [ci.md](ci.md) for what the pipeline proves and what it still misses.
   mDNS/SSDP return nothing and only DNS + ports work — measured on a real
   LAN, where SSDP still identified a Samsung TV and a Twonky NAS.
 * LassiNet is a lab/demo **sensor and actuator**, not a production IPS.
+* Alert de-duplication is a **display collapse**: it only merges detections
+  that share attack, source, destination, severity and engine inside the
+  window. A detection that changes any of those is a new card, and the JSONL
+  log still records every single one — the counter never hides history.

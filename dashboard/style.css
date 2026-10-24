@@ -312,6 +312,8 @@ main {
   border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; white-space: nowrap;
 }
 #selection-bar .sel-kind[hidden] { display: none; }
+#selection-bar .sel-seen { font-size: 11px; color: var(--muted); white-space: nowrap; }
+#selection-bar .sel-seen[hidden] { display: none; }
 .sel-btn {
   font-family: inherit; font-size: 11px; font-weight: 600; white-space: nowrap;
   padding: 5px 11px; border-radius: 999px; cursor: pointer;
@@ -389,6 +391,13 @@ aside h2::before {
 .alert.high .sev-badge { background: var(--orange-dim); color: var(--orange); border-color: var(--orange); }
 .alert.medium .sev-badge { background: #dbb12f33; color: #dbb12f; border-color: #dbb12f; }
 .alert.info .sev-badge { background: var(--green-dim); color: var(--green); border-color: var(--green); }
+/* Repeats of the same detection share one card (state.ALERT_DEDUPE_WINDOW). */
+.alert .repeat-badge {
+  font-size: 9px; font-weight: 700; letter-spacing: .5px; flex-shrink: 0;
+  margin-left: 4px; padding: 2px 6px; border-radius: 4px;
+  color: var(--text); background: var(--panel-elevated); border: 1px solid var(--border-bright);
+  font-variant-numeric: tabular-nums;
+}
 .rule .ip { font-weight: 600; color: var(--accent); font-family: var(--font-mono); font-size: 13px; }
 .rule .action { font-size: 9px; font-weight: 700; letter-spacing: .5px; padding: 2px 7px; border-radius: 4px; text-transform: uppercase; white-space: nowrap; }
 .rule .action.block { color: var(--red); background: var(--red-dim); border: 1px solid #f8514966; }
