@@ -138,6 +138,28 @@ the platform is never "dead" — the badge says which engine produced each alert
 * **Discovery interval**: the ARP sweep is cached (`LASSI_DISCOVERY_INTERVAL`,
   30 s by default) instead of running on every 2-second engine tick, so
   LassiNet does not flood the LAN with ARP.
+* **Device enrichment** (`lassi/discovery.py`): ARP alone only gives IP + MAC,
+  so for each *new* device LassiNet adds a name and a fingerprint, then caches
+  them by MAC for 12 h (5 min when the answer was empty, so a sleeping phone
+  is retried soon):
+  * **reverse DNS (PTR)** for a hostname, bounded to 1.2 s;
+  * a **light TCP fingerprint** on 12 curated ports (631/9100 printer,
+    554/8554 camera, 62078 iPhone sync, 8009 Chromecast, 5000/5001 Synology,
+    445/3389 Windows, 22/80/443…);
+  * **one mDNS query** (Bonjour) — answers carry the owner name
+    ("Ana's iPhone._apple-mobdev2._tcp");
+  * **one SSDP/UPnP M-SEARCH** — smart TVs, consoles, speakers, NAS boxes and
+    Windows PCs name their family in the SERVER header;
+  * the **kind** then comes from `lassi.devices.classify()` (name → ports →
+    MAC vendor → UPnP hint → role), which drives the map icon and nothing
+    else.
+  Both multicast sockets are pinned to the LAN interface (`IP_MULTICAST_IF`):
+  without that, Windows sent them through the VirtualBox host-only NIC and
+  nothing answered. Nothing is probed twice, and the gateway is never
+  port-scanned.
+* **Opt-outs**: `LASSI_ENRICH=0` disables all enrichment, `LASSI_PROBE=0`
+  keeps names but skips the TCP ports, `LASSI_MDNS=0` / `LASSI_SSDP=0` skip the
+  multicast questions.
 * **Honest fallbacks**: no scapy → demo mode with the badge
   `demo (fallback: scapy missing)`; a sniffer that dies → `live (capture
   error)` plus `ok: false` and `capture_error` in `GET /health`.
@@ -234,12 +256,14 @@ the infrastructure:
   laptops, desktops, servers, TVs, consoles, printers, cameras, speakers,
   watches, NAS and single-board computers (plus the router, the Internet
   cloud and the attacker skull). The kind is inferred offline by
-  `lassi/devices.py` from two signals only — the device name (operator rename
-  or the name discovery found) and the MAC vendor prefix — and it is a
-  *display* hint: blocking, trust and protection never depend on it. When the
-  evidence is ambiguous (an Apple OUI cannot tell an iPhone from a MacBook, a
-  randomized MAC has no vendor at all) the icon falls back to the device role
-  instead of guessing.
+  `lassi/devices.py` from the device name, the open ports, the MAC vendor and
+  the mDNS/SSDP answer — and it is a *display* hint: blocking, trust and
+  protection never depend on it. When the evidence is ambiguous (an Apple OUI
+  cannot tell an iPhone from a MacBook, a randomized MAC has no vendor at all)
+  the node keeps the **unknown** glyph instead of guessing a desktop.
+* **Device picker**: the toolbar has a *Find a device* box (`/`): type a name,
+  IP, type or role, move with ↑/↓ and press Enter. It focuses and selects the
+  node on the map and opens its action bar — no hunting for a small dot.
 * **Right column**: *Threats* (every detection with severity, confidence,
   detection engine and a one-click *Block source*), *Firewall rules* (active
   blocks only, with an *Unblock* button) and *System log* (the full event
@@ -312,7 +336,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **125 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **150 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows
@@ -343,4 +367,15 @@ See [ci.md](ci.md) for what the pipeline proves and what it still misses.
   it behind a reverse proxy/VPN.
 * The live model must be validated on your own traffic before you trust its
   verdicts; the published metrics come from the CICIDS2017 subset.
+* **Device identification is best-effort**: a device that answers no PTR, no
+  mDNS, no SSDP and no fingerprinted port stays "unknown" (it keeps the `?`
+  glyph). Phones that randomize their MAC and sleep most of the time are the
+  usual case; renaming one teaches LassiNet what it is and the name is
+  persisted.
+* The enrichment is **gentle by design**: one PTR per new device, one mDNS
+  packet, one SSDP packet and 12 TCP SYNs, all cached. There is no UDP sweep,
+  no banner grabbing and no traffic against hosts outside the swept subnet.
+  On networks where multicast is filtered (AP isolation, some mesh setups)
+  mDNS/SSDP return nothing and only DNS + ports work — measured on a real
+  LAN, where SSDP still identified a Samsung TV and a Twonky NAS.
 * LassiNet is a lab/demo **sensor and actuator**, not a production IPS.

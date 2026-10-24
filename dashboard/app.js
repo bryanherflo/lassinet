@@ -59,12 +59,14 @@ function glyphIconURI(name) {
 }
 
 // Which glyph a node shows: the confirmed-attacker skull wins, then the
-// inferred device kind, then the role's own icon.
+// inferred device kind, then the role's own icon. An ARP-discovered host with
+// no kind is drawn as "unknown" instead of pretending it is a desktop.
 function nodeGlyph(host, displayRole, isAttacker) {
   if (isAttacker) return "attacker";
   if (host.kind === "router" || host.kind === "external") return host.kind;
   if (host.kind && GLYPHS[host.kind]) return host.kind;
   var style = ROLE_STYLE[displayRole] || ROLE_STYLE.workstation;
+  if (style.glyph === "desktop" && displayRole === "workstation") return "unknown";
   return style.glyph;
 }
 
@@ -545,8 +547,12 @@ function updateSelectionBar() {
   var blocked = blockedHosts.has(selectedNodeIp);
   bar.hidden = false;
   bar.classList.toggle("blocked", blocked);
-  document.getElementById("sel-name").textContent = node.hostname || String(node.label || selectedNodeIp).split("\n")[0];
-  document.getElementById("sel-ip").textContent = selectedNodeIp;
+  var displayName = node.hostname || String(node.label || selectedNodeIp).split("\n")[0];
+  var unnamed = !node.hostname || node.hostname === selectedNodeIp;
+  document.getElementById("sel-name").textContent = unnamed ? selectedNodeIp : displayName;
+  var ipEl = document.getElementById("sel-ip");
+  ipEl.textContent = selectedNodeIp;
+  ipEl.hidden = unnamed;
   var kindEl = document.getElementById("sel-kind");
   var kindLabel = node.kind ? (KIND_LABELS[node.kind] || "") : "";
   if (kindEl) { kindEl.textContent = kindLabel; kindEl.hidden = !kindLabel; }
@@ -759,6 +765,7 @@ window.addEventListener("keydown", function(ev) {
   }
   else if (ev.key === "Escape") { selectedNodeIp = null; updateSelectionBar(); network.unselectAll(); closeTrustMenu(); hideAttackBanner(); }
   else if (key === "r") fitMapView(true);
+  else if (key === "/") { ev.preventDefault(); if (pickerInput) { pickerInput.focus(); pickerInput.select(); pickerRender(); } }
   else if (key === "m") toggleMapMinimize();
   else if (key === "l") toggleLegend();
   else if (key === "d") toggleFx();
@@ -1077,6 +1084,126 @@ function buildLegendIcons() {
     row.appendChild(img);
     row.appendChild(label);
     box.appendChild(row);
+  });
+}
+
+// ---- device picker (toolbar): find any device by name, IP, type or role ----
+var pickerInput = document.getElementById("picker-input");
+var pickerList = document.getElementById("picker-list");
+var pickerRows = [];
+var pickerActive = -1;
+
+function pickerKindLabel(node) {
+  if (node.kind && KIND_LABELS[node.kind]) return KIND_LABELS[node.kind];
+  var style = ROLE_STYLE[node.hostRole] || ROLE_STYLE[node.role];
+  return style ? style.label : "";
+}
+
+function pickerMatches(node, query) {
+  if (!query) return true;
+  var hay = [
+    node.hostname, node.id,
+    node.kind && KIND_LABELS[node.kind] ? KIND_LABELS[node.kind] : "",
+    node.hostRole || "", node.role || "",
+  ].join(" ").toLowerCase();
+  return query.split(/\s+/).every(function(part) { return !part || hay.indexOf(part) >= 0; });
+}
+
+function pickerRender() {
+  if (!pickerList) return;
+  var query = (pickerInput.value || "").trim().toLowerCase();
+  var rows = nodes.get().filter(function(n) {
+    return n.id !== "0.0.0.0" && pickerMatches(n, query);
+  }).sort(function(a, b) {
+    return String(a.hostname || a.id).localeCompare(String(b.hostname || b.id));
+  }).slice(0, 40);
+  pickerList.replaceChildren();
+  pickerRows = [];
+  pickerActive = -1;
+  if (!rows.length) {
+    var empty = document.createElement("div");
+    empty.className = "picker-empty";
+    empty.textContent = nodes.get().length ? "No device matches" : "Waiting for devices\u2026";
+    pickerList.appendChild(empty);
+  } else {
+    rows.forEach(function(node, index) {
+      var row = document.createElement("div");
+      row.className = "picker-row";
+      row.setAttribute("role", "option");
+      row.dataset.ip = node.id;
+      row.dataset.index = String(index);
+      var img = document.createElement("img");
+      img.src = node.image || glyphIconURI("unknown");
+      img.alt = "";
+      var name = document.createElement("span");
+      name.className = "pr-name";
+      var unnamed = !node.hostname || node.hostname === node.id;
+      name.textContent = unnamed ? node.id : node.hostname;
+      var ip = document.createElement("span");
+      ip.className = "pr-ip";
+      ip.textContent = node.id;
+      var kind = document.createElement("span");
+      kind.className = "pr-kind";
+      kind.textContent = pickerKindLabel(node) || "";
+      row.appendChild(img);
+      row.appendChild(name);
+      if (!unnamed) row.appendChild(ip);
+      if (kind.textContent) row.appendChild(kind);
+      row.addEventListener("mousedown", function(ev) { ev.preventDefault(); pickerChoose(node.id); });
+      pickerList.appendChild(row);
+      pickerRows.push(row);
+    });
+  }
+  pickerList.hidden = false;
+  pickerInput.setAttribute("aria-expanded", "true");
+}
+
+function pickerClose() {
+  if (!pickerList || pickerList.hidden) return;
+  pickerList.hidden = true;
+  pickerInput.setAttribute("aria-expanded", "false");
+  pickerInput.removeAttribute("aria-activedescendant");
+  pickerActive = -1;
+  pickerRows.forEach(function(row) { row.classList.remove("active"); });
+}
+
+function pickerChoose(ip) {
+  if (!ip) return;
+  selectedNodeIp = ip;
+  network.selectNodes([ip]);
+  network.focus(ip, { scale: Math.max(network.getScale() || 1, 1.15),
+                      animation: { duration: 400, easingFunction: "easeOutQuad" } });
+  updateSelectionBar();
+  pickerClose();
+  pickerInput.value = "";
+  pickerInput.blur();
+}
+
+function pickerMove(delta) {
+  if (!pickerRows.length) return;
+  pickerActive = (pickerActive + delta + pickerRows.length) % pickerRows.length;
+  pickerRows.forEach(function(row, i) { row.classList.toggle("active", i === pickerActive); });
+  var active = pickerRows[pickerActive];
+  if (!active) return;
+  active.scrollIntoView({ block: "nearest" });
+  pickerInput.setAttribute("aria-activedescendant", active.dataset.ip || "");
+}
+
+if (pickerInput && pickerList) {
+  pickerInput.addEventListener("focus", pickerRender);
+  pickerInput.addEventListener("input", pickerRender);
+  pickerInput.addEventListener("keydown", function(ev) {
+    if (ev.key === "ArrowDown") { ev.preventDefault(); pickerMove(1); }
+    else if (ev.key === "ArrowUp") { ev.preventDefault(); pickerMove(-1); }
+    else if (ev.key === "Enter") {
+      ev.preventDefault();
+      var row = pickerRows[pickerActive] || pickerRows[0];
+      if (row) pickerChoose(row.dataset.ip);
+    } else if (ev.key === "Escape") { ev.preventDefault(); pickerClose(); pickerInput.blur(); }
+  });
+  document.addEventListener("mousedown", function(ev) {
+    var box = document.getElementById("device-picker");
+    if (box && !pickerList.hidden && !box.contains(ev.target)) pickerClose();
   });
 }
 

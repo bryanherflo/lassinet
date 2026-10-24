@@ -1,9 +1,10 @@
 """Best-effort device-type classification, for the map icon only.
 
-Two offline signals are used: the device name (operator rename or the name
-discovery found) and the MAC vendor prefix (OUI). This is a *display* hint —
-never a security decision: blocking, trust and protection are decided by
-`lassi.state` from roles and explicit marks.
+Three offline signals are used: the device name (operator rename or the name
+discovery found), the MAC vendor prefix (OUI) and, in live mode, the open ports
+the light fingerprint found. This is a *display* hint — never a security
+decision: blocking, trust and protection are decided by `lassi.state` from
+roles and explicit marks.
 
 When the evidence is ambiguous the answer is `""` (unknown) on purpose: a wrong
 icon is worse than no icon. Apple OUIs, for instance, cannot tell an iPhone
@@ -67,10 +68,27 @@ _OUI: dict[str, str] = {
     "98:b6:e9": "console", "58:bd:a3": "console",
     # Philips Hue -> IoT
     "00:17:88": "iot",
-    # HP / Epson printers
-    "00:1e:0b": "printer", "3c:d9:2b": "printer", "9c:b6:54": "printer",
-    "00:26:ab": "printer", "38:9d:92": "printer",
+    # More Espressif chips -> IoT
+    "8c:aa:b5": "iot", "c4:4f:33": "iot", "48:3f:da": "iot",
+    "60:01:94": "iot", "84:0d:8e": "iot", "a0:20:a6": "iot",
+    # Ring doorbells and Wyze cameras -> camera
+    "0c:47:c9": "camera", "54:e0:19": "camera",
+    "2c:aa:8e": "camera", "7c:78:b2": "camera",
+    # Nest thermostats, LIFX bulbs -> IoT
+    "18:b4:30": "iot", "64:16:66": "iot", "d0:73:d5": "iot",
 }
+
+# Open ports that identify the *role* of a device on the network. A printer
+# that answers on 9100 (raw print) or 631 (IPP) is a printer whatever the MAC
+# vendor says; HP and Epson build laptops too, so vendor prefixes are not used
+# for printers.
+_PORT_HINTS: tuple[tuple[str, frozenset[int]], ...] = (
+    ("printer", frozenset({631, 9100})),
+    ("camera", frozenset({554, 8554})),
+    ("phone", frozenset({62078})),          # iPhone/iPad sync (lockdownd)
+    ("tv", frozenset({8009})),              # Chromecast / Google Cast
+    ("nas", frozenset({5000, 5001})),       # Synology DSM
+)
 
 _ROLE_FALLBACK = {"printer": "printer", "iot": "iot", "server": "server"}
 
@@ -103,12 +121,26 @@ def _from_mac(mac: str | None) -> str:
     return _OUI.get(text[:8], "")
 
 
-def classify(hostname: str = "", mac: str | None = None, role: str | None = None) -> str:
+def _from_ports(ports: Any) -> str:
+    try:
+        open_ports = {int(port) for port in (ports or ())}
+    except (TypeError, ValueError):
+        return ""
+    for kind, needles in _PORT_HINTS:
+        if open_ports & needles:
+            return kind
+    return ""
+
+
+def classify(hostname: str = "", mac: str | None = None, role: str | None = None,
+             ports: Any = None, hint: str = "") -> str:
     """Return one of KINDS (plus "router"/"external"), or "" when unsure.
 
-    `role` is the network role already known (`router`, `server`, `printer`…)
-    and is only used as a last resort, so a renamed device keeps its icon when
-    the name says nothing.
+    `role` is the network role already known (`router`, `server`, `printer`…),
+    `ports` the result of the light fingerprint and `hint` what SSDP/UPnP said
+    about the device. The name wins (it is the operator's word), then the ports
+    (what the device *does*), then the MAC vendor (what it is), then the UPnP
+    hint, and the role is the last resort.
     """
     role = (role or "").strip().lower()
     if role == "router":
@@ -120,7 +152,13 @@ def classify(hostname: str = "", mac: str | None = None, role: str | None = None
         kind = _from_name(name)
         if kind:
             return kind
+    kind = _from_ports(ports)
+    if kind:
+        return kind
     kind = _from_mac(mac)
     if kind:
         return kind
+    hint = (hint or "").strip().lower()
+    if hint in KINDS:
+        return hint
     return _ROLE_FALLBACK.get(role, "")

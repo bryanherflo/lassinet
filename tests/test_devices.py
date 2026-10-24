@@ -60,3 +60,24 @@ def test_a_name_wins_over_the_vendor() -> None:
 def test_every_answer_is_a_known_kind() -> None:
     for name in ("iphone", "ipad", "macbook", "pc-x", "raspberrypi", "sonos", "ps5"):
         assert classify(hostname=name) in KINDS
+
+
+def test_ports_classify_when_the_name_says_nothing() -> None:
+    assert classify(ports=[9100]) == "printer"
+    assert classify(ports=[631]) == "printer"
+    assert classify(ports=[554]) == "camera"
+    assert classify(ports=[62078]) == "phone"
+    assert classify(ports=[8009]) == "tv"
+    assert classify(ports=[5000]) == "nas"
+    assert classify(ports=[22, 80, 443, 445]) == ""      # generic, no guess
+
+
+def test_the_name_wins_over_the_ports() -> None:
+    assert classify(hostname="iphone-ana", ports=[9100]) == "phone"
+
+
+def test_upnp_hint_is_used_when_nothing_else_knows() -> None:
+    assert classify(hint="speaker") == "speaker"
+    assert classify(hint="tv") == "tv"
+    assert classify(hint="not-a-kind") == ""
+    assert classify(hostname="pc-x", hint="tv") == "desktop"   # the name wins

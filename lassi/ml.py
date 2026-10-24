@@ -246,9 +246,12 @@ class Detector:
         # same rate and volume but almost no SYN, which is the discriminator.
         if dst_port_count == 1 and pkt_rate > 100 and pkts > 500 and syn_ratio > 0.5:
             return {"severity": "high", "attack": "ddos", "confidence": 0.85, "engine": "rules"}
-        if dst_port_count == 1 and pkts > 100 and syn_ratio > 0.8:
+        if (dst_port_count == 1 and pkts > 100 and syn_ratio > 0.8):
             return {"severity": "high", "attack": "brute_force", "confidence": 0.8, "engine": "rules"}
-        if (pkts > 1000 and bytes_ > 5_000_000
+        # A real exfiltration is a *sustained, big* upload. The old 5 MB bar fired
+        # on ordinary cloud-sync traffic (measured: two alerts in two minutes for
+        # a 6 MB upload), so it needs 20 MB and 2 000 packets now.
+        if (pkts > 2000 and bytes_ > 20_000_000
                 and _is_internal(flow.get("src")) and not _is_internal(flow.get("dst"))):
             return {"severity": "high", "attack": "data_exfiltration", "confidence": 0.75, "engine": "rules"}
         return {"severity": "low", "attack": "benign", "confidence": 0.6, "engine": "rules"}

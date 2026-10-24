@@ -12,6 +12,7 @@ import time
 from typing import Any
 
 from lassi.devices import classify
+from lassi.discovery import enrich
 
 log = logging.getLogger("lassi.live")
 
@@ -188,7 +189,16 @@ def discover(cidr: str | None = None, timeout: int = 2) -> tuple[list[dict[str, 
             continue
         chosen = str(scan)
         gw = _gw_for(net)
-        log.info("ARP discovery found %d host(s) on %s (gateway %s)", len(hosts), scan, gw)
+        local_ip = _route_for(str(net))[1]
+        try:
+            # Names + a light port fingerprint + mDNS/SSDP, cached by MAC (see
+            # lassi.discovery). The gateway is named but never port-probed.
+            hosts = enrich(hosts, skip_ports={gw} if gw else (), local_ip=local_ip)
+        except Exception:
+            log.exception("device enrichment failed; keeping the ARP picture")
+        named = sum(1 for h in hosts if h.get("hostname") and h["hostname"] != h["ip"])
+        log.info("ARP discovery found %d host(s) on %s (gateway %s); %d with a name",
+                 len(hosts), scan, gw, named)
         break
     if not hosts:
         log.warning("ARP discovery found no neighbours in %s", candidates)

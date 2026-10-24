@@ -83,25 +83,25 @@ class Simulator:
             {"ip": self.ip["web"],      "role": "server",      "hostname": "web-srv",
              "open_ports": [22, 80, 443], "kind": "server"},
             {"ip": self.ip["finance"],  "role": "workstation", "hostname": "pc-finance",
-             "open_ports": [], "kind": "desktop"},
+             "open_ports": [445, 3389], "kind": "desktop"},
             {"ip": self.ip["hr"],       "role": "workstation", "hostname": "pc-hr",
              "open_ports": [], "kind": "desktop"},
             {"ip": self.ip["laptop"],   "role": "workstation", "hostname": "macbook-sam",
-             "open_ports": [], "kind": "laptop"},
+             "open_ports": [22], "kind": "laptop"},
             {"ip": self.ip["phone"],    "role": "workstation", "hostname": "iphone-ana",
-             "open_ports": [], "kind": "phone"},
+             "open_ports": [62078], "kind": "phone"},
             {"ip": self.ip["tablet"],   "role": "workstation", "hostname": "ipad-lounge",
-             "open_ports": [], "kind": "tablet"},
+             "open_ports": [62078], "kind": "tablet"},
             {"ip": self.ip["tv"],       "role": "iot",         "hostname": "smart-tv",
-             "open_ports": [], "kind": "tv"},
+             "open_ports": [8009], "kind": "tv"},
             {"ip": self.ip["console"],  "role": "iot",         "hostname": "ps5-lounge",
              "open_ports": [], "kind": "console"},
             {"ip": self.ip["speaker"],  "role": "iot",         "hostname": "echo-kitchen",
              "open_ports": [], "kind": "speaker"},
             {"ip": self.ip["camera"],   "role": "iot",         "hostname": "cam-lobby",
-             "open_ports": [554], "kind": "camera"},
+             "open_ports": [554, 8554], "kind": "camera"},
             {"ip": self.ip["printer"],  "role": "printer",     "hostname": "hp-print",
-             "open_ports": [9100], "kind": "printer"},
+             "open_ports": [631, 9100], "kind": "printer"},
         ]
         # the attacker "appears" on the map after a couple of ticks, like a real incident
         if self.tick >= 2:
@@ -169,12 +169,12 @@ class Simulator:
                 "pkt_rate": round(pkts / dur, 2), "label": label,
             }]
         # exfiltration: big uploads from an internal host to an external server
-        pkts = self.random.randint(1500, 4000)
+        pkts = self.random.randint(2500, 6000)
         dur = round(self.random.uniform(120, 600), 2)
         return [{
             "src": hr,
             "dst": f"185.{self.random.randint(1, 254)}.{self.random.randint(1, 254)}.{self.random.randint(1, 254)}",
-            "pkts": pkts, "bytes": self.random.randint(8_000_000, 40_000_000),
+            "pkts": pkts, "bytes": self.random.randint(25_000_000, 60_000_000),
             "duration": dur, "syn_ratio": 0.05,
             "dst_port_count": 1, "mean_pkt_size": 1300,
             "pkt_rate": round(pkts / dur, 2), "label": label,

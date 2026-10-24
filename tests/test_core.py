@@ -731,10 +731,20 @@ def test_heuristic_still_flags_a_syn_flood_and_an_upload() -> None:
              "mean_pkt_size": 58, "pkt_rate": 1000}
     assert det.predict([flood])[0]["attack"] == "ddos"
 
-    upload = {"src": "10.0.0.4", "dst": "185.215.88.170", "pkts": 3000,
-              "bytes": 12_000_000, "duration": 300, "syn_ratio": 0.02,
+    upload = {"src": "10.0.0.4", "dst": "185.215.88.170", "pkts": 5000,
+              "bytes": 30_000_000, "duration": 300, "syn_ratio": 0.02,
               "dst_port_count": 1, "mean_pkt_size": 1300, "pkt_rate": 10}
     assert det.predict([upload])[0]["attack"] == "data_exfiltration"
+
+
+def test_a_normal_cloud_upload_is_not_an_exfiltration() -> None:
+    """Measured: 6 MB uploads to a cloud service raised two alerts in two
+    minutes. The rule needs 20 MB and 2 000 packets now."""
+    det = Detector(model_path=Path("/nonexistent"))
+    upload = {"src": "192.168.0.81", "dst": "172.65.90.21", "pkts": 1200,
+              "bytes": 6_000_000, "duration": 40, "syn_ratio": 0.02,
+              "dst_port_count": 1, "mean_pkt_size": 1200, "pkt_rate": 30}
+    assert det.predict([upload])[0]["attack"] == "benign"
 
 
 def test_model_is_loadable_and_classifies() -> None:

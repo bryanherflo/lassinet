@@ -2,6 +2,28 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.5.0] — 2026-10-24 — "find the devices, then find them on the map"
+
+### Added
+- **Real device identification in live mode.** ARP only returns IP + MAC, so every node used to look like a generic workstation. New `lassi/discovery.py` enriches each *new* device and caches the result by MAC for 12 h (5 minutes when the answer came back empty, so a sleeping phone is retried soon):
+  * **reverse DNS (PTR)** for a hostname (bounded to 1.2 s);
+  * a **light TCP fingerprint** on 12 curated ports (631/9100 printer, 554/8554 camera, 62078 iPhone sync, 8009 Chromecast, 5000/5001 Synology, 445/3389 Windows, 22/80/443);
+  * **one mDNS/Bonjour query** — answers carry the owner's name ("Ana's iPhone._apple-mobdev2._tcp");
+  * **one SSDP/UPnP M-SEARCH** — smart TVs, consoles, speakers, NAS boxes and Windows PCs name their family in the SERVER header;
+  * and the kind comes from `lassi.devices.classify()` (name → ports → MAC vendor → UPnP hint → role).
+  Measured on a real home LAN: 14 devices that used to be "workstation" now include two cameras, a Samsung TV, a Chromecast, a Twonky NAS and this Windows desktop with its real name.
+- **Both multicast sockets are pinned to the LAN interface** (`bind` + `IP_MULTICAST_IF`). Without that, Windows routed the queries through the VirtualBox host-only NIC and nothing ever answered (found while testing, not while reading).
+- **Device picker** in the map toolbar (`/` opens it): filter by name, IP, type or role, move with ↑/↓, Enter focuses and selects the device and opens its action bar. Rows show the device icon, its name/IP and its type.
+- The unknown case is now honest: a live host with no evidence gets the **? glyph**, not a fake desktop icon.
+
+### Changed
+- The **exfiltration rule** needs 20 MB and 2 000 packets (was 5 MB / 1 000): measured on a real LAN, ordinary cloud-sync uploads raised two alerts in two minutes.
+- The demo household's exfiltration story is 25-60 MB so it still trips the calibrated rule.
+
+### Tests
+- New `tests/test_devices.py` (name patterns, OUI vendors, ports, UPnP hints, randomized MACs) and `tests/test_discovery.py` (PTR cleaning, port hints, mDNS parsing incl. compression pointers, SSDP parsing/dedup, cache, retry TTL, gateway never probed, enrichment disabled). The whole suite runs with enrichment off, so no test can probe the real network. **150 tests** in total.
+- Cache-busters bumped to `?v=3.24`; hard-refresh with **Ctrl+F5**.
+
 ## [0.4.29] — 2026-10-23 — "every device gets its own icon"
 
 ### Added

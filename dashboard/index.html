@@ -9,8 +9,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.23">
-<script src="vendor/vis-network.min.js?v=3.23"></script>
+<link rel="stylesheet" href="style.css?v=3.24">
+<script src="vendor/vis-network.min.js?v=3.24"></script>
 </head>
 <body>
 <header>
@@ -47,6 +47,13 @@
         <button id="btn-help" class="toolbar-btn" title="Help &amp; shortcuts (H)" aria-label="Help and shortcuts" aria-haspopup="dialog">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.6 2.6 0 1 1 3.8 2.4c-.9.5-1.4 1-1.4 1.9"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></svg>
         </button>
+      </div>
+      <div id="device-picker" class="device-picker">
+        <svg class="picker-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></svg>
+        <input id="picker-input" type="text" placeholder="Find a device…  /" autocomplete="off" spellcheck="false"
+               role="combobox" aria-expanded="false" aria-controls="picker-list" aria-autocomplete="list"
+               aria-label="Find a device by name, IP, type or role">
+        <div id="picker-list" class="picker-list" role="listbox" aria-label="Devices" hidden></div>
       </div>
       <span id="map-status" class="map-status" role="status">connecting…</span>
     </div>
@@ -88,7 +95,7 @@
       <button type="button" id="sel-close" class="sel-close" aria-label="Clear selection" title="Clear selection">×</button>
     </div>
 
-    <div id="hint">click a device for actions · right-click for more · drag to pan · wheel to zoom · ? help</div>
+    <div id="hint">click a device for actions · right-click for more · drag to pan · wheel to zoom · / find · ? help</div>
   </div>
 
   <aside>
@@ -129,7 +136,11 @@
         </div>
         <div>
           <h4>Act on a device</h4>
-          <p><b>Click</b> a device to select it and open its action bar. <b>Right-click</b> for the trust menu. <b>Double-click</b> to rename it. <kbd>B</kbd> blocks the selected host (never the router, the Internet or a trusted device).</p>
+          <p><b>Click</b> a device to select it and open its action bar. <b>Right-click</b> for the trust menu. <b>Double-click</b> to rename it. Use the <b>Find a device</b> box in the toolbar (or <kbd>/</kbd>) to search by name, IP, type or role. <kbd>B</kbd> blocks the selected host (never the router, the Internet or a trusted device).</p>
+        </div>
+        <div>
+          <h4>How devices are identified</h4>
+          <p>In live mode LassiNet sweeps the LAN with ARP (IP + MAC), then asks the local resolver for a <b>name</b> and fingerprints a handful of ports (631/9100 printer, 554 camera, 62078 iPhone, 8009 Chromecast, 5000 NAS…) to pick the icon. Results are cached per MAC, so each device is probed <b>once per 12 h</b> and never on the gateway. In demo mode the devices are scripted.</p>
         </div>
         <div>
           <h4>Right column</h4>
@@ -139,7 +150,7 @@
       <h4>Keyboard</h4>
       <div class="keys">
         <span><kbd>B</kbd> block</span><span><kbd>R</kbd> refit</span><span><kbd>M</kbd> map</span>
-        <span><kbd>L</kbd> legend</span><span><kbd>D</kbd> dots</span><span><kbd>H</kbd> help</span><span><kbd>Esc</kbd> close</span>
+        <span><kbd>L</kbd> legend</span><span><kbd>D</kbd> dots</span><span><kbd>/</kbd> find</span><span><kbd>H</kbd> help</span><span><kbd>Esc</kbd> close</span>
       </div>
       <p class="help-note">In demo mode LassiNet simulates traffic and attacks on a fictional network — nothing is captured from your real network. In live mode the same map shows real devices and flows.</p>
     </div>
@@ -148,6 +159,6 @@
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="app.js?v=3.23"></script>
+<script src="app.js?v=3.24"></script>
 </body>
 </html>

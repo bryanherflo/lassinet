@@ -8,13 +8,20 @@ audit log, where `/api/logs` serves them as if they had happened.
 
 Found in 0.4.26 while verifying a live run: nine fixture alerts (12:42:04 to
 12:42:08) landed in logs/events.jsonl from a plain test run.
+
+The network is part of the isolation too: enrichment (DNS + port fingerprint)
+is switched off for the whole suite, so a test that reaches `discover()` can
+never probe the machine's real LAN.
 """
+
+import os
 
 import pytest
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _isolated_runtime_files(tmp_path_factory):
+    import lassi.discovery as discovery
     import lassi.state as state
 
     tmp = tmp_path_factory.mktemp("runtime")
@@ -23,6 +30,16 @@ def _isolated_runtime_files(tmp_path_factory):
     state.EVENTS_LOG_PATH = tmp / "events.jsonl"
     state.ALIAS_PATH = tmp / "device_names.json"
     state.TRUSTED_PATH = tmp / "trusted_devices.json"
+    discovery.CACHE_PATH = tmp / "device_cache.json"
+
+    # A test run must never probe the local network: discovery tests opt back
+    # in explicitly and stub every probe.
+    saved_enrich = os.environ.get("LASSI_ENRICH")
+    os.environ["LASSI_ENRICH"] = "0"
     yield tmp
     for name, value in saved.items():
         setattr(state, name, value)
+    if saved_enrich is None:
+        os.environ.pop("LASSI_ENRICH", None)
+    else:
+        os.environ["LASSI_ENRICH"] = saved_enrich

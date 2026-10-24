@@ -158,6 +158,43 @@ main {
   border-radius: var(--radius-sm); font-family: var(--font-mono);
   display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
 }
+
+/* ---- device picker (toolbar) ---- */
+.device-picker {
+  position: relative; display: flex; align-items: center; gap: 6px;
+  flex: 0 1 260px; min-width: 150px; margin: 0 var(--space-sm) 0 auto;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 999px;
+  padding: 0 10px; height: 28px;
+}
+.device-picker:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px #58a6ff22; }
+.device-picker .picker-icon { color: var(--muted); flex: none; }
+.device-picker input {
+  flex: 1; min-width: 0; background: transparent; border: 0; outline: 0;
+  color: var(--text); font: inherit; font-size: 12px; height: 100%;
+}
+.device-picker input::placeholder { color: var(--muted); }
+.picker-list {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 30;
+  background: var(--panel-elevated); border: 1px solid var(--border-bright);
+  border-radius: var(--radius-md); box-shadow: 0 18px 44px -14px #000f;
+  max-height: 320px; overflow-y: auto; padding: 4px; min-width: 300px;
+}
+.picker-list[hidden] { display: none; }
+.picker-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-radius: var(--radius-sm); cursor: pointer; font-size: 12px;
+}
+.picker-row:hover, .picker-row.active { background: #58a6ff1f; }
+.picker-row img { width: 20px; height: 20px; flex: none; }
+.picker-row .pr-name { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-row .pr-ip { color: var(--muted); font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
+.picker-row .pr-kind {
+  margin-left: auto; font-size: 9.5px; text-transform: uppercase; letter-spacing: .7px;
+  color: var(--text-dim); background: var(--panel); border: 1px solid var(--border);
+  border-radius: 999px; padding: 1px 7px; white-space: nowrap;
+}
+.picker-empty { padding: 10px; color: var(--muted); font-size: 12px; text-align: center; }
+@media (max-width: 980px) { .device-picker { display: none; } }
 #map-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 #map-status.live { color: var(--green); border-color: #23863655; }
 #map-status.live::before { background: var(--green); box-shadow: 0 0 8px var(--green); }
