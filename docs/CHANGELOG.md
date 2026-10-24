@@ -2,6 +2,14 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.5.2] — 2026-10-24
+
+### Fixed
+- **The address was printed twice on the map** when a device had no name yet: the node label was
+  `hostname + "\n" + ip` and live discovery sets `hostname` to the IP until a name is found.
+  `nodeLabel()` now omits the second line when both are equal (the picker and the selection bar
+  already did). Seen on the operator's real LAN, 14 nodes all showing `192.168.0.x` twice.
+
 ## [0.5.1] — 2026-10-24
 
 ### Fixed

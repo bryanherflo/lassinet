@@ -70,6 +70,13 @@ function nodeGlyph(host, displayRole, isAttacker) {
   return style.glyph;
 }
 
+// Map label: name on the first line, address on the second. A device that has
+// not been named yet would print the address twice, so show it only once.
+function nodeLabel(hostname, ip) {
+  var name = String(hostname || "");
+  return !name || name === ip ? String(ip) : name + "\n" + ip;
+}
+
 // A purpose-drawn gateway glyph reads better than a flat hexagon and keeps the
 // same circular language as every other device. Rendered as an inline SVG so
 // the dashboard still ships with no build step and no external assets.
@@ -800,11 +807,11 @@ function renderTopology(data) {
     var nodeSize = h.role === "router" ? 27 : h.role === "external" ? 23 : (isAttacker ? 22 : 20);
     var img = glyphIconURI(nodeGlyph(h, displayRole, isAttacker));
     if (!nodes.get(h.ip)) {
-      var nodeData = { id: h.ip, label: h.hostname + "\n" + h.ip, title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], shape: "circularImage", size: nodeSize, image: img, x: pos[h.ip].x, y: pos[h.ip].y };
+      var nodeData = { id: h.ip, label: nodeLabel(h.hostname, h.ip), title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], shape: "circularImage", size: nodeSize, image: img, x: pos[h.ip].x, y: pos[h.ip].y };
       for (var k in base) nodeData[k] = base[k];
       nodes.add(nodeData);
     } else {
-      var label = h.hostname + "\n" + h.ip;
+      var label = nodeLabel(h.hostname, h.ip);
       var existing = nodes.get(h.ip);
       var updateObj = { id: h.ip, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], title: title, size: nodeSize };
       if (existing.label !== label) updateObj.label = label;
