@@ -118,6 +118,17 @@ def _clean_ip(value: Any) -> str | None:
     return str(address)
 
 
+def _clean_device_name(value: Any) -> str:
+    """One-line display name for the map and the picker.
+
+    Control characters (newlines, tabs, NUL) become spaces and runs of
+    whitespace collapse, so a typed name can never break the label it is
+    rendered in. Capped to 32 characters, the width the UI is designed for.
+    """
+    text = "".join(ch if ch.isprintable() else " " for ch in str(value or ""))
+    return " ".join(text.split())[:32]
+
+
 def _is_loopback(ip: str) -> bool:
     """Loopback/unspecified: blocking it cuts the machine from itself."""
     try:
@@ -627,7 +638,7 @@ def trust_device(req: TrustRequest) -> dict:
 
 @app.post("/api/devices/rename")
 def rename_device(req: RenameRequest) -> dict:
-    name = (req.name or "").strip()[:32]
+    name = _clean_device_name(req.name)
     if not name:
         return {"ok": False, "error": "name must not be empty"}
     ip = _clean_ip(req.ip)
@@ -640,7 +651,7 @@ def rename_device(req: RenameRequest) -> dict:
     # The name is the best device-type clue: re-classify so the icon follows
     # ("iPhone de Ana" -> phone). An inconclusive name keeps the current icon.
     host = state.hosts.get(ip) or {}
-    kind = classify(hostname=name, mac=host.get("mac"))
+    kind = classify(hostname=name, mac=host.get("mac"), ports=host.get("open_ports"))
     if kind:
         state.upsert_host(ip, kind=kind)
     return {"ok": True, "ip": ip, "name": name, "kind": kind}

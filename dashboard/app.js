@@ -71,9 +71,11 @@ function nodeGlyph(host, displayRole, isAttacker) {
 }
 
 // Map label: name on the first line, address on the second. A device that has
-// not been named yet would print the address twice, so show it only once.
+// not been named yet would print the address twice, so show it only once. Any
+// whitespace inside the name collapses: the label is canvas text with a fixed
+// two-line layout and a pasted newline would push the address off the node.
 function nodeLabel(hostname, ip) {
-  var name = String(hostname || "");
+  var name = String(hostname || "").replace(/\s+/g, " ").trim();
   return !name || name === ip ? String(ip) : name + "\n" + ip;
 }
 
@@ -138,8 +140,19 @@ function isBlockableNode(ip) {
   var node = nodes.get(ip);
   return !!node && node.hostRole !== "router" && node.hostRole !== "external";
 }
+function isIpLiteral(ip) {
+  // Valid IPv4 (each octet <= 255) or a colon-shaped IPv6 literal. Used before
+  // offering a block button, so the UI never promises a block the server will
+  // refuse ("no-es-ip", "192.168.0.999", "<img src=x>" and friends).
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) {
+    return ip.split(".").every(function(part) { return Number(part) <= 255; });
+  }
+  return ip.indexOf(":") >= 0 && /^[0-9a-f:.]+$/i.test(ip);
+}
 function canBlockIp(ip) {
-  if (!ip || ip === "0.0.0.0") return false;
+  if (!isIpLiteral(ip)) return false;
+  if (ip === "0.0.0.0" || ip === "::") return false;      // unspecified
+  if (/^127\./.test(ip) || ip === "::1") return false;    // loopback
   if (trustedDevices.has(ip)) return false;
   var node = nodes.get(ip);
   return !node || (node.hostRole !== "router" && node.hostRole !== "external");
@@ -545,6 +558,14 @@ function updateSelectionBar() {
   var bar = document.getElementById("selection-bar");
   if (!bar) return;
   var node = selectedNodeIp ? nodes.get(selectedNodeIp) : null;
+  if (selectedNodeIp && !node) {
+    // The selected device left the map (asleep, lease expired): forget it, or
+    // the "b" shortcut would keep referring to an address that is no longer a
+    // device on this network.
+    selectedNodeIp = null;
+    lastPannedSelection = null;
+    network.unselectAll();
+  }
   var baseRole = node ? (node.hostRole || node.role) : null;
   if (!node || baseRole === "router" || baseRole === "external") {
     bar.hidden = true;
@@ -1176,6 +1197,14 @@ function pickerClose() {
 
 function pickerChoose(ip) {
   if (!ip) return;
+  if (!nodes.get(ip)) {
+    // The list is a snapshot: the device may have left the map while it was
+    // open (phone asleep, lease expired). Re-render instead of asking vis for
+    // a node that no longer exists, which threw and left the picker stuck.
+    toast("That device is no longer on the map", "error");
+    if (document.activeElement === pickerInput) pickerRender(); else pickerClose();
+    return;
+  }
   selectedNodeIp = ip;
   network.selectNodes([ip]);
   network.focus(ip, { scale: Math.max(network.getScale() || 1, 1.15),

@@ -2,6 +2,27 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.5.3] — 2026-10-24
+
+### Fixed
+- **The device picker threw an exception when a listed device had already left the map**
+  (`Node with id "…" not found` from vis-network). The list is a snapshot of the last tick,
+  and phones come and go; `pickerChoose()` now checks the DataSet, says so in a toast and
+  re-renders the list instead of leaving it stuck open.
+- **A renamed device could keep a newline in its name**, which broke the two-line map label
+  (`name`, `name line 2`, address) and the picker row. The API now flattens every control
+  character to a space, collapses whitespace and caps the name at 32 characters; the map
+  label sanitises again on the client as a second line of defence.
+- **A selection outlived its device**: after a device disappeared from the map the selection
+  was still stored, so `b` answered "infrastructure nodes cannot be blocked" for something
+  that was no longer a device. The stale selection is now dropped.
+- **`canBlockIp()` accepted any string**, so an alert row could offer "Block source" for a
+  malformed address, a loopback or an unspecified one — the server then refused. The UI now
+  only offers a block for a valid, blockable IP literal.
+- **Renaming a port-identified device could change its icon** (the re-classification used the
+  name and MAC but not the open ports, which are evidence too). Found in the API review, with
+  a regression test.
+
 ## [0.5.2] — 2026-10-24
 
 ### Fixed

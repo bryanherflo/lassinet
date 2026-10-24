@@ -496,3 +496,52 @@ def test_invalid_ip_rejected(client: TestClient) -> None:
     for path in ("/api/firewall/block", "/api/firewall/unblock"):
         data = client.post(path, json={"ip": "not-an-ip"}).json()
         assert data["ok"] is False and "valid IP" in data["error"]
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("camara", "camara"),
+    ("  dos   espacios  ", "dos espacios"),
+    ("linea1\nlinea2", "linea1 linea2"),
+    ("tab\tseparado", "tab separado"),
+    ("nul\x00byte", "nul byte"),
+    ("x" * 40, "x" * 32),
+    (" \n\t ", ""),
+])
+def test_device_name_normalisation(raw: str, expected: str) -> None:
+    """Names are one line by construction: the map label is canvas text built
+    as name + newline + address, so an embedded newline used to push the
+    address off the node and break the picker row."""
+    assert lassi_app._clean_device_name(raw) == expected
+
+
+def test_rename_stores_a_single_line_name(client: TestClient) -> None:
+    snap = client.get("/api/state").json()
+    target = next((n for n in snap["nodes"] if n["role"] == "workstation"), None)
+    if target is None:
+        pytest.skip("no workstation discovered yet")
+    data = client.post("/api/devices/rename",
+                       json={"ip": target["ip"], "name": "  camara\tdel\njardin  "}).json()
+    assert data["ok"] is True and data["name"] == "camara del jardin"
+    host = next(n for n in client.get("/api/state").json()["nodes"] if n["ip"] == target["ip"])
+    assert host["hostname"] == "camara del jardin"
+
+
+def test_rename_rejects_a_blank_name(client: TestClient) -> None:
+    ip = client.get("/api/state").json()["nodes"][0]["ip"]
+    data = client.post("/api/devices/rename", json={"ip": ip, "name": " \n\t "}).json()
+    assert data["ok"] is False and "empty" in data["error"]
+
+
+def test_rename_keeps_the_port_based_icon(client: TestClient) -> None:
+    """The name is not the only evidence: renaming a camera to a neutral name
+    used to re-classify with the name and MAC only, so a port-identified
+    device could lose its icon."""
+    ip = "10.77.0.5"
+    lassi_app.state.upsert_host(ip, hostname=ip, role="workstation", open_ports=[554, 80])
+    lassi_app.state.upsert_host(ip, kind="camera")
+    try:
+        data = client.post("/api/devices/rename", json={"ip": ip, "name": "caja-2"}).json()
+        assert data["ok"] is True and data["kind"] == "camera"
+    finally:
+        lassi_app.state.hosts.pop(ip, None)
+
