@@ -150,9 +150,11 @@ the platform is never "dead" — the badge says which engine produced each alert
     ("Ana's iPhone._apple-mobdev2._tcp");
   * **one SSDP/UPnP M-SEARCH** — smart TVs, consoles, speakers, NAS boxes and
     Windows PCs name their family in the SERVER header;
-  * the **kind** then comes from `lassi.devices.classify()` (name → ports →
-    MAC vendor → UPnP hint → role), which drives the map icon and nothing
-    else.
+  * the **kind** then comes from `lassi.devices.classify()` (name → open
+    ports → mDNS/SSDP hint → role), which drives the map icon and nothing
+    else. The **MAC vendor is never used to pick a type** (D-Link builds
+    routers, cameras and switches): it is only shown as context in the
+    tooltip (`vendor: D-Link`).
   Both multicast sockets are pinned to the LAN interface (`IP_MULTICAST_IF`):
   without that, Windows sent them through the VirtualBox host-only NIC and
   nothing answered. Nothing is probed twice, and the gateway is never
@@ -259,13 +261,14 @@ the infrastructure:
   laptops, desktops, servers, TVs, consoles, printers, cameras, speakers,
   watches, NAS and single-board computers (plus the router, the Internet
   cloud and the attacker skull). The kind is inferred offline by
-  `lassi/devices.py` from the device name, the open ports, the MAC vendor and
-  the mDNS/SSDP answer — and it is a *display* hint: blocking, trust and
-  protection never depend on it. When the evidence is ambiguous (an Apple OUI
-  cannot tell an iPhone from a MacBook, a randomized MAC has no vendor at all)
-  the node keeps the **unknown** glyph and the label says `Unknown` instead of
-  guessing a desktop. The legend's icon grid repeats the same colour per type,
-  so the ring is never a code you have to memorise.
+  `lassi/devices.py` from the device name, the open ports and the mDNS/SSDP
+  answer — and it is a *display* hint: blocking, trust and protection never
+  depend on it. The MAC vendor is deliberately **not** used (it is context for
+  the tooltip only: `vendor: D-Link`): an OUI cannot tell a D-Link router from
+  a D-Link camera, and a phone's randomized MAC has no vendor at all. When the
+  evidence is ambiguous the node keeps the **unknown** glyph and the label says
+  `Unknown` instead of guessing. The legend's icon grid repeats the same colour
+  per type, so the ring is never a code you have to memorise.
 * **Device picker**: the toolbar has a *Find a device* box (`/`): type a name,
   IP, type or role, move with ↑/↓ and press Enter. It focuses and selects the
   node on the map and opens its action bar — no hunting for a small dot.

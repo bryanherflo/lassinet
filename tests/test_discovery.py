@@ -109,7 +109,8 @@ def test_enrichment_disabled_sends_nothing(monkeypatch) -> None:
               "role": "workstation", "open_ports": []}]
     out = discovery.enrich(hosts)
     assert out[0]["hostname"] == "10.0.0.8"
-    assert out[0]["kind"] == "speaker"            # the MAC vendor still speaks
+    assert out[0].get("kind", "") == ""           # no MAC-vendor guessing
+    assert out[0]["mac_vendor"] == "Sonos"        # vendor stays as context only
 
 
 def test_probe_can_be_disabled_while_names_are_kept(monkeypatch) -> None:

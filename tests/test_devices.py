@@ -37,12 +37,22 @@ def test_ambiguous_evidence_stays_unknown() -> None:
     assert classify(mac="not-a-mac") == ""
 
 
-def test_vendor_oui_classifies_when_the_name_says_nothing() -> None:
-    assert classify(mac="b8:27:eb:aa:bb:cc") == "sbc"        # Raspberry Pi
-    assert classify(mac="78:28:ca:aa:bb:cc") == "speaker"    # Sonos
-    assert classify(mac="44:19:b6:aa:bb:cc") == "camera"     # Hikvision
-    assert classify(mac="fc:3c:d7:aa:bb:cc") == "iot"        # Tuya (smart home)
-    assert classify(mac="B8-27-EB-AA-BB-CC") == "sbc"        # dash form
+def test_the_vendor_alone_never_picks_a_kind() -> None:
+    """Operator preference (0.8.1): a known company is context, not a type.
+
+    D-Link builds routers, cameras and switches; Tuya builds many smart-home
+    boxes; a phone's random MAC has no vendor. Showing "Unknown" is preferred
+    over a specific guess from the OUI.
+    """
+    from lassi.devices import vendor_for
+
+    assert classify(mac="b8:27:eb:aa:bb:cc") == ""            # Raspberry Pi
+    assert classify(mac="78:28:ca:aa:bb:cc") == ""            # Sonos
+    assert classify(mac="44:19:b6:aa:bb:cc") == ""            # Hikvision
+    assert classify(mac="fc:3c:d7:aa:bb:cc") == ""            # Tuya (smart home)
+    assert classify(mac="B8-27-EB-AA-BB-CC") == ""            # dash form
+    assert vendor_for("b8:27:eb:aa:bb:cc") == "Raspberry Pi"  # still shown as text
+    assert vendor_for("B8-27-EB-AA-BB-CC") == "Raspberry Pi"
 
 
 def test_role_is_the_last_resort_and_never_guesses() -> None:

@@ -2,6 +2,17 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.8.1] — 2026-10-25
+
+### Changed
+- **The MAC vendor no longer picks a device type** (operator preference: prefer "I do not
+  know" over a specific guess). A known OUI used to classify Tuya plugs as IoT, Sonos as
+  speakers, Raspberry Pi as SBC and Hikvision/Dahua as cameras; those devices now stay
+  ?/Unknown unless the **name**, an **open port** or an **mDNS/SSDP** answer proves it.
+  The vendor is still shown as context in the tooltip and the picker
+  (endor: D-Link) but never decides the type: D-Link builds routers, cameras and
+  switches, so an OUI cannot choose among them honestly.
+
 ## [0.8.0] — 2026-10-25
 
 ### Changed
