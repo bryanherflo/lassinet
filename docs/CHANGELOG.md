@@ -2,6 +2,21 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.7.3] — 2026-10-25
+
+### Fixed
+- **The device picker called unidentified devices "Workstation".** It fell back to the
+  server role, which is `workstation` for every host until something proves otherwise, so the
+  `?` nodes looked confirmed. The pill now says **Unknown** unless a role carries evidence
+  (router, Internet, trusted, attacker, suspicious).
+
+### Added
+- **Vendor context for the unknown**: the node tooltip and the picker row now show the OUI
+  vendor when it is known (`vendor: D-Link`, `Sagemcom`, `Tuya Smart`, `Espressif`…) and mark
+  locally administered MACs as **private/randomized** — what phones and tablets use, and the
+  reason their OUI says nothing. Neither field is ever turned into a device kind: D-Link
+  builds routers, cameras and switches, so the vendor is shown, not guessed.
+
 ## [0.7.2] — 2026-10-25
 
 ### Fixed

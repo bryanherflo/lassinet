@@ -275,3 +275,15 @@ def test_mdns_gives_the_name_and_kind_to_enrichment(monkeypatch) -> None:
     out = discovery.enrich(hosts)
     assert out[0]["hostname"] == "Ana-iPhone"
     assert out[0]["kind"] == "phone"
+
+
+def test_enrichment_records_vendor_and_private_mac() -> None:
+    """Context for '?' devices: who made the box, and whether the MAC is real."""
+    dlink = discovery._with_kind({"ip": "10.0.0.5", "hostname": "10.0.0.5",
+                                  "mac": "00:ad:24:17:f5:85"})
+    assert dlink["mac_vendor"] == "D-Link"
+    assert dlink["private_mac"] is False
+    phone = discovery._with_kind({"ip": "10.0.0.6", "hostname": "10.0.0.6",
+                                  "mac": "7a:b6:16:db:2d:0e"})
+    assert phone["mac_vendor"] == ""
+    assert phone["private_mac"] is True

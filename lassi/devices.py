@@ -52,8 +52,7 @@ _NAME_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 # here: guessing "phone" from an Apple OUI would be wrong half the time.
 _OUI: dict[str, str] = {
     # Raspberry Pi -> single-board computer
-    "b8:27:eb": "sbc", "dc:a6:32": "sbc", "e4:5f:01": "sbc", "2c:cf:67": "sbc",
-    # Espressif (ESP32/ESP8266) -> IoT
+    "b8:27:eb": "sbc", "dc:a6:32": "sbc", "e4:5f:01": "sbc", "2c:cf:67": "sbc",    # Espressif (ESP32/ESP8266) -> IoT
     "24:0a:c4": "iot", "24:6f:28": "iot", "30:ae:a4": "iot", "84:f3:eb": "iot",
     "a4:cf:12": "iot", "ac:67:b2": "iot", "dc:4f:22": "iot", "ec:fa:bc": "iot",
     # Sonos -> speaker
@@ -82,6 +81,60 @@ _OUI: dict[str, str] = {
     "fc:67:1f": "iot", "50:8a:06": "iot", "50:8b:b9": "iot", "68:57:2d": "iot",
     "70:89:76": "iot",
 }
+
+# Vendor names for OUIs we are sure about. This is *context* for the tooltip,
+# never a device kind: D-Link builds routers, cameras and switches, so knowing
+# the vendor must not change classify(). The small `_OUI` table above is the
+# subset where the vendor really identifies the kind.
+_VENDORS: dict[str, str] = {
+    "00:ad:24": "D-Link", "48:29:52": "Sagemcom",
+    # Tuya Smart (smart-home OEM)
+    "fc:3c:d7": "Tuya Smart", "4c:a9:19": "Tuya Smart", "a8:80:55": "Tuya Smart",
+    "a8:dd:bc": "Tuya Smart", "fc:67:1f": "Tuya Smart", "50:8a:06": "Tuya Smart",
+    "50:8b:b9": "Tuya Smart", "68:57:2d": "Tuya Smart", "70:89:76": "Tuya Smart",
+    # Raspberry Pi, Sonos, Roku, Synology, QNAP, Nintendo, Philips Hue, Espressif
+    "b8:27:eb": "Raspberry Pi", "dc:a6:32": "Raspberry Pi", "e4:5f:01": "Raspberry Pi",
+    "2c:cf:67": "Raspberry Pi",
+    "78:28:ca": "Sonos", "5c:aa:fd": "Sonos", "b8:e9:37": "Sonos",
+    "b0:a7:37": "Roku",
+    "00:11:32": "Synology", "00:08:9b": "QNAP",
+    "98:b6:e9": "Nintendo", "58:bd:a3": "Nintendo",
+    "00:17:88": "Philips Hue",
+    "24:0a:c4": "Espressif", "24:6f:28": "Espressif", "30:ae:a4": "Espressif",
+    "84:f3:eb": "Espressif", "a4:cf:12": "Espressif", "ac:67:b2": "Espressif",
+    "dc:4f:22": "Espressif", "ec:fa:bc": "Espressif", "8c:aa:b5": "Espressif",
+    "c4:4f:33": "Espressif", "48:3f:da": "Espressif", "60:01:94": "Espressif",
+    "84:0d:8e": "Espressif", "a0:20:a6": "Espressif",
+    # Cameras where the OUI is unambiguous
+    "44:19:b6": "Hikvision", "3c:ef:8c": "Dahua",
+}
+
+
+def is_private_mac(mac: str | None) -> bool:
+    """True for a locally administered MAC (a phone's private Wi-Fi address).
+
+    The second-least-significant bit of the first octet marks an address that
+    software assigned, not the vendor: the OUI then says nothing, so the device
+    cannot be identified from its MAC at all.
+    """
+    text = str(mac or "").strip().lower().replace("-", ":")
+    if not re.match(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$", text):
+        return False
+    try:
+        first = int(text.split(":", 1)[0], 16)
+    except ValueError:
+        return False
+    return bool(first & 0x02) and not bool(first & 0x01)
+
+
+def vendor_for(mac: str | None) -> str:
+    """Company that registered the OUI, when known. Context, never a guess."""
+    text = str(mac or "").strip().lower().replace("-", ":")
+    if not re.match(r"^([0-9a-f]{2}:){5}[0-9a-f]{2}$", text):
+        return ""
+    if is_private_mac(text):
+        return ""                      # a randomized MAC has no vendor
+    return _VENDORS.get(text[:8], "")
 
 # Open ports that identify the *role* of a device on the network. A printer
 # that answers on 9100 (raw print) or 631 (IPP) is a printer whatever the MAC

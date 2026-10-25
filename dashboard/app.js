@@ -770,7 +770,10 @@ function nodeInfoTitle(node, headline) {
   var ports = node.openPorts && node.openPorts.length ? node.openPorts.join(", ") : "\u2014";
   var infra = node.hostRole === "router" || node.hostRole === "external";
   var kind = node.kindLabel ? "\ntype: " + node.kindLabel : "";
-  return headline + kind + "\nMAC: " + (node.mac || "n/a") + "\nports: " + ports +
+  var vendor = node.macVendor ? "\nvendor: " + node.macVendor : "";
+  var mac = node.mac || "n/a";
+  if (node.privateMac) mac += " (private/randomized)";
+  return headline + kind + vendor + "\nMAC: " + mac + "\nports: " + ports +
     (node.lastSeen ? "\nlast seen " + node.lastSeen : "") +
     (infra ? "\ndouble-click to rename" : "\nclick for actions \u00B7 right-click for trust menu \u00B7 double-click to rename");
 }
@@ -850,17 +853,17 @@ function renderTopology(data) {
     var base = { color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : flashing ? 4 : (h.role === "router" || isAttacker || isUnknown ? 3 : 2), font: { color: isBlocked ? "#8b949e" : "#d7dee8", size: 14, face: "Segoe UI", strokeWidth: 3, strokeColor: "#0b0f14", vadjust: 4 }, shadow: { enabled: true, color: isBlocked ? "#f8514966" : flashing ? "#f8514988" : (h.role === "router" ? "#8b5cf688" : (isAttacker ? "#f8514944" : (isUnknown ? "#d2992244" : (isTrusted ? "#3fb95044" : "#00000066")))), size: isBlocked ? 20 : flashing ? 16 : (h.role === "router" ? 18 : (isAttacker ? 14 : (isUnknown ? 12 : 10))), x: 0, y: 3 }, shapeProperties: { useBorderWithImage: true, borderDashes: h.role === "external" ? [4, 4] : false } };
     var headline = isBlocked ? "\u{1F6AB} BLOCKED" : (isAttacker ? "ATTACKER (confirmed)" : isTrusted ? "TRUSTED (marked by user)" : isUnknown ? "SUSPICIOUS / UNKNOWN" : style.label);
     var kindLabel = h.kind ? (KIND_LABELS[h.kind] || "") : "";
-    var title = nodeInfoTitle({ mac: h.mac, openPorts: h.open_ports || [], hostRole: h.role, kindLabel: kindLabel, lastSeen: fmtSeen(h.last_seen) }, headline);
+    var title = nodeInfoTitle({ mac: h.mac, openPorts: h.open_ports || [], hostRole: h.role, kindLabel: kindLabel, lastSeen: fmtSeen(h.last_seen), macVendor: h.mac_vendor, privateMac: h.private_mac }, headline);
     var nodeSize = h.role === "router" ? 27 : h.role === "external" ? 23 : (isAttacker ? 22 : 20);
     var img = glyphIconURI(nodeGlyph(h, displayRole, isAttacker));
     if (!nodes.get(h.ip)) {
-      var nodeData = { id: h.ip, label: nodeLabel(h.hostname, h.ip), title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], lastSeen: h.last_seen, shape: "circularImage", size: nodeSize, image: img, x: pos[h.ip].x, y: pos[h.ip].y };
+      var nodeData = { id: h.ip, label: nodeLabel(h.hostname, h.ip), title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], lastSeen: h.last_seen, macVendor: h.mac_vendor || "", privateMac: !!h.private_mac, shape: "circularImage", size: nodeSize, image: img, x: pos[h.ip].x, y: pos[h.ip].y };
       for (var k in base) nodeData[k] = base[k];
       nodes.add(nodeData);
     } else {
       var label = nodeLabel(h.hostname, h.ip);
       var existing = nodes.get(h.ip);
-      var updateObj = { id: h.ip, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], lastSeen: h.last_seen, title: title, size: nodeSize };
+      var updateObj = { id: h.ip, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], lastSeen: h.last_seen, macVendor: h.mac_vendor || "", privateMac: !!h.private_mac, title: title, size: nodeSize };
       if (existing.label !== label) updateObj.label = label;
       if (existing.image !== img) updateObj.image = img;
       for (var k2 in base) updateObj[k2] = base[k2];
@@ -1154,8 +1157,16 @@ var pickerActive = -1;
 
 function pickerKindLabel(node) {
   if (node.kind && KIND_LABELS[node.kind]) return KIND_LABELS[node.kind];
-  var style = ROLE_STYLE[node.hostRole] || ROLE_STYLE[node.role];
-  return style ? style.label : "";
+  // "workstation" is the role every discovered host gets when nothing else is
+  // known: showing it would claim a finding that was never made. Only roles
+  // that carry information may label a device the sensor could not identify.
+  var role = node.role || node.hostRole;
+  if (role === "router" || role === "external" || role === "trusted"
+      || role === "attacker" || role === "unknown") {
+    var style = ROLE_STYLE[role];
+    return style ? style.label : "";
+  }
+  return "Unknown";
 }
 
 function pickerMatches(node, query) {
@@ -1191,6 +1202,10 @@ function pickerRender() {
       row.setAttribute("role", "option");
       row.dataset.ip = node.id;
       row.dataset.index = String(index);
+      row.title = node.id
+        + (node.macVendor ? " \u00b7 vendor " + node.macVendor : "")
+        + (node.privateMac ? " \u00b7 private/randomized MAC" : "")
+        + (node.openPorts && node.openPorts.length ? " \u00b7 ports " + node.openPorts.join(", ") : "");
       var img = document.createElement("img");
       img.src = node.image || glyphIconURI("unknown");
       img.alt = "";

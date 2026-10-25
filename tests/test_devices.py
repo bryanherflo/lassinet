@@ -58,6 +58,26 @@ def test_a_name_wins_over_the_vendor() -> None:
     assert classify(hostname="iphone-ana", mac="b8:27:eb:aa:bb:cc") == "phone"
 
 
+def test_vendor_and_private_mac_are_context_not_a_kind() -> None:
+    """The tooltip may say 'D-Link'; that must never become 'camera'."""
+    from lassi.devices import is_private_mac, vendor_for
+
+    assert vendor_for("00:ad:24:17:f5:85") == "D-Link"
+    assert vendor_for("fc:3c:d7:aa:bb:cc") == "Tuya Smart"
+    assert vendor_for("48:29:52:43:99:dc") == "Sagemcom"
+    assert vendor_for("aa:bb:cc:dd:ee:ff") == ""
+    assert vendor_for(None) == ""
+    assert is_private_mac("7a:b6:16:db:2d:0e") is True       # phone, private Wi-Fi
+    assert is_private_mac("46:a3:68:72:ba:dc") is True
+    assert is_private_mac("00:ad:24:17:f5:85") is False
+    assert is_private_mac("not-a-mac") is False
+    # A known OUI with the private bit set is not that vendor at all.
+    assert is_private_mac("02:ad:24:17:f5:85") is True
+    assert vendor_for("02:ad:24:17:f5:85") == ""
+    # D-Link makes routers, cameras and switches: the vendor is not a kind.
+    assert classify(mac="00:ad:24:17:f5:85") == ""
+
+
 def test_every_answer_is_a_known_kind() -> None:
     for name in ("iphone", "ipad", "macbook", "pc-x", "raspberrypi", "sonos", "ps5"):
         assert classify(hostname=name) in KINDS

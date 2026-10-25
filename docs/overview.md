@@ -384,7 +384,10 @@ See [ci.md](ci.md) for what the pipeline proves and what it still misses.
   mDNS, no SSDP and no fingerprinted port stays "unknown" (it keeps the `?`
   glyph). Phones that randomize their MAC and sleep most of the time are the
   usual case; renaming one teaches LassiNet what it is and the name is
-  persisted.
+  persisted. The tooltip shows the **OUI vendor** when it is known (D-Link,
+  Sagemcom, Tuya…) and marks locally administered MACs as
+  **private/randomized** — what phones use — but neither is ever turned into a
+  device type on its own.
 * The enrichment is **gentle by design**: one PTR per new device, one mDNS
   packet, one SSDP packet and 12 TCP SYNs, all cached. There is no UDP sweep,
   no banner grabbing and no traffic against hosts outside the swept subnet.

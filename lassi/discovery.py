@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from lassi.devices import classify
+from lassi.devices import classify, is_private_mac, vendor_for
 
 log = logging.getLogger("lassi.discovery")
 
@@ -554,6 +554,11 @@ def _with_kind(host: dict[str, Any], hint: str = "") -> dict[str, Any]:
                     hint=hint)
     if kind:
         host["kind"] = kind
+    # Context for the tooltip: who made the box (when the OUI says so) and
+    # whether the MAC is software-assigned (phones' private address), which is
+    # exactly why "?" devices cannot always be identified.
+    host["mac_vendor"] = vendor_for(host.get("mac"))
+    host["private_mac"] = is_private_mac(host.get("mac"))
     return host
 
 
