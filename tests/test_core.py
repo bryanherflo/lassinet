@@ -254,6 +254,22 @@ def test_syn_ack_is_not_counted_as_a_new_syn() -> None:
     assert _is_syn(0x18) is False         # PSH+ACK
 
 
+def test_own_discovery_probe_is_not_counted_as_an_attack() -> None:
+    """LassiNet's own port fingerprint must not flag the sensor host.
+
+    A burst of 12 probe SYNs from this machine looked exactly like a port scan
+    to the detector (measured: a high port_scan alert with src = this PC).
+    """
+    from lassi.live import _is_own_probe
+
+    own = {"192.168.0.81"}
+    assert _is_own_probe("192.168.0.81", 554, 0x02, own) is True    # our probe SYN
+    assert _is_own_probe("192.168.0.81", 554, 0x12, own) is False   # SYN+ACK
+    assert _is_own_probe("192.168.0.81", 8080, 0x02, own) is False  # not a probe port
+    assert _is_own_probe("192.168.0.50", 554, 0x02, own) is False   # remote scan
+    assert _is_own_probe("192.168.0.81", 554, 0x02, None) is False  # own IP unknown
+
+
 def test_live_capture_records_sniff_failure(monkeypatch) -> None:
     """A dead sniffer must not look like a healthy live sensor."""
     from lassi.live import LiveCapture

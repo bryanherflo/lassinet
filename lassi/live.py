@@ -12,7 +12,7 @@ import time
 from typing import Any
 
 from lassi.devices import classify
-from lassi.discovery import enrich
+from lassi.discovery import PROBE_PORTS, enrich
 
 log = logging.getLogger("lassi.live")
 
@@ -63,6 +63,36 @@ def default_gateway() -> str | None:
 def local_ip() -> str | None:
     """The machine's own LAN address (so the monitoring host also appears)."""
     return _route_for()[1]
+
+
+def _local_addresses() -> set[str]:
+    """Every IPv4 address of this machine (best-effort, empty without scapy)."""
+    try:
+        from scapy.all import get_if_addr, get_if_list  # type: ignore
+        found: set[str] = set()
+        for iface in get_if_list():
+            try:
+                address = str(get_if_addr(iface) or "")
+            except Exception:
+                continue
+            if address and address != "0.0.0.0":
+                found.add(address)
+        return found
+    except Exception:
+        return set()
+
+
+def _is_own_probe(src: str, dport: int, flags: int, own_ips: set[str] | None) -> bool:
+    """True for one of LassiNet's own TCP fingerprint probes.
+
+    The discovery opens a handful of ports on each new device *from this host*.
+    The sniffer sees that burst as a SYN-only flow to many destination ports,
+    the port-scan rule fires, and the operator's own PC is painted as an
+    attacker (measured on a real LAN). Skipping the probe SYN cannot hide a
+    remote scan: the source has to be one of this machine's own addresses.
+    """
+    return bool(own_ips and src in own_ips and int(dport) in PROBE_PORTS
+                and _is_syn(flags))
 
 
 def default_interface() -> str | None:
@@ -244,6 +274,7 @@ class LiveCapture:
         self.error: str | None = None
         self.running = False
         self.thread: Any = None
+        self.own_ips = _local_addresses()
 
     def _on_packet(self, pkt: Any) -> None:
         # One malformed packet must not kill the whole sniffing thread: scapy
@@ -253,6 +284,11 @@ class LiveCapture:
             if IP not in pkt:
                 return
             ip = pkt[IP]
+            if TCP in pkt:
+                probe = pkt[TCP]
+                if _is_own_probe(ip.src, int(probe.dport), int(probe.flags),
+                                 getattr(self, "own_ips", None)):
+                    return
             key = (ip.src, ip.dst)
             f = self.flows.setdefault(key, {
                 "src": ip.src, "dst": ip.dst, "pkts": 0, "bytes": 0,

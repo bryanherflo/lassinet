@@ -55,9 +55,23 @@ const KIND_LABELS = {
   phone: "Phone", tablet: "Tablet", laptop: "Laptop", desktop: "Desktop",
   server: "Server", tv: "TV", console: "Console", printer: "Printer",
   camera: "Camera", speaker: "Speaker", watch: "Watch", nas: "NAS",
-  sbc: "SBC", iot: "Smart device",
+  sbc: "SBC", iot: "Smart device", unknown: "Unknown",
 };
 const LEGEND_KINDS = Object.keys(KIND_LABELS);
+// Short labels for the two-column legend grid; the tooltip keeps the long one.
+const LEGEND_LABELS = { iot: "IoT" };
+
+// Order of the leaves on the map: same family together, unknown last. The
+// grid used to be plain IP order, so cameras sat between two phones and the
+// colours could not form a block the eye can scan.
+const KIND_ORDER = [
+  "camera", "tv", "console", "speaker", "iot", "phone", "tablet", "watch",
+  "laptop", "desktop", "sbc", "server", "nas", "printer",
+];
+function kindRank(kind) {
+  var i = KIND_ORDER.indexOf(kind);
+  return i < 0 ? KIND_ORDER.length : i;
+}
 
 var GLYPH_CACHE = {};
 function glyphIconURI(name) {
@@ -172,7 +186,8 @@ function attackLabel(name) {
 // including an external source that is not on the map yet — can be blocked.
 function isBlockableNode(ip) {
   var node = nodes.get(ip);
-  return !!node && node.hostRole !== "router" && node.hostRole !== "external";
+  return !!node && !protectedIps.has(ip)
+    && node.hostRole !== "router" && node.hostRole !== "external";
 }
 function isIpLiteral(ip) {
   // Valid IPv4 (each octet <= 255) or a colon-shaped IPv6 literal. Used before
@@ -188,6 +203,7 @@ function canBlockIp(ip) {
   if (ip === "0.0.0.0" || ip === "::") return false;      // unspecified
   if (/^127\./.test(ip) || ip === "::1") return false;    // loopback
   if (trustedDevices.has(ip)) return false;
+  if (protectedIps.has(ip)) return false;                   // infra / this host
   var node = nodes.get(ip);
   return !node || (node.hostRole !== "router" && node.hostRole !== "external");
 }
@@ -209,6 +225,7 @@ var network = new vis.Network(
 
 var confirmedAttackers = new Set();
 var trustedDevices = new Set();
+var protectedIps = new Set();   // infra/sensor: never blockable, never an attacker
 var suspiciousDevices = new Set();
 
 // The trust mark lives on the server: a trusted device is never blocked there,
@@ -225,12 +242,18 @@ function syncTrusted(data) {
 
 var ROLE_ORDER = { server: 0, workstation: 1, iot: 2, printer: 3, attacker: 4, unknown: 5, trusted: 6 };
 var layoutKey = "";
+var kindFilter = null;   // "camera", "unknown", ... or null (show everything)
+var lastData = null;     // last snapshot, so a legend click re-renders immediately
 
 function computeTreeLayout(data) {
   var router = data.nodes.find(function(h) { return h.role === "router"; });
   var ext = data.nodes.find(function(h) { return h.role === "external"; });
   var leaves = data.nodes.filter(function(h) { return h.role !== "router" && h.role !== "external"; })
-    .sort(function(a, b) { return (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) || a.ip.localeCompare(b.ip); });
+    .sort(function(a, b) {
+      return (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9)
+        || kindRank(a.kind) - kindRank(b.kind)
+        || a.ip.localeCompare(b.ip);
+    });
   var pos = {};
   if (ext) pos[ext.ip] = { x: 0, y: -220 };
   if (router) pos[router.ip] = { x: 0, y: 0 };
@@ -285,11 +308,25 @@ function alertKey(a) {
 // On the first snapshot, keep known attacker sources as attackers instead of
 // demoting them to "unknown" until the next alert arrives.
 function seedConfirmedAttackers(data) {
+  // Infrastructure and the sensor itself can never be blocked, so an alert
+  // from one of them is a false positive far more often than a real attack
+  // (our own discovery probes did exactly this). The alert still appears in
+  // the feed and in the log; only the red "attacker" ring is suppressed.
+  var infra = new Set(data.protected || []);
+  (data.nodes || []).forEach(function(n) {
+    if (n.role === "router" || n.role === "external") infra.add(n.ip);
+  });
   data.alerts.forEach(function(a) {
-    if (a.src && (a.severity === "critical" || a.severity === "high") && !trustedDevices.has(a.src)) {
+    if (a.src && (a.severity === "critical" || a.severity === "high")
+        && !trustedDevices.has(a.src) && !infra.has(a.src)) {
       confirmedAttackers.add(a.src);
     }
   });
+}
+
+function syncProtected(data) {
+  if (!data || !Array.isArray(data.protected)) return;
+  protectedIps = new Set(data.protected);
 }
 
 function newestSevereAlert(data) {
@@ -857,13 +894,28 @@ window.addEventListener("keydown", function(ev) {
 function renderTopology(data) {
   var now = Date.now(); fxSync(data); updateFlashes(data, now);
   syncTrusted(data);
+  syncProtected(data);
   if (attackBannerEl && attackBannerEl.dataset.src && blockedHosts.has(attackBannerEl.dataset.src)) hideAttackBanner();
   var pos = computeTreeLayout(data);
   // Role changes (e.g. a workstation becoming the gateway) change the sorted
   // leaf order, so include the role in the layout key as well as the IPs.
-  var key = data.nodes.map(function(h) { return h.ip + ":" + h.role; }).sort().join(",") +
+  var key = data.nodes.map(function(h) { return h.ip + ":" + h.role + ":" + (h.kind || ""); }).sort().join(",") +
     "|" + Object.keys(pos).sort().join(",");
   var layoutChanged = key !== layoutKey;
+  // Type filter (click a row in the legend): infrastructure always stays
+  // visible; everything else outside the chosen type is dimmed, not removed,
+  // so the map keeps its shape and the context is still there.
+  var kindOf = new Map();
+  for (var k0 = 0; k0 < data.nodes.length; k0++) {
+    var hk = data.nodes[k0];
+    kindOf.set(hk.ip, hk.role === "router" ? "router"
+      : hk.role === "external" ? "external" : (hk.kind || "unknown"));
+  }
+  function typeVisible(ip) {
+    if (!kindFilter) return true;
+    var kind = kindOf.get(ip);
+    return kind === "router" || kind === "external" || kind === kindFilter;
+  }
   var seen = new Set();
   for (var i = 0; i < data.nodes.length; i++) {
     var h = data.nodes[i];
@@ -886,7 +938,7 @@ function renderTopology(data) {
       : (h.role === "router" || h.role === "external") ? style.color
       : (kindColor || KIND_COLORS.unknown);
     var nodeColor = { background: borderColor, border: borderColor, highlight: { background: borderColor, border: "#ffffff" }, hover: { background: borderColor, border: "#ffffff" } };
-    var base = { color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : flashing ? 4 : (h.role === "router" || isAttacker || isUnknown ? 3 : 2), font: { color: isBlocked ? "#8b949e" : "#d7dee8", size: 12, face: "Segoe UI", strokeWidth: 3, strokeColor: "#0b0f14", vadjust: 4 }, shadow: { enabled: true, color: borderColor + (isBlocked || flashing ? "55" : "44"), size: isBlocked ? 20 : flashing ? 16 : (h.role === "router" ? 18 : (isAttacker ? 14 : (isUnknown ? 12 : 10))), x: 0, y: 3 }, shapeProperties: { useBorderWithImage: true, borderDashes: h.role === "external" ? [4, 4] : false } };
+    var base = { color: nodeColor, opacity: typeVisible(h.ip) ? (isBlocked ? 0.5 : 1) : 0.12, borderWidth: isBlocked ? 3 : flashing ? 4 : (h.role === "router" || isAttacker || isUnknown ? 3 : 2), font: { color: isBlocked ? "#8b949e" : "#d7dee8", size: 12, face: "Segoe UI", strokeWidth: 3, strokeColor: "#0b0f14", vadjust: 4 }, shadow: { enabled: true, color: borderColor + (isBlocked || flashing ? "55" : "44"), size: isBlocked ? 20 : flashing ? 16 : (h.role === "router" ? 18 : (isAttacker ? 14 : (isUnknown ? 12 : 10))), x: 0, y: 3 }, shapeProperties: { useBorderWithImage: true, borderDashes: h.role === "external" ? [4, 4] : false } };
     var headline = isBlocked ? "\u{1F6AB} BLOCKED" : (isAttacker ? "ATTACKER (confirmed)" : isTrusted ? "TRUSTED (marked by user)" : isUnknown ? "SUSPICIOUS / UNKNOWN" : style.label);
     var kindLabel = h.kind ? (KIND_LABELS[h.kind] || "") : "";
     if (displayRole === "workstation") {
@@ -914,7 +966,31 @@ function renderTopology(data) {
     seen.add(h.ip);
   } for (var ni = 0; ni < nodes.get().length; ni++) if (!seen.has(nodes.get()[ni].id)) nodes.remove(nodes.get()[ni].id);
   if (layoutChanged) { layoutKey = key; for (var id in pos) if (nodes.get(id)) network.moveNode(id, pos[id].x, pos[id].y); fitMapView(true); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 560); }
-  var seenEdges = new Set(); for (var ei = 0; ei < data.edges.length; ei++) { var e = data.edges[ei]; var isLink = e.kind === "link"; var id = (isLink ? "L|" : "T|") + e.from + "|" + e.to; if (!edges.get(id)) { edges.add({ id: id, from: e.from, to: e.to, dashes: !isLink, width: isLink ? 2 : 1.4, arrows: isLink ? "" : { to: { enabled: true, scaleFactor: 0.5, type: "arrow" } }, color: { color: isLink ? "#3d444d" : "#6e7681", highlight: "#58a6ff", hover: "#58a6ff" }, smooth: isLink ? false : { enabled: true, type: "continuous", roundness: 0.3 }, selectionWidth: 3 }); } seenEdges.add(id); } edges.get().forEach(function(e) { if (!seenEdges.has(e.id)) edges.remove(e.id); }); }
+  var seenEdges = new Set();
+  for (var ei = 0; ei < data.edges.length; ei++) {
+    var e = data.edges[ei];
+    var isLink = e.kind === "link";
+    var id = (isLink ? "L|" : "T|") + e.from + "|" + e.to;
+    var active = typeVisible(e.from) && typeVisible(e.to);
+    var edgeColor = active ? (isLink ? "#3d444d" : "#6e7681") : "#252a31";
+    var edgeWidth = (isLink ? 2 : 1.4) * (active ? 1 : 0.7);
+    if (!edges.get(id)) {
+      edges.add({ id: id, from: e.from, to: e.to, dashes: !isLink, width: edgeWidth,
+                  arrows: isLink ? "" : { to: { enabled: true, scaleFactor: 0.5, type: "arrow" } },
+                  color: { color: edgeColor, highlight: "#58a6ff", hover: "#58a6ff" },
+                  smooth: isLink ? false : { enabled: true, type: "continuous", roundness: 0.3 },
+                  selectionWidth: 3 });
+    } else {
+      var existingEdge = edges.get(id);
+      if (existingEdge.color.color !== edgeColor || existingEdge.width !== edgeWidth) {
+        edges.update({ id: id, width: edgeWidth,
+                       color: { color: edgeColor, highlight: "#58a6ff", hover: "#58a6ff" } });
+      }
+    }
+    seenEdges.add(id);
+  }
+  edges.get().forEach(function(edge) { if (!seenEdges.has(edge.id)) edges.remove(edge.id); });
+}
 
 
 function fmtAlert(a) {
@@ -1168,7 +1244,7 @@ function setConnStatus(state) {
   el.textContent = state === "live" ? "live" : state === "polling" ? "polling" : "connecting\u2026";
   el.title = state === "live" ? "Live \u2014 WebSocket stream connected" : state === "polling" ? "WebSocket unavailable \u2014 refreshing over /api/state" : "Connecting to the live stream\u2026";
 }
-function apply(data) { renderTopology(data); renderFeeds(data); renderLog(data); renderStats(data); updateSelectionBar(); }
+function apply(data) { lastData = data; renderTopology(data); renderFeeds(data); renderLog(data); renderStats(data); updateSelectionBar(); updateLegend(data); }
 // The legend lists the icon set once, built from the same glyph map the map
 // uses (so the SVG is never duplicated in the HTML).
 function buildLegendIcons() {
@@ -1178,6 +1254,10 @@ function buildLegendIcons() {
   LEGEND_KINDS.forEach(function(kind) {
     var row = document.createElement("span");
     row.className = "lg";
+    row.dataset.kind = kind;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-pressed", "false");
+    row.tabIndex = 0;
     var dot = document.createElement("span");
     dot.className = "kind-dot";
     dot.style.background = KIND_COLORS[kind] || "#6e7681";
@@ -1188,11 +1268,49 @@ function buildLegendIcons() {
     img.width = 18;
     img.height = 18;
     var label = document.createElement("span");
-    label.textContent = KIND_LABELS[kind] || kind;
+    label.className = "lg-label";
+    label.textContent = LEGEND_LABELS[kind] || KIND_LABELS[kind] || kind;
+    var count = document.createElement("span");
+    count.className = "lg-count";
     row.appendChild(dot);
     row.appendChild(img);
     row.appendChild(label);
+    row.appendChild(count);
+    row.addEventListener("click", function() { toggleKindFilter(kind); });
+    row.addEventListener("keydown", function(ev) {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggleKindFilter(kind); }
+    });
     box.appendChild(row);
+  });
+}
+
+// Click a type to isolate it: matching devices stay bright, the rest dim to
+// context. Linux/POSIX style: clicking the active row again clears it.
+function toggleKindFilter(kind) {
+  kindFilter = kindFilter === kind ? null : kind;
+  if (lastData) {
+    renderTopology(lastData);
+    updateLegend(lastData);
+  }
+}
+
+function updateLegend(data) {
+  var counts = {};
+  ((data && data.nodes) || []).forEach(function(h) {
+    var kind = h.role === "router" ? "router"
+      : h.role === "external" ? "external" : (h.kind || "unknown");
+    counts[kind] = (counts[kind] || 0) + 1;
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("#legend-icons .lg"), function(row) {
+    var kind = row.dataset.kind;
+    var count = counts[kind] || 0;
+    var badge = row.querySelector(".lg-count");
+    if (badge) badge.textContent = count ? String(count) : "";
+    var on = kindFilter === kind;
+    row.classList.toggle("active", on);
+    row.setAttribute("aria-pressed", on ? "true" : "false");
+    row.title = (on ? "Showing only " : "Show only ")
+      + (KIND_LABELS[kind] || kind) + " (" + count + ")";
   });
 }
 
@@ -1297,6 +1415,10 @@ function pickerChoose(ip) {
     toast("That device is no longer on the map", "error");
     if (document.activeElement === pickerInput) pickerRender(); else pickerClose();
     return;
+  }
+  if (kindFilter) {                     // choosing a device always shows it
+    kindFilter = null;
+    if (lastData) { renderTopology(lastData); updateLegend(lastData); }
   }
   selectedNodeIp = ip;
   network.selectNodes([ip]);

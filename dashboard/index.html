@@ -9,8 +9,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.33">
-<script src="vendor/vis-network.min.js?v=3.33"></script>
+<link rel="stylesheet" href="style.css?v=3.38">
+<script src="vendor/vis-network.min.js?v=3.38"></script>
 </head>
 <body>
 <header>
@@ -73,7 +73,8 @@
         <div class="li suspicious"><span class="dot">?</span><span>Suspicious</span></div>
         <div class="li blocked" title="Firewall block: traffic from this IP is dropped"><span class="dot"></span><span>Blocked</span></div>
         <div class="legend-sep"></div>
-        <div class="legend-sub">Device type &middot; ring colour</div>
+        <div class="legend-sub">Device type</div>
+        <div class="legend-hint">click to isolate &middot; click again to clear</div>
         <div class="legend-icons" id="legend-icons"></div>
         <div class="legend-sep"></div>
         <div class="li flow"><span class="dot"></span><span>Normal flow</span></div>
@@ -156,6 +157,6 @@
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="app.js?v=3.33"></script>
+<script src="app.js?v=3.38"></script>
 </body>
 </html>

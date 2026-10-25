@@ -2,6 +2,33 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.9.1] — 2026-10-25
+
+### Fixed
+- **The sensor flagged itself as an attacker.** The discovery probes a dozen ports from this
+  machine to identify a new device; the sniffer saw that burst as a SYN-only flow to many
+  destination ports, the port-scan rule fired, and the operator's own PC got a high
+  `port_scan` alert and a red attacker ring on the map (reproduced on the real LAN). The
+  capture now ignores pure SYNs sent **from one of this machine's own addresses** to a
+  fingerprint port; remote scans are untouched (the source must be us).
+- **Protected sources are never painted as attackers**: the sensor, the gateway and the
+  Internet node can never be blocked, so an alert from them no longer turns the node red.
+  The alert stays in the feed and in the log — only the ring is suppressed.
+- **No Block button for protected addresses** (the alert used to offer one that the server
+  rejected). `canBlockIp()`/`isBlockableNode()` now know the `protected` list.
+
+## [0.9.0] — 2026-10-25
+
+### Added
+- **The map groups devices by type**: leaves are laid out by device family (cameras together,
+  TVs together, phones together, unknown last) instead of raw IP order, so the ring colours
+  form blocks the eye can scan. The layout key includes the type, so a device that is
+  identified later moves to its group.
+- **The legend filters the map**: each type row is a button that shows the current count;
+  clicking it isolates that type (everything else dims, infrastructure and the Internet stay
+  visible), clicking it again clears the filter. Choosing a device from the picker clears the
+  filter so the chosen node is always visible. Keyboard accessible (Tab + Enter/Space).
+
 ## [0.8.1] — 2026-10-25
 
 ### Changed
