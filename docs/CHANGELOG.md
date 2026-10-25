@@ -2,6 +2,22 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.6.1] — 2026-10-25
+
+### Added
+- **Download the audit log**: `GET /api/logs/export` streams the complete JSONL log with a
+  timestamped filename, and the System log header has an **Export** button. The feed is a
+  view; this is the record, repeats included (`collapsed: true`).
+- **The threat feed survives a restart**: at startup the last 60 cards from the last 24 h are
+  replayed from the log tail (`State.restore_recent_alerts`), rebuilding the same cards and
+  `×N` counters (a `collapsed: true` line bumps the card before it). Alerts carry their mode
+  (`demo (simulated)` / `live (scapy)`) and only the current mode is replayed, so a demo
+  exfiltration can never appear as a live detection; week-old detections are not resurrected
+  under a feed labelled "recent", and replay never runs twice.
+
+### Changed
+- The startup audit line now records how many cards were restored (`restored_alerts`).
+
 ## [0.6.0] — 2026-10-24
 
 ### Added

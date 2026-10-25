@@ -187,6 +187,12 @@ DEVICE_TTL = _env_seconds("LASSI_DEVICE_TTL", 1800)
 ALERT_DEDUPE_WINDOW = _env_seconds("LASSI_ALERT_DEDUPE", 120)
 
 
+def _alert_key(alert: dict[str, Any]) -> tuple[str, ...]:
+    """Identity of one detection, used for de-duplication and log replay."""
+    return tuple(str(alert.get(field) or "")
+                 for field in ("attack", "src", "dst", "severity", "engine"))
+
+
 # ---- shared state -----------------------------------------------------------
 class State:
     def __init__(self) -> None:
@@ -306,8 +312,8 @@ class State:
         """
         alert["time"] = alert.get("time") or time.strftime("%H:%M:%S")
         alert["count"] = int(alert.get("count") or 1)
-        key = tuple(str(alert.get(field) or "")
-                    for field in ("attack", "src", "dst", "severity", "engine"))
+        alert.setdefault("mode", self.mode)    # demo history must never look live
+        key = _alert_key(alert)
         collapsed = False
         with self._lock:
             now = time.time()
@@ -323,6 +329,79 @@ class State:
             self._last_alert_key = key
             self._last_alert_at = now
         audit({"event": "alert", **alert, "collapsed": collapsed})
+
+    def restore_recent_alerts(self, limit: int = 60, max_age: float = 86400.0) -> int:
+        """Rebuild the threat feed from the tail of the JSONL log.
+
+        The dashboard used to start with an empty feed after every restart even
+        though the log had the history. The file is append-only and
+        chronological and every repeat is written with `collapsed: true`, so
+        replaying it rebuilds the same cards the operator saw, counters
+        included: a collapsed line bumps the card before it, any other alert
+        opens a new card. Only alerts tagged with the **current mode** are
+        replayed (a demo exfiltration must never appear as a live one), only
+        from the last `max_age` seconds (a feed labelled "recent" must not
+        resurface week-old detections), and only when the live feed is still
+        empty.
+        """
+        if limit <= 0:
+            return 0
+        with self._lock:
+            if self.alerts:
+                return 0
+        try:
+            with EVENTS_LOG_PATH.open("rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                start = max(0, size - 1_000_000)   # a busy sensor writes a lot
+                fh.seek(start)
+                raw = fh.read().decode("utf-8", "replace")
+        except OSError:
+            return 0
+        lines = raw.splitlines()
+        if start > 0 and lines:
+            lines = lines[1:]                      # first line may be cut in half
+        cutoff = time.time() - max_age if max_age > 0 else 0.0
+        cards: list[dict[str, Any]] = []
+        last_ts = ""
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                continue                           # one bad line hides nothing
+            if not isinstance(event, dict) or event.get("event") != "alert":
+                continue
+            if str(event.get("mode") or "") != str(self.mode):
+                continue                           # never mix demo history into a live feed
+            try:
+                event_at = datetime.fromisoformat(str(event.get("ts") or "")).timestamp()
+            except (TypeError, ValueError):
+                event_at = time.time()
+            if cutoff and event_at < cutoff:
+                continue
+            alert = {k: v for k, v in event.items()
+                     if k not in ("event", "ts", "collapsed")}
+            alert["count"] = int(alert.get("count") or 1)
+            alert.setdefault("time", str(event.get("ts") or "")[11:19])
+            last_ts = str(event.get("ts") or last_ts)
+            if event.get("collapsed") and cards and _alert_key(cards[0]) == _alert_key(alert):
+                cards[0]["count"] = alert["count"]
+                cards[0]["time"] = alert["time"]
+            else:
+                cards.insert(0, alert)
+                if len(cards) > limit:
+                    cards.pop()
+        with self._lock:
+            self.alerts = deque(cards, maxlen=200)
+            if cards:
+                self._last_alert_key = _alert_key(cards[0])
+                try:
+                    self._last_alert_at = datetime.fromisoformat(last_ts).timestamp()
+                except (TypeError, ValueError):
+                    self._last_alert_at = time.time()
+        return len(cards)
 
     def tick_rate(self, interval: float = 2.0) -> None:
         """Publish flows/s for the last engine interval, then reset the window."""

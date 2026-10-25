@@ -26,8 +26,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from datetime import datetime
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -566,13 +568,17 @@ async def lifespan(app: FastAPI):
         if AUTO_BLOCK_SCOPE == "external":
             log.info("auto-block scope is 'external': only public sources are blocked "
                      "automatically, LAN addresses need a manual block")
+    restored = state.restore_recent_alerts()
+    if restored:
+        log.info("restored %d recent alert(s) from the event log", restored)
     start_engine(source)
     log.info("LassiNet running in %s on %s:%d", mode_label,
              getattr(app.state, "host", HOST), getattr(app.state, "port", PORT))
     audit({"event": "startup", "mode": mode_label,
            "requested_mode": MODE,
            "firewall": fw.provider,
-           "model": detector.model is not None})
+           "model": detector.model is not None,
+           "restored_alerts": restored})
     yield
 
 
@@ -720,6 +726,29 @@ def get_logs(limit: int = 50) -> dict:
     except Exception:
         log.exception("could not read the event log")
         return {"events": []}
+
+
+@app.get("/api/logs/export", response_model=None)
+def export_logs() -> FileResponse | JSONResponse:
+    """Download the complete JSONL audit log.
+
+    The dashboard feed is a view; this is the record: one line per detection
+    (repeats included, `collapsed: true`), block, unblock and startup. Served
+    straight from disk so a long-running sensor does not load the file into
+    memory, and with a timestamped filename so two downloads never overwrite
+    each other.
+    """
+    from lassi.state import EVENTS_LOG_PATH
+    try:
+        if not EVENTS_LOG_PATH.exists() or EVENTS_LOG_PATH.stat().st_size == 0:
+            return JSONResponse({"ok": False, "error": "the event log is empty"},
+                                status_code=404)
+    except OSError:
+        return JSONResponse({"ok": False, "error": "the event log is not readable"},
+                            status_code=404)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return FileResponse(EVENTS_LOG_PATH, media_type="application/x-ndjson",
+                        filename=f"lassinet-events-{stamp}.jsonl")
 
 
 @app.post("/api/firewall/block")

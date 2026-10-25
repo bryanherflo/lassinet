@@ -270,7 +270,10 @@ the infrastructure:
   `LASSI_ALERT_DEDUPE` share one card with a `×N` counter, while the JSONL log
   keeps a line per detection), *Firewall rules* (active
   blocks only, with an *Unblock* button) and *System log* (the full event
-  stream).
+  stream). The log header has an **Export** link that downloads the complete
+  JSONL file (one line per detection, block, unblock and startup), and the
+  feed is replayed from that log at startup, so a restart no longer shows an
+  empty threats panel.
 * **Badges**: operating mode (`live (scapy)` / `demo (simulated)`), stream
   state (WebSocket `live` → `polling` fallback), detection engine and the
   metrics of the model that is actually loaded.
@@ -295,6 +298,7 @@ the infrastructure:
 | `GET /health` | Liveness: mode, model loaded, firewall provider, flows, capture state and error |
 | `GET /api/state` | Full snapshot: nodes, edges, alerts, rules, traffic, statistics, trusted/protected lists |
 | `GET /api/logs?limit=N` | Tail of the local JSONL event log (bounded to the last megabyte) |
+| `GET /api/logs/export` | Download the complete JSONL event log with a timestamped filename (`application/x-ndjson`) |
 | `POST /api/firewall/block` | Block a source (`{"ip": "...", "reason": "..."}`) |
 | `POST /api/firewall/unblock` | Remove the block |
 | `POST /api/devices/rename` | Rename a device (persisted) |

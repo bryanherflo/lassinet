@@ -1199,6 +1199,7 @@ def test_repeated_detections_share_one_card(monkeypatch, tmp_path) -> None:
     state.add_alert(dict(alert, time="12:00:10"))
     assert len(state.alerts) == 1
     assert state.alerts[0]["count"] == 3
+    assert state.alerts[0]["mode"] == "demo"      # tagged, so restore can filter
     assert state.alerts[0]["time"] == "12:00:10"   # shows the latest sighting
     state.add_alert(dict(alert, src="10.0.0.10", time="12:00:12"))
     assert [a["src"] for a in state.alerts] == ["10.0.0.10", "10.0.0.9"]
@@ -1238,4 +1239,47 @@ def test_alert_dedupe_expires_and_can_be_disabled(monkeypatch) -> None:
     off.add_alert(dict(alert))
     off.add_alert(dict(alert))
     assert len(off.alerts) == 2                   # 0 keeps every detection
+
+
+def test_recent_alerts_are_restored_from_the_log(monkeypatch, tmp_path) -> None:
+    """A restart used to wipe the threat feed even though the log had it."""
+    import json
+    from datetime import datetime, timedelta
+
+    import lassi.state as st
+
+    now = datetime.now()
+
+    def line(minutes_ago, attack, src, dst, engine, count, collapsed, mode="demo"):
+        return json.dumps({"event": "alert",
+                           "ts": (now - timedelta(minutes=minutes_ago)).isoformat(timespec="seconds"),
+                           "attack": attack, "severity": "high", "src": src, "dst": dst,
+                           "engine": engine, "confidence": 0.9, "count": count,
+                           "collapsed": collapsed, "mode": mode})
+
+    log = tmp_path / "events.jsonl"
+    log.write_text("\n".join([
+        line(30, "exfiltration", "10.0.0.9", "203.0.113.5", "ml+rules", 1, False),
+        json.dumps({"event": "block", "ts": now.isoformat(), "ip": "10.0.0.9"}),
+        line(29, "exfiltration", "10.0.0.9", "203.0.113.5", "ml+rules", 2, True),
+        line(20, "ddos", "10.0.0.7", "10.0.0.2", "ml", 1, False),
+        line(10, "brute_force", "10.0.0.1", "10.0.0.2", "ml", 1, False,
+             mode="live (scapy)"),              # another mode: never mixed in
+        line(60 * 24 * 3, "port_scan", "10.0.0.6", "10.0.0.2", "rules", 1, False),
+        "not json at all",
+    ]) + "\n", encoding="utf-8")
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", log)
+    state = st.State()
+    assert state.restore_recent_alerts(limit=60) == 2
+    assert [a["attack"] for a in state.alerts] == ["ddos", "exfiltration"]
+    assert state.alerts[1]["count"] == 2          # the collapsed line bumped it
+    assert state.alerts[1]["time"] == (now - timedelta(minutes=29)).strftime("%H:%M:%S")
+    assert state.restore_recent_alerts(limit=60) == 0   # never twice
+
+
+def test_restore_without_a_log_is_a_noop(monkeypatch, tmp_path) -> None:
+    import lassi.state as st
+
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", tmp_path / "missing.jsonl")
+    assert st.State().restore_recent_alerts() == 0
 

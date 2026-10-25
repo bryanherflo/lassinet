@@ -545,3 +545,28 @@ def test_rename_keeps_the_port_based_icon(client: TestClient) -> None:
     finally:
         lassi_app.state.hosts.pop(ip, None)
 
+
+def test_event_log_export(client: TestClient, monkeypatch, tmp_path) -> None:
+    """The dashboard feed is a view; this endpoint serves the record."""
+    import lassi.state as st
+
+    log = tmp_path / "events.jsonl"
+    log.write_text('{"event": "alert", "src": "1.2.3.4"}\n', encoding="utf-8")
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", log)
+    res = client.get("/api/logs/export")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("application/x-ndjson")
+    assert "attachment" in res.headers["content-disposition"]
+    assert "lassinet-events-" in res.headers["content-disposition"]
+    assert "1.2.3.4" in res.text
+
+
+def test_event_log_export_rejects_an_empty_log(client: TestClient, monkeypatch,
+                                               tmp_path) -> None:
+    import lassi.state as st
+
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", tmp_path / "nothing.jsonl")
+    res = client.get("/api/logs/export")
+    assert res.status_code == 404
+    assert res.json()["ok"] is False
+
