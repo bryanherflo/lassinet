@@ -29,7 +29,7 @@ from typing import Any
 from datetime import datetime
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -728,27 +728,48 @@ def get_logs(limit: int = 50) -> dict:
         return {"events": []}
 
 
+def _iter_log_files(paths: list[Path]):
+    """Stream the log files as one body: archives first (oldest), then active."""
+    for path in paths:
+        try:
+            with path.open("rb") as fh:
+                while True:
+                    chunk = fh.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+        except OSError:
+            continue
+
+
 @app.get("/api/logs/export", response_model=None)
-def export_logs() -> FileResponse | JSONResponse:
-    """Download the complete JSONL audit log.
+def export_logs() -> StreamingResponse | JSONResponse:
+    """Download the complete JSONL audit log, rotated archives included.
 
     The dashboard feed is a view; this is the record: one line per detection
-    (repeats included, `collapsed: true`), block, unblock and startup. Served
-    straight from disk so a long-running sensor does not load the file into
-    memory, and with a timestamped filename so two downloads never overwrite
-    each other.
+    (repeats included, `collapsed: true`), block, unblock and startup. The
+    active file and every kept archive are concatenated in chronological
+    order and streamed, so a long-running sensor with a rotated log downloads
+    the whole history instead of silently getting only the newest file.
     """
-    from lassi.state import EVENTS_LOG_PATH
-    try:
-        if not EVENTS_LOG_PATH.exists() or EVENTS_LOG_PATH.stat().st_size == 0:
-            return JSONResponse({"ok": False, "error": "the event log is empty"},
-                                status_code=404)
-    except OSError:
-        return JSONResponse({"ok": False, "error": "the event log is not readable"},
+    from lassi.state import log_export_files
+    files = log_export_files()
+    total = 0
+    for path in files:
+        try:
+            total += path.stat().st_size
+        except OSError:
+            continue
+    if total <= 0:
+        return JSONResponse({"ok": False, "error": "the event log is empty"},
                             status_code=404)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return FileResponse(EVENTS_LOG_PATH, media_type="application/x-ndjson",
-                        filename=f"lassinet-events-{stamp}.jsonl")
+    filename = f"lassinet-events-{stamp}.jsonl"
+    return StreamingResponse(
+        _iter_log_files(files),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/api/firewall/block")

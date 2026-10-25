@@ -190,8 +190,8 @@ the platform is never "dead" — the badge says which engine produced each alert
   firewall GUI), the operation succeeds instead of leaving the dashboard
   stuck on "still blocked".
 * Surviving rules are read back after a restart (`active_blocks()`) for
-  nftables and Windows Firewall, so a restart neither hides nor duplicates
-  blocks.
+  nftables, Windows Firewall and OPNsense (the alias is listed over its API),
+  so a restart neither hides nor duplicates blocks.
 
 ### 4.2 Provider notes
 
@@ -298,7 +298,7 @@ the infrastructure:
 | `GET /health` | Liveness: mode, model loaded, firewall provider, flows, capture state and error |
 | `GET /api/state` | Full snapshot: nodes, edges, alerts, rules, traffic, statistics, trusted/protected lists |
 | `GET /api/logs?limit=N` | Tail of the local JSONL event log (bounded to the last megabyte) |
-| `GET /api/logs/export` | Download the complete JSONL event log with a timestamped filename (`application/x-ndjson`) |
+| `GET /api/logs/export` | Download the complete JSONL event log with a timestamped filename (`application/x-ndjson`); rotated archives are concatenated in order |
 | `POST /api/firewall/block` | Block a source (`{"ip": "...", "reason": "..."}`) |
 | `POST /api/firewall/unblock` | Remove the block |
 | `POST /api/devices/rename` | Rename a device (persisted) |
@@ -396,3 +396,9 @@ See [ci.md](ci.md) for what the pipeline proves and what it still misses.
   that share attack, source, destination, severity and engine inside the
   window. A detection that changes any of those is a new card, and the JSONL
   log still records every single one — the counter never hides history.
+* The log is **bounded on purpose**: it rotates at `LASSI_LOG_MAX_BYTES`
+  (10 MB) and keeps the newest `LASSI_LOG_KEEP` archives (5). Older archives
+  are deleted, so on a very busy sensor the oldest history eventually goes
+  away; raise the keep count (or set it to `0` for "never delete") if you need
+  it for an audit. The Export button always downloads everything that is
+  still on disk.

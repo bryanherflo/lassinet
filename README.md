@@ -94,6 +94,8 @@ The badge at the top right of the map shows the live stream state: `live` while 
 | `LASSI_DISCOVERY_INTERVAL` | seconds | `30` | how often live mode refreshes the ARP topology (`0` = every engine tick) |
 | `LASSI_DEVICE_TTL` | seconds | `1800` | a LAN device not seen for this long leaves the map (gateway, blocked and trusted devices stay); `0` keeps everything forever |
 | `LASSI_ALERT_DEDUPE` | seconds | `120` | identical detections (attack, source, destination, severity, engine) inside this window share one card with a `×N` counter; `0` shows every one |
+| `LASSI_LOG_MAX_BYTES` | bytes | `10485760` (10 MB) | rotate the event log when the active file grows past this size (`0` = never rotate) |
+| `LASSI_LOG_KEEP` | int | `5` | rotated archives kept next to the active log (`0` = keep all) |
 | `LASSI_DEMO_NET` | CIDR | `10.0.0.0/24` | base subnet for the simulated demo network - change it and every demo device/attack story moves to that addressing |
 | `LASSI_IFACE` | interface name | *default route* | pin the sniffing interface; by default LassiNet uses the NIC of the default route (not the first adapter) |
 | `LASSI_LOGFILE` | path | `logs/events.jsonl` | local JSONL event log: every alert, block and startup appended as one line |

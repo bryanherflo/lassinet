@@ -2,6 +2,28 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.7.0] — 2026-10-25
+
+### Added
+- **The event log rotates**: once the active file passes `LASSI_LOG_MAX_BYTES` (10 MB) it is
+  moved to `events-archive/events-<stamp>.jsonl` between two appends (no line is ever cut or
+  lost) and the newest `LASSI_LOG_KEEP` archives are kept (5; `0` keeps them all). A sensor
+  left running for months no longer grows one unbounded file.
+- **The export follows the archives**: `GET /api/logs/export` concatenates every kept archive
+  and the active file in chronological order and streams them, so downloading the record
+  never silently returns only the newest file.
+- **The threat feed survives a rotation too**: startup replay reads the newest archive plus
+  the active file, so a rotation between the last detection and the restart does not empty
+  the panel.
+- **OPNsense blocks are read back after a restart**: `active_blocks()` now lists the
+  configured alias (`GET /api/firewall/alias_util/list/<alias>`) instead of returning None,
+  so the dashboard shows — and can unblock — rules that are still in the alias. The parser
+  accepts the shapes current and older builds return and ignores anything that is not an IP.
+
+### Changed
+- README and `.env.example` document `LASSI_LOG_MAX_BYTES` and `LASSI_LOG_KEEP`;
+  `docs/overview.md` documents rotation and what happens to archives beyond the keep limit.
+
 ## [0.6.1] — 2026-10-25
 
 ### Added

@@ -547,9 +547,14 @@ def test_rename_keeps_the_port_based_icon(client: TestClient) -> None:
 
 
 def test_event_log_export(client: TestClient, monkeypatch, tmp_path) -> None:
-    """The dashboard feed is a view; this endpoint serves the record."""
+    """The dashboard feed is a view; this endpoint serves the record, and the
+    record includes the rotated archives."""
     import lassi.state as st
 
+    archive = tmp_path / "events-archive"
+    archive.mkdir()
+    (archive / "events-20260101-000000.jsonl").write_text(
+        '{"event": "block", "ip": "9.9.9.9"}\n', encoding="utf-8")
     log = tmp_path / "events.jsonl"
     log.write_text('{"event": "alert", "src": "1.2.3.4"}\n', encoding="utf-8")
     monkeypatch.setattr(st, "EVENTS_LOG_PATH", log)
@@ -559,6 +564,7 @@ def test_event_log_export(client: TestClient, monkeypatch, tmp_path) -> None:
     assert "attachment" in res.headers["content-disposition"]
     assert "lassinet-events-" in res.headers["content-disposition"]
     assert "1.2.3.4" in res.text
+    assert res.text.index("9.9.9.9") < res.text.index("1.2.3.4")   # oldest first
 
 
 def test_event_log_export_rejects_an_empty_log(client: TestClient, monkeypatch,

@@ -94,6 +94,23 @@ def _handler_for(state: AliasState, expected_auth: str):
                 return
             self._reply(200, {"status": "done"})
 
+        def do_GET(self) -> None:                  # noqa: N802 (http.server API)
+            state.requests.append({
+                "path": self.path,
+                "method": self.command,
+                "auth": self.headers.get("Authorization", ""),
+            })
+            if self.headers.get("Authorization", "") != f"Basic {expected_auth}":
+                self._reply(401, {"status": "error", "message": "authentication failed"})
+                return
+            parts = [p for p in self.path.split("/") if p]
+            if (len(parts) != 5 or parts[:3] != ["api", "firewall", "alias_util"]
+                    or parts[3] != "list" or parts[4] != ALIAS):
+                self._reply(404, {"status": "error", "message": "no such endpoint"})
+                return
+            self._reply(200, {"rows": [{"ip": address, "description": "LassiNet"}
+                                       for address in state.addresses]})
+
     return Handler
 
 
@@ -234,3 +251,41 @@ def test_opnsense_tls_against_a_self_signed_lab_firewall(tmp_path, monkeypatch) 
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_opnsense_active_blocks_reads_the_alias(opnsense) -> None:
+    """A restart must not hide blocks whose alias entry is still there."""
+    server, state, url = opnsense
+    fw = Firewall(provider="opnsense")
+
+    assert fw.active_blocks() == set()
+    assert fw.block(ADDRESS, reason="integration test") is True
+    assert fw.active_blocks() == {ADDRESS}
+    assert state.requests[-1]["method"] == "GET"
+    assert state.requests[-1]["path"] == f"/api/firewall/alias_util/list/{ALIAS}"
+    assert fw.unblock(ADDRESS) is True
+    assert fw.active_blocks() == set()
+
+
+def test_opnsense_active_blocks_is_none_without_credentials(opnsense, monkeypatch) -> None:
+    server, state, url = opnsense
+    monkeypatch.delenv("OPNSENSE_SECRET")
+    monkeypatch.setenv("OPNSENSE_KEY", "key-without-a-secret")
+    fw = Firewall(provider="opnsense")
+    assert fw.active_blocks() is None
+
+
+@pytest.mark.parametrize("payload,expected", [
+    ({"rows": [{"ip": "203.0.113.5"}]}, {"203.0.113.5"}),
+    ({"rows": ["203.0.113.5"]}, {"203.0.113.5"}),
+    ({"addresses": [{"address": "203.0.113.5"}]}, {"203.0.113.5"}),
+    ({"rows": [{"value": "::ffff:203.0.113.5"}]}, {"203.0.113.5"}),
+    (["203.0.113.5", "not-an-ip"], {"203.0.113.5"}),
+    ({"rows": [{"ip": "10.0.0.999"}]}, set()),
+    ({"rows": []}, set()),
+    ({"status": "error"}, set()),
+])
+def test_opnsense_alias_payload_parsing(payload, expected) -> None:
+    """OPNsense versions disagree on the list shape: parse what is an address
+    and ignore anything else instead of guessing."""
+    assert Firewall._parse_opnsense_alias(payload) == expected

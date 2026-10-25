@@ -167,13 +167,16 @@ class Firewall:
         """Read the current block sources from the provider, when supported.
 
         This lets a restarted live sensor rebuild its dashboard state from the
-        rules that are actually still in the kernel instead of starting empty
-        and later adding duplicates. OPNsense/pfSense return None for now;
-        Windows rules are read back by their `LassiNet-Block-*` display name.
+        rules that are actually still in the firewall instead of starting empty
+        and later adding duplicates. nftables and Windows are read back from
+        the kernel/rules, OPNsense from the alias contents; pfSense is still a
+        placeholder and returns None.
         """
+        if self.provider == "windows":
+            return self._windows_active_blocks()
+        if self.provider == "opnsense":
+            return self._opnsense_active_blocks()
         if self.provider != "nftables":
-            if self.provider == "windows":
-                return self._windows_active_blocks()
             return None
         listing = self._nft_list()
         if listing is None:
@@ -238,6 +241,100 @@ class Firewall:
             log.error("could not run nft (%s) \u2014 cannot list rules", exc)
             return None
 
+    def _opnsense_credentials(self) -> tuple[str, str] | None:
+        """API key + secret, or None when the provider is not configured.
+
+        Accepts `OPNSENSE_KEY="key:secret"` for people who paste the pair.
+        """
+        key, secret = self.opnsense_key, self.opnsense_secret
+        if not secret and ":" in key:
+            key, secret = key.split(":", 1)
+        if self.opnsense_url and key and secret and self.opnsense_alias:
+            return key, secret
+        return None
+
+    def _opnsense_tls_context(self):
+        """TLS context for the OPNsense API (verification off only on request)."""
+        if self.opnsense_verify_tls:
+            return None
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        return context
+
+    def _opnsense_active_blocks(self) -> set[str] | None:
+        """Read the addresses currently in the configured OPNsense alias.
+
+        nftables and the Windows firewall were already read back after a
+        restart; OPNsense returned None, so the dashboard forgot blocks whose
+        alias entry was still there (and a later auto-block could add a
+        duplicate). The list endpoint is a GET on the same alias_util API.
+        """
+        credentials = self._opnsense_credentials()
+        if credentials is None:
+            log.error("[opnsense] cannot read alias %s: set OPNSENSE_URL, "
+                      "OPNSENSE_KEY, OPNSENSE_SECRET and OPNSENSE_ALIAS",
+                      self.opnsense_alias or "?")
+            return None
+        key, secret = credentials
+        alias = urllib.parse.quote(self.opnsense_alias, safe="")
+        url = f"{self.opnsense_url.rstrip('/')}/api/firewall/alias_util/list/{alias}"
+        auth = base64.b64encode(f"{key}:{secret}".encode("utf-8")).decode("ascii")
+        request = urllib.request.Request(url, headers={"Authorization": f"Basic {auth}"})
+        try:
+            with urllib.request.urlopen(
+                request, timeout=self.opnsense_timeout, context=self._opnsense_tls_context()
+            ) as response:
+                raw = response.read(1_000_000).decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            log.warning("[opnsense] list %s failed: HTTP %s", self.opnsense_alias, exc.code)
+            return None
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            log.warning("[opnsense] list %s failed: %s", self.opnsense_alias, exc)
+            return None
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            log.warning("[opnsense] list %s returned non-JSON: %s",
+                        self.opnsense_alias, raw[:200])
+            return None
+        return self._parse_opnsense_alias(payload)
+
+    @staticmethod
+    def _parse_opnsense_alias(payload) -> set[str]:
+        """Extract the addresses from an alias_util/list response.
+
+        Current OPNsense returns `{"rows": [{"ip": "1.2.3.4", ...}]}`; older
+        builds and other endpoints return plain strings or `{"address": ...}`.
+        Anything that is not an IP address is ignored, not guessed.
+        """
+        entries = payload
+        if isinstance(payload, dict):
+            for key in ("rows", "addresses", "entries", "items"):
+                if isinstance(payload.get(key), (list, dict)):
+                    entries = payload[key]
+                    break
+            else:
+                entries = []
+        if isinstance(entries, dict):
+            entries = list(entries.values())
+        blocks: set[str] = set()
+        for entry in entries or []:
+            candidate = entry
+            if isinstance(entry, dict):
+                candidate = next((entry.get(k) for k in ("ip", "address", "addr", "value")
+                                  if entry.get(k)), None)
+            if not isinstance(candidate, str):
+                continue
+            try:
+                address = ipaddress.ip_address(candidate.strip())
+            except ValueError:
+                continue
+            if address.version == 6 and address.ipv4_mapped is not None:
+                address = address.ipv4_mapped
+            blocks.add(str(address))
+        return blocks
+
     def _opnsense_alias(self, ip: str, add: bool) -> bool:
         """Add/remove an address in the configured OPNsense alias.
 
@@ -246,13 +343,12 @@ class Firewall:
         OPNsense's alias_util API returns {"status": "done"} on success.
         """
         action = "add" if add else "delete"
-        key, secret = self.opnsense_key, self.opnsense_secret
-        if not secret and ":" in key:          # accept KEY="key:secret" too
-            key, secret = key.split(":", 1)
-        if not (self.opnsense_url and key and secret and self.opnsense_alias):
+        credentials = self._opnsense_credentials()
+        if credentials is None:
             log.error("[opnsense] cannot %s %s: set OPNSENSE_URL, OPNSENSE_KEY, "
                       "OPNSENSE_SECRET and OPNSENSE_ALIAS", action, ip)
             return False
+        key, secret = credentials
 
         alias = urllib.parse.quote(self.opnsense_alias, safe="")
         url = f"{self.opnsense_url.rstrip('/')}/api/firewall/alias_util/{action}/{alias}"
@@ -262,11 +358,7 @@ class Firewall:
             url, data=body, method="POST",
             headers={"Content-Type": "application/json", "Authorization": f"Basic {auth}"},
         )
-        context = None
-        if not self.opnsense_verify_tls:
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
+        context = self._opnsense_tls_context()
 
         try:
             with urllib.request.urlopen(

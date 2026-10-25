@@ -1283,3 +1283,64 @@ def test_restore_without_a_log_is_a_noop(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(st, "EVENTS_LOG_PATH", tmp_path / "missing.jsonl")
     assert st.State().restore_recent_alerts() == 0
 
+
+def test_the_event_log_rotates_and_prunes_old_archives(monkeypatch, tmp_path) -> None:
+    import json
+
+    import lassi.state as st
+
+    log = tmp_path / "events.jsonl"
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", log)
+    monkeypatch.setattr(st, "LOG_MAX_BYTES", 400)
+    monkeypatch.setattr(st, "LOG_KEEP", 2)
+    for i in range(15):
+        st.audit({"event": "alert", "src": f"10.0.0.{i}", "payload": "x" * 60})
+
+    archives = list((tmp_path / "events-archive").glob("*.jsonl"))
+    assert len(archives) == 2                      # the newest two survive
+    assert log.exists() and log.stat().st_size > 0
+    for path in archives + [log]:                  # rotation never cuts a line
+        for line in path.read_text(encoding="utf-8").splitlines():
+            assert json.loads(line)["event"] == "alert"
+
+
+def test_export_order_is_archives_then_active(monkeypatch, tmp_path) -> None:
+    import lassi.state as st
+
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", tmp_path / "events.jsonl")
+    archive = tmp_path / "events-archive"
+    archive.mkdir()
+    (archive / "events-20260101-000000.jsonl").write_text('{"n": 1}\n', encoding="utf-8")
+    (archive / "events-20260202-000000.jsonl").write_text('{"n": 2}\n', encoding="utf-8")
+    (tmp_path / "events.jsonl").write_text('{"n": 3}\n', encoding="utf-8")
+    names = [p.name for p in st.log_export_files()]
+    assert names == ["events-20260101-000000.jsonl", "events-20260202-000000.jsonl",
+                     "events.jsonl"]
+
+
+def test_restore_reads_the_newest_archive_too(monkeypatch, tmp_path) -> None:
+    """A rotation between the last alert and the restart must not empty the feed."""
+    import json
+    from datetime import datetime, timedelta
+
+    import lassi.state as st
+
+    now = datetime.now()
+
+    def alert(src, minutes):
+        return json.dumps({"event": "alert",
+                           "ts": (now - timedelta(minutes=minutes)).isoformat(timespec="seconds"),
+                           "attack": "ddos", "severity": "high", "src": src,
+                           "dst": "10.0.0.2", "engine": "ml", "count": 1,
+                           "collapsed": False, "mode": "demo"})
+
+    archive = tmp_path / "events-archive"
+    archive.mkdir()
+    (archive / "events-20260101-000000.jsonl").write_text(alert("10.0.0.11", 5) + "\n",
+                                                          encoding="utf-8")
+    (tmp_path / "events.jsonl").write_text(alert("10.0.0.12", 1) + "\n", encoding="utf-8")
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", tmp_path / "events.jsonl")
+    state = st.State()
+    assert state.restore_recent_alerts() == 2
+    assert [a["src"] for a in state.alerts] == ["10.0.0.12", "10.0.0.11"]
+

@@ -2,6 +2,7 @@
 
 import ipaddress
 import json
+import logging
 import os
 import threading
 import time
@@ -9,6 +10,8 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger("lassi")
 
 
 def canonical_ip(value: Any) -> str | None:
@@ -42,6 +45,76 @@ def is_external(ip: str) -> bool:
 EVENTS_LOG_PATH = Path(os.environ.get("LASSI_LOGFILE", "logs/events.jsonl"))
 _audit_lock = threading.Lock()
 
+# A sensor that runs for months cannot keep appending to one file: rotation
+# moves the active log to `events-archive/events-<stamp>.jsonl` once it passes
+# LASSI_LOG_MAX_BYTES (10 MB) and keeps the newest LASSI_LOG_KEEP archives
+# (5; 0 keeps them all). The export endpoint concatenates them, so downloading
+# the record never silently loses the rotated part.
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(float(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return int(default)
+
+
+LOG_MAX_BYTES = _env_int("LASSI_LOG_MAX_BYTES", 10 * 1024 * 1024)
+LOG_KEEP = _env_int("LASSI_LOG_KEEP", 5)
+
+
+def _log_archive_dir() -> Path:
+    return EVENTS_LOG_PATH.parent / (EVENTS_LOG_PATH.stem + "-archive")
+
+
+def log_export_files() -> list[Path]:
+    """Every file that belongs to the record, oldest first (archives + active)."""
+    try:
+        files = sorted(_log_archive_dir().glob(
+            f"{EVENTS_LOG_PATH.stem}-*{EVENTS_LOG_PATH.suffix}"))
+    except OSError:
+        files = []
+    if EVENTS_LOG_PATH.exists():
+        files.append(EVENTS_LOG_PATH)
+    return files
+
+
+def _rotate_log_locked() -> None:
+    """Move the active log aside when it is too big. Caller holds the lock.
+
+    Rotation happens between two appends, never with the file open, so no
+    line can be lost or half-written across the rename.
+    """
+    if LOG_MAX_BYTES <= 0:
+        return
+    try:
+        if EVENTS_LOG_PATH.stat().st_size < LOG_MAX_BYTES:
+            return
+    except OSError:
+        return
+    try:
+        archive = _log_archive_dir()
+        archive.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = archive / f"{EVENTS_LOG_PATH.stem}-{stamp}{EVENTS_LOG_PATH.suffix}"
+        counter = 1
+        while target.exists():          # two rotations in the same second
+            counter += 1
+            target = archive / (f"{EVENTS_LOG_PATH.stem}-{stamp}-{counter}"
+                                f"{EVENTS_LOG_PATH.suffix}")
+        os.replace(EVENTS_LOG_PATH, target)
+        log.info("rotated the event log to %s", target)
+    except OSError as exc:
+        log.warning("could not rotate the event log: %s", exc)
+        return
+    if LOG_KEEP <= 0:
+        return
+    try:
+        archives = sorted(_log_archive_dir().glob(
+            f"{EVENTS_LOG_PATH.stem}-*{EVENTS_LOG_PATH.suffix}"))
+        for old in archives[:-LOG_KEEP]:
+            old.unlink(missing_ok=True)
+    except OSError as exc:
+        log.warning("could not prune old event logs: %s", exc)
+
 
 def audit(event: dict[str, Any]) -> None:
     """Append one structured event to the local log. Best-effort: a logging
@@ -51,6 +124,7 @@ def audit(event: dict[str, Any]) -> None:
         line = json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), **event},
                           default=str, ensure_ascii=False)
         with _audit_lock:
+            _rotate_log_locked()
             with EVENTS_LOG_PATH.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
     except Exception:
@@ -349,18 +423,22 @@ class State:
         with self._lock:
             if self.alerts:
                 return 0
-        try:
-            with EVENTS_LOG_PATH.open("rb") as fh:
-                fh.seek(0, os.SEEK_END)
-                size = fh.tell()
-                start = max(0, size - 1_000_000)   # a busy sensor writes a lot
-                fh.seek(start)
-                raw = fh.read().decode("utf-8", "replace")
-        except OSError:
-            return 0
-        lines = raw.splitlines()
-        if start > 0 and lines:
-            lines = lines[1:]                      # first line may be cut in half
+        # The newest archive + the active file: a rotation between the last
+        # alerts and this restart must not make the feed look empty.
+        lines: list[str] = []
+        for path in log_export_files()[-2:]:
+            try:
+                with path.open("rb") as fh:
+                    fh.seek(0, os.SEEK_END)
+                    size = fh.tell()
+                    start = max(0, size - 1_000_000)   # a busy sensor writes a lot
+                    fh.seek(start)
+                    part = fh.read().decode("utf-8", "replace").splitlines()
+            except OSError:
+                continue
+            if start > 0 and part:
+                part = part[1:]                    # first line may be cut in half
+            lines.extend(part)
         cutoff = time.time() - max_age if max_age > 0 else 0.0
         cards: list[dict[str, Any]] = []
         last_ts = ""
