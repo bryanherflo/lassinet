@@ -2,6 +2,20 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.7.1] — 2026-10-25
+
+### Fixed
+- **The dashed role bands around devices were misleading on a real LAN.** They were painted
+  for the default `workstation` role, which is what every discovered host gets when nothing
+  else is known, so six unnamed devices looked like a confirmed "workstation group" in a
+  green band. Bands are now drawn only for roles that carry evidence (server, IoT, printer,
+  attacker, trusted, suspicious) and only when at least two devices share the role in the
+  row. The `?` glyph is the honest signal for the rest.
+- **Tuya Smart devices were not recognised**: `fc:3c:d7` (Tuya Smart Inc., smart-home OEM:
+  plugs, bulbs, sensors) was missing from the OUI table, so six of them stayed `?`. They now
+  classify as **IoT** from the MAC alone — the vendor only makes connected-home hardware,
+  unlike the ambiguous Apple/Samsung prefixes that stay unknown.
+
 ## [0.7.0] — 2026-10-25
 
 ### Added

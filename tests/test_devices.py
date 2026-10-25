@@ -41,6 +41,7 @@ def test_vendor_oui_classifies_when_the_name_says_nothing() -> None:
     assert classify(mac="b8:27:eb:aa:bb:cc") == "sbc"        # Raspberry Pi
     assert classify(mac="78:28:ca:aa:bb:cc") == "speaker"    # Sonos
     assert classify(mac="44:19:b6:aa:bb:cc") == "camera"     # Hikvision
+    assert classify(mac="fc:3c:d7:aa:bb:cc") == "iot"        # Tuya (smart home)
     assert classify(mac="B8-27-EB-AA-BB-CC") == "sbc"        # dash form
 
 

@@ -478,7 +478,13 @@ function drawRider(p, now) {
   for (var i = 0; i < BALLS; i++) { var d = (d0 + (i * total) / BALLS) % total; for (var g = 4; g >= 0; g--) { var dd = ((d - g * 12) % total + total) % total; var xy2 = xyAt(dd); drawGlowDot(xy2[0], xy2[1], g === 0 ? BALL_R : Math.max(1, BALL_R * (0.5 - g * 0.07)), severityColor, fade * (g === 0 ? 1 : 0.2 / g), g === 0 ? 20 : 0); } }
 }
 
-var GROUP_ROLES = new Set(["server", "workstation", "iot", "printer", "attacker", "unknown", "trusted"]);
+// Role bands are drawn only for roles that carry information. "workstation"
+// is the default role every discovered host gets when nothing else is known,
+// so a green band around it would claim a finding nobody made (on a real LAN
+// six unnamed devices ended up inside one). Their unknown glyph is the honest
+// signal; a band appears when there is something to say (server, IoT, printer,
+// attacker, trusted, suspicious).
+var GROUP_ROLES = new Set(["server", "iot", "printer", "attacker", "trusted", "unknown"]);
 function drawGroupBoxes() {
   if (!fxRoles.size) return;
   var pos = network.getPositions(); var groups = new Map();
@@ -493,6 +499,7 @@ function drawGroupBoxes() {
   });
   groups.forEach(function(group) {
     var pts = group.pts;
+    if (pts.length < 2) return;            // one node is not a group
     var xs = pts.map(function(p) { return p.x; }), ys = pts.map(function(p) { return p.y; });
     var x0 = Math.min.apply(null, xs) - 60, x1 = Math.max.apply(null, xs) + 60;
     var y0 = Math.min.apply(null, ys) - 40, y1 = Math.max.apply(null, ys) + 55;
