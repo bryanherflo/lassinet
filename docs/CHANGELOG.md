@@ -2,6 +2,14 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.7.2] — 2026-10-25
+
+### Fixed
+- **The other Tuya OUI was still unknown**: the operator has devices on both c:3c:d7
+  and 4c:a9:19 (both Tuya Smart), so one stayed ?. The verified Tuya prefixes
+  (c:3c:d7, 4c:a9:19, 8:80:55, 8:dd:bc, c:67:1f, 50:8a:06, 50:8b:b9,
+  68:57:2d, 70:89:76) now classify as IoT.
+
 ## [0.7.1] — 2026-10-25
 
 ### Fixed

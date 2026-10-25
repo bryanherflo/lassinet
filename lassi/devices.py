@@ -78,7 +78,9 @@ _OUI: dict[str, str] = {
     # Nest thermostats, LIFX bulbs -> IoT
     "18:b4:30": "iot", "64:16:66": "iot", "d0:73:d5": "iot",
     # Tuya Smart (smart-home OEM: plugs, bulbs, sensors) -> IoT
-    "fc:3c:d7": "iot",
+    "fc:3c:d7": "iot", "4c:a9:19": "iot", "a8:80:55": "iot", "a8:dd:bc": "iot",
+    "fc:67:1f": "iot", "50:8a:06": "iot", "50:8b:b9": "iot", "68:57:2d": "iot",
+    "70:89:76": "iot",
 }
 
 # Open ports that identify the *role* of a device on the network. A printer
