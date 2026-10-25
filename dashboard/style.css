@@ -266,6 +266,8 @@ main {
 }
 .legend-icons .lg { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-dim); }
 .legend-icons .lg img { width: 18px; height: 18px; flex: none; }
+/* Same colour the node ring uses for that type, so the legend explains it. */
+.legend-icons .kind-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; box-shadow: 0 0 6px currentColor; }
 #legend .li.flow .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 #legend .li.attack-flow .dot { background: var(--red); box-shadow: 0 0 10px var(--red); }
 #legend .li span { font-weight: 500; font-size: 12px; }

@@ -2,6 +2,27 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.8.0] — 2026-10-25
+
+### Changed
+- **The map is coloured by device type, not by the default role.** Every discovered host has
+  the role `workstation` until something proves otherwise, so the whole topology was green and
+  the type only visible in a 20 px glyph. The ring now uses the type (camera teal, TV purple,
+  IoT amber, NAS/desktop/phone/laptop…), states still win (red blocked/attacker, green trusted,
+  amber suspicious), and the legend's icon grid shows the same colour per type.
+- **The type is written under the address** on every node (`192.168.0.17 / Camera`), and
+  **Unknown** when nothing was found, so the map answers "what is this?" without hovering.
+- Links are thinner and dimmer so the devices stand out; labels drop to 12 px to fit the third
+  line without crowding the layout.
+
+### Fixed
+- **The tooltip headline contradicted the type**: a Tuya plug read "Workstation / type: Smart
+  device", because the default role was printed as a finding. It now shows the type, or
+  "Unknown".
+- **Marking a device trusted or suspicious from the right-click menu threw a ReferenceError**:
+  `applyNodeRole()` still called `iconURI()`, which no longer exists since the inline-SVG icon
+  system. It now updates the state ring and leaves the type glyph alone.
+
 ## [0.7.3] — 2026-10-25
 
 ### Fixed

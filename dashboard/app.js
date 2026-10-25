@@ -13,6 +13,19 @@ const ROLE_STYLE = {
   trusted:     { color: "#3fb950", label: "Trusted",       glyph: "desktop" },
 };
 
+// Ring colour per device type. The role is green "workstation" for almost
+// every discovered host (it is the default), so painting the ring by role made
+// the whole map look the same. The type is what the sensor actually found.
+// States still win over the type: red for blocked/attacker, green for trusted,
+// amber for suspicious.
+const KIND_COLORS = {
+  phone: "#3fb950", tablet: "#56d364", watch: "#56d364",
+  laptop: "#79c0ff", desktop: "#4493f8", server: "#58a6ff", sbc: "#f0883e",
+  tv: "#bc8cff", console: "#a371f7", speaker: "#f778ba",
+  camera: "#39c5cf", nas: "#f0883e", iot: "#d29922",
+  printer: "#8b949e", unknown: "#6e7681",
+};
+
 // Device kinds come from the server (`lassi/devices.py`, inferred from the
 // name and the MAC vendor) and get their own glyph, so a phone no longer looks
 // like a laptop. Line art instead of emoji on purpose: same drawing on
@@ -70,13 +83,22 @@ function nodeGlyph(host, displayRole, isAttacker) {
   return style.glyph;
 }
 
-// Map label: name on the first line, address on the second. A device that has
-// not been named yet would print the address twice, so show it only once. Any
-// whitespace inside the name collapses: the label is canvas text with a fixed
-// two-line layout and a pasted newline would push the address off the node.
-function nodeLabel(hostname, ip) {
+// Map label: name on the first line (when there is one), address on the next
+// and the inferred type last, so the map answers "what is this?" without a
+// hover. The type is "Unknown" when nothing was found — never the default role.
+function nodeLabel(hostname, ip, typeLabel) {
   var name = String(hostname || "").replace(/\s+/g, " ").trim();
-  return !name || name === ip ? String(ip) : name + "\n" + ip;
+  var lines = [];
+  if (name && name !== ip) lines.push(name);
+  lines.push(String(ip));
+  if (typeLabel) lines.push(typeLabel);
+  return lines.join("\n");
+}
+
+function nodeTypeLabel(host) {
+  if (host.role === "external") return "";          // "Internet" would repeat
+  if (host.role === "router") return "Router";
+  return host.kind ? (KIND_LABELS[host.kind] || "") : "Unknown";
 }
 
 // "seen 4m ago" for a device the sensor has not heard from in a while: on a
@@ -780,16 +802,20 @@ function nodeInfoTitle(node, headline) {
 
 function applyNodeRole(ip, role, headline) {
   var node = nodes.get(ip); if (!node) return;
-  var style = ROLE_STYLE[role] || ROLE_STYLE.workstation;
   var isSuspicious = role === "unknown", isTrusted = role === "trusted", isAttacker = role === "attacker";
-  var border = isSuspicious ? "#d29922" : (isAttacker ? "#f85149" : style.color);
-  var accent = isSuspicious ? "#d2992288" : (isAttacker ? "#f8514988" : (isTrusted ? "#3fb95066" : "#00000066"));
+  // Immediate feedback while the next snapshot re-renders the node: state ring
+  // first, otherwise the device type. Never touch the glyph here (it belongs
+  // to the type) and never call a role icon.
+  var ring = isSuspicious ? "#d29922" : (isAttacker ? "#f85149"
+    : (isTrusted ? "#3fb950" : (KIND_COLORS[node.kind] || KIND_COLORS.unknown)));
   nodes.update({
-    id: ip, role: role, shape: style.shape, image: iconURI(style.icon),
-    color: { background: style.color, border: border, highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } },
+    id: ip, role: role,
+    color: { background: ring, border: ring, highlight: { background: ring, border: "#ffffff" }, hover: { background: ring, border: "#ffffff" } },
     borderWidth: isSuspicious || isAttacker ? 3 : 2,
-    shadow: { enabled: true, color: accent, size: isSuspicious || isAttacker ? 14 : 10, x: 0, y: 3 },
-    title: nodeInfoTitle(node, headline)
+    shadow: { enabled: true, color: ring + "44", size: isSuspicious || isAttacker ? 14 : 10, x: 0, y: 3 },
+    title: nodeInfoTitle({ mac: node.mac, openPorts: node.openPorts || [], hostRole: node.hostRole,
+                           kindLabel: KIND_LABELS[node.kind] || "", macVendor: node.macVendor,
+                           privateMac: node.privateMac }, headline)
   });
 }
 
@@ -849,19 +875,35 @@ function renderTopology(data) {
     var style = ROLE_STYLE[displayRole] || ROLE_STYLE.workstation;
     var isBlocked = h.blocked, flashing = !isBlocked && (flashUntil[h.ip] || 0) > now;
     var isAttacker = displayRole === "attacker", isUnknown = displayRole === "unknown", isTrusted = displayRole === "trusted";
-    var nodeColor = { background: style.color, border: isBlocked || flashing ? "#f85149" : (isUnknown ? "#d29922" : (isTrusted ? style.color : style.color)), highlight: { background: style.color, border: "#ffffff" }, hover: { background: style.color, border: "#ffffff" } };
-    var base = { color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : flashing ? 4 : (h.role === "router" || isAttacker || isUnknown ? 3 : 2), font: { color: isBlocked ? "#8b949e" : "#d7dee8", size: 14, face: "Segoe UI", strokeWidth: 3, strokeColor: "#0b0f14", vadjust: 4 }, shadow: { enabled: true, color: isBlocked ? "#f8514966" : flashing ? "#f8514988" : (h.role === "router" ? "#8b5cf688" : (isAttacker ? "#f8514944" : (isUnknown ? "#d2992244" : (isTrusted ? "#3fb95044" : "#00000066")))), size: isBlocked ? 20 : flashing ? 16 : (h.role === "router" ? 18 : (isAttacker ? 14 : (isUnknown ? 12 : 10))), x: 0, y: 3 }, shapeProperties: { useBorderWithImage: true, borderDashes: h.role === "external" ? [4, 4] : false } };
+    // Ring: state first (blocked/attacker/trusted/suspicious), then the device
+    // type the sensor actually found, then the role for infrastructure. The
+    // default "workstation" role is never used as a colour.
+    var kindColor = KIND_COLORS[h.kind] || "";
+    var borderColor = isBlocked || flashing ? "#f85149"
+      : isAttacker ? "#f85149"
+      : isUnknown ? "#d29922"
+      : isTrusted ? "#3fb950"
+      : (h.role === "router" || h.role === "external") ? style.color
+      : (kindColor || KIND_COLORS.unknown);
+    var nodeColor = { background: borderColor, border: borderColor, highlight: { background: borderColor, border: "#ffffff" }, hover: { background: borderColor, border: "#ffffff" } };
+    var base = { color: nodeColor, opacity: isBlocked ? 0.5 : 1, borderWidth: isBlocked ? 3 : flashing ? 4 : (h.role === "router" || isAttacker || isUnknown ? 3 : 2), font: { color: isBlocked ? "#8b949e" : "#d7dee8", size: 12, face: "Segoe UI", strokeWidth: 3, strokeColor: "#0b0f14", vadjust: 4 }, shadow: { enabled: true, color: borderColor + (isBlocked || flashing ? "55" : "44"), size: isBlocked ? 20 : flashing ? 16 : (h.role === "router" ? 18 : (isAttacker ? 14 : (isUnknown ? 12 : 10))), x: 0, y: 3 }, shapeProperties: { useBorderWithImage: true, borderDashes: h.role === "external" ? [4, 4] : false } };
     var headline = isBlocked ? "\u{1F6AB} BLOCKED" : (isAttacker ? "ATTACKER (confirmed)" : isTrusted ? "TRUSTED (marked by user)" : isUnknown ? "SUSPICIOUS / UNKNOWN" : style.label);
     var kindLabel = h.kind ? (KIND_LABELS[h.kind] || "") : "";
+    if (displayRole === "workstation") {
+      // The role is only the default (nothing was inferred): the tooltip must
+      // say what the sensor actually found, not "Workstation".
+      headline = kindLabel || "Unknown";
+      kindLabel = "";
+    }
     var title = nodeInfoTitle({ mac: h.mac, openPorts: h.open_ports || [], hostRole: h.role, kindLabel: kindLabel, lastSeen: fmtSeen(h.last_seen), macVendor: h.mac_vendor, privateMac: h.private_mac }, headline);
     var nodeSize = h.role === "router" ? 27 : h.role === "external" ? 23 : (isAttacker ? 22 : 20);
     var img = glyphIconURI(nodeGlyph(h, displayRole, isAttacker));
     if (!nodes.get(h.ip)) {
-      var nodeData = { id: h.ip, label: nodeLabel(h.hostname, h.ip), title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], lastSeen: h.last_seen, macVendor: h.mac_vendor || "", privateMac: !!h.private_mac, shape: "circularImage", size: nodeSize, image: img, x: pos[h.ip].x, y: pos[h.ip].y };
+      var nodeData = { id: h.ip, label: nodeLabel(h.hostname, h.ip, nodeTypeLabel(h)), title: title, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], lastSeen: h.last_seen, macVendor: h.mac_vendor || "", privateMac: !!h.private_mac, shape: "circularImage", size: nodeSize, image: img, x: pos[h.ip].x, y: pos[h.ip].y };
       for (var k in base) nodeData[k] = base[k];
       nodes.add(nodeData);
     } else {
-      var label = nodeLabel(h.hostname, h.ip);
+      var label = nodeLabel(h.hostname, h.ip, nodeTypeLabel(h));
       var existing = nodes.get(h.ip);
       var updateObj = { id: h.ip, role: displayRole, hostRole: h.role, hostname: h.hostname, mac: h.mac, kind: h.kind || "", openPorts: h.open_ports || [], lastSeen: h.last_seen, macVendor: h.mac_vendor || "", privateMac: !!h.private_mac, title: title, size: nodeSize };
       if (existing.label !== label) updateObj.label = label;
@@ -872,7 +914,7 @@ function renderTopology(data) {
     seen.add(h.ip);
   } for (var ni = 0; ni < nodes.get().length; ni++) if (!seen.has(nodes.get()[ni].id)) nodes.remove(nodes.get()[ni].id);
   if (layoutChanged) { layoutKey = key; for (var id in pos) if (nodes.get(id)) network.moveNode(id, pos[id].x, pos[id].y); fitMapView(true); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 560); }
-  var seenEdges = new Set(); for (var ei = 0; ei < data.edges.length; ei++) { var e = data.edges[ei]; var isLink = e.kind === "link"; var id = (isLink ? "L|" : "T|") + e.from + "|" + e.to; if (!edges.get(id)) { edges.add({ id: id, from: e.from, to: e.to, dashes: !isLink, width: isLink ? 3 : 1.6, arrows: isLink ? "" : { to: { enabled: true, scaleFactor: 0.5, type: "arrow" } }, color: { color: isLink ? "#484f58" : "#6e7681", highlight: "#58a6ff", hover: "#58a6ff" }, smooth: isLink ? false : { enabled: true, type: "continuous", roundness: 0.3 }, selectionWidth: 3 }); } seenEdges.add(id); } edges.get().forEach(function(e) { if (!seenEdges.has(e.id)) edges.remove(e.id); }); }
+  var seenEdges = new Set(); for (var ei = 0; ei < data.edges.length; ei++) { var e = data.edges[ei]; var isLink = e.kind === "link"; var id = (isLink ? "L|" : "T|") + e.from + "|" + e.to; if (!edges.get(id)) { edges.add({ id: id, from: e.from, to: e.to, dashes: !isLink, width: isLink ? 2 : 1.4, arrows: isLink ? "" : { to: { enabled: true, scaleFactor: 0.5, type: "arrow" } }, color: { color: isLink ? "#3d444d" : "#6e7681", highlight: "#58a6ff", hover: "#58a6ff" }, smooth: isLink ? false : { enabled: true, type: "continuous", roundness: 0.3 }, selectionWidth: 3 }); } seenEdges.add(id); } edges.get().forEach(function(e) { if (!seenEdges.has(e.id)) edges.remove(e.id); }); }
 
 
 function fmtAlert(a) {
@@ -1136,6 +1178,10 @@ function buildLegendIcons() {
   LEGEND_KINDS.forEach(function(kind) {
     var row = document.createElement("span");
     row.className = "lg";
+    var dot = document.createElement("span");
+    dot.className = "kind-dot";
+    dot.style.background = KIND_COLORS[kind] || "#6e7681";
+    dot.style.color = dot.style.background;
     var img = document.createElement("img");
     img.src = glyphIconURI(kind);
     img.alt = "";
@@ -1143,6 +1189,7 @@ function buildLegendIcons() {
     img.height = 18;
     var label = document.createElement("span");
     label.textContent = KIND_LABELS[kind] || kind;
+    row.appendChild(dot);
     row.appendChild(img);
     row.appendChild(label);
     box.appendChild(row);

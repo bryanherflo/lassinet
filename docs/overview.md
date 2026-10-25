@@ -248,10 +248,13 @@ the infrastructure:
 ## 6. The dashboard
 
 * **Topology map** (vis-network, bundled locally, no CDN): one node per
-  device with role colours and icons, infrastructure links (device ↔
-  router), the Internet uplink, and **moving dots that are rendered only
-  from real flows** — one dot per flow that went through the detection
-  pipeline. Blocked sources stop emitting dots and animations.
+  device, with the **ring coloured by device type** (camera, TV, IoT, NAS,
+  phone, computer…), the type written under the address, infrastructure links
+  (device ↔ router), the Internet uplink, and **moving dots that are rendered
+  only from real flows** — one dot per flow that went through the detection
+  pipeline. States win over the type: red for blocked/attacker, green for
+  trusted, amber for suspicious. Blocked sources stop emitting dots and
+  animations.
 * **Device icons**: the map draws a different glyph for phones, tablets,
   laptops, desktops, servers, TVs, consoles, printers, cameras, speakers,
   watches, NAS and single-board computers (plus the router, the Internet
@@ -260,7 +263,9 @@ the infrastructure:
   the mDNS/SSDP answer — and it is a *display* hint: blocking, trust and
   protection never depend on it. When the evidence is ambiguous (an Apple OUI
   cannot tell an iPhone from a MacBook, a randomized MAC has no vendor at all)
-  the node keeps the **unknown** glyph instead of guessing a desktop.
+  the node keeps the **unknown** glyph and the label says `Unknown` instead of
+  guessing a desktop. The legend's icon grid repeats the same colour per type,
+  so the ring is never a code you have to memorise.
 * **Device picker**: the toolbar has a *Find a device* box (`/`): type a name,
   IP, type or role, move with ↑/↓ and press Enter. It focuses and selects the
   node on the map and opens its action bar — no hunting for a small dot.
