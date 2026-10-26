@@ -23,6 +23,10 @@ def test_health(client: TestClient) -> None:
     data = client.get("/health").json()
     assert data["ok"] is True
     assert data["mode"].startswith("demo")
+    assert client.get("/healthz").json()["ok"] is True
+    ready = client.get("/readyz")
+    assert ready.status_code in (200, 503)
+    assert "mode" in ready.json()
 
 
 def test_simulated_mode_never_uses_a_real_firewall(monkeypatch) -> None:
@@ -626,6 +630,76 @@ def test_safety_flags_are_advertised(client: TestClient) -> None:
     data = client.get("/api/state").json()
     assert "passive" in data and "dry_run" in data and "live_allow" in data
     assert data["auto_block_ttl"] >= 0
+
+
+def test_csrf_is_required_for_cookie_writes(monkeypatch) -> None:
+    import json
+
+    import lassi.state as st
+
+    monkeypatch.setattr(lassi_app, "AUTH_OPERATOR", "op-secret")
+    monkeypatch.setattr(lassi_app, "AUTH_VIEWER", "")
+    with TestClient(lassi_app.app) as c:
+        assert c.post("/api/auth", json={"token": "op-secret"}).status_code == 200
+        csrf = c.cookies.get(lassi_app.CSRF_COOKIE)
+        assert csrf and lassi_app._csrf_valid(csrf)
+
+        assert c.post("/api/alerts/dismiss", json={"key": "x"}).status_code == 403
+        assert c.post("/api/alerts/dismiss", json={"key": "x"},
+                      headers={"X-CSRF-Token": "wrong"}).status_code == 403
+        assert c.post("/api/alerts/dismiss", json={"key": "x"},
+                      headers={"X-CSRF-Token": csrf}).status_code == 200
+
+        # A Bearer token is an explicit non-cookie credential; no CSRF needed.
+        c.cookies.clear()
+        assert c.post("/api/alerts/dismiss", json={"key": "x"},
+                      headers={"Authorization": "Bearer op-secret"}).status_code == 200
+
+        events = []
+        for path in st.log_export_files():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    events.append(json.loads(line))
+                except (json.JSONDecodeError, TypeError):
+                    continue
+        login = next(e for e in reversed(events) if e.get("event") == "auth_login")
+        assert login["role"] == "operator" and "token" not in login
+
+
+def test_login_rate_limit(monkeypatch) -> None:
+    monkeypatch.setattr(lassi_app, "AUTH_OPERATOR", "op-secret")
+    monkeypatch.setattr(lassi_app, "AUTH_VIEWER", "")
+    monkeypatch.setattr(lassi_app, "LOGIN_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(lassi_app, "LOGIN_WINDOW", 60.0)
+    lassi_app._login_attempts.clear()
+    try:
+        with TestClient(lassi_app.app) as c:
+            assert c.post("/api/auth", json={"token": "bad"}).status_code == 401
+            assert c.post("/api/auth", json={"token": "bad"}).status_code == 401
+            assert c.post("/api/auth",
+                          json={"token": "op-secret"}).status_code == 429
+    finally:
+        lassi_app._login_attempts.clear()
+
+
+def test_security_headers_are_present(client: TestClient) -> None:
+    response = client.get("/")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+
+
+def test_checkpoint_endpoint(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setenv("LASSI_CHECKPOINT_KEY", "checkpoint-key")
+    created = client.post("/api/logs/checkpoint")
+    assert created.status_code == 200
+    data = created.json()
+    assert data["ok"] is True
+    assert data["checkpoint"]["checked"] >= 1
+    read_back = client.get("/api/logs/checkpoint").json()
+    assert read_back["ok"] is True
+    assert read_back["verification"]["ok"] is True
 
 
 def test_log_verify_and_metrics_endpoints(client: TestClient) -> None:

@@ -41,7 +41,8 @@ from lassi.devices import classify
 from lassi.firewall import Firewall
 from lassi.ml import Detector
 from lassi.scope import allowlist_from_env, check_live_scope
-from lassi.state import State, audit, is_external
+from lassi.state import (State, audit, create_audit_checkpoint, is_external,
+                         prune_logs, read_audit_checkpoint, verify_audit_checkpoint)
 from lassi.simulator import Simulator
 
 try:                                  # optional: .env support for local runs
@@ -111,6 +112,7 @@ HOST = (os.getenv("LASSI_HOST") or "").strip() or "127.0.0.1"
 AUTH_OPERATOR = (os.getenv("LASSI_TOKEN_OPERATOR") or "").strip()
 AUTH_VIEWER = (os.getenv("LASSI_TOKEN_VIEWER") or "").strip()
 SESSION_COOKIE = "lassi_session"
+CSRF_COOKIE = "lassi_csrf"
 try:
     SESSION_TTL = int(os.getenv("LASSI_SESSION_TTL", str(12 * 3600)))
     if SESSION_TTL <= 0:
@@ -122,6 +124,14 @@ except ValueError:
 # operator cookie. A random per-process key is safe by default; LASSI_SECRET
 # makes sessions survive a restart.
 _RANDOM_SESSION_SECRET = secrets.token_hex(32)
+try:
+    LOGIN_MAX_ATTEMPTS = max(1, int(os.getenv("LASSI_LOGIN_MAX_ATTEMPTS", "10")))
+except ValueError:
+    LOGIN_MAX_ATTEMPTS = 10
+try:
+    LOGIN_WINDOW = max(1.0, float(os.getenv("LASSI_LOGIN_WINDOW", "60")))
+except ValueError:
+    LOGIN_WINDOW = 60.0
 try:
     DISCOVERY_INTERVAL = float(os.getenv("LASSI_DISCOVERY_INTERVAL", "30"))
     if not math.isfinite(DISCOVERY_INTERVAL) or DISCOVERY_INTERVAL < 0:
@@ -665,6 +675,7 @@ async def lifespan(app: FastAPI):
         log.exception("could not import lassi.live; falling back to demo mode")
         has_scapy = False
 
+    prune_logs()          # apply count/age retention at startup, not only on rotation
     if MODE == "live" and has_scapy:
         from lassi.live import local_ip
         refusal = _live_scope_refusal(
@@ -856,6 +867,25 @@ def _sign_role(role: str, expires_at: int) -> str:
     return hmac.new(_session_secret(), message, hashlib.sha256).hexdigest()
 
 
+def _sign_csrf(token: str) -> str:
+    return hmac.new(_session_secret(), f"csrf|{token}".encode("utf-8"),
+                    hashlib.sha256).hexdigest()
+
+
+def _csrf_cookie_value() -> str:
+    token = secrets.token_urlsafe(24)
+    return f"{token}.{_sign_csrf(token)}"
+
+
+def _csrf_valid(value: str | None) -> bool:
+    if not value or "." not in value:
+        return False
+    token, signature = value.rsplit(".", 1)
+    if not token or not signature:
+        return False
+    return hmac.compare_digest(signature, _sign_csrf(token))
+
+
 def _session_cookie_value(role: str, expires_at: int | None = None) -> str:
     exp = int(expires_at if expires_at is not None else time.time() + SESSION_TTL)
     return f"{role}.{exp}.{_sign_role(role, exp)}"
@@ -900,22 +930,66 @@ def _role_for_token(token: str | None) -> str | None:
     return None
 
 
-def _request_role(request: Request) -> str | None:
+def _request_auth(request: Request) -> tuple[str | None, str]:
+    """Return (role, credential source); source is bearer/cookie/open."""
     if not _auth_enabled():
-        return "operator"
+        return "operator", "open"
     # Explicit credentials win over a browser cookie (a stale viewer cookie
     # must not silently downgrade an operator Bearer token).
     header = request.headers.get("authorization", "")
     if header.lower().startswith("bearer "):
         role = _role_for_token(header[7:])
         if role:
-            return role
+            return role, "bearer"
     session = _session_from_cookie(request.cookies.get(SESSION_COOKIE))
     if session:
-        return session[0]
+        return session[0], "cookie"
     # Deliberately no ?token support on HTTP: access logs would record it.
     # The WebSocket still accepts ?token because browsers cannot set headers.
-    return None
+    return None, ""
+
+
+def _request_role(request: Request) -> str | None:
+    role, _source = _request_auth(request)
+    return role
+
+
+# Login throttling is in-memory and per client IP. Behind a reverse proxy all
+# clients share the proxy address unless the proxy is trusted to set
+# X-Forwarded-For; that is documented as an operational limit.
+_login_lock = threading.Lock()
+_login_attempts: dict[str, list[float]] = {}
+
+
+def _login_ip(request: Request) -> str:
+    return request.client.host if request.client and request.client.host else "unknown"
+
+
+def _login_gate(ip: str) -> tuple[bool, int]:
+    now = time.time()
+    with _login_lock:
+        attempts = [at for at in _login_attempts.get(ip, [])
+                    if now - at < LOGIN_WINDOW]
+        if len(attempts) >= LOGIN_MAX_ATTEMPTS:
+            retry = max(1, int(LOGIN_WINDOW - (now - attempts[0])) + 1)
+            _login_attempts[ip] = attempts
+            return False, retry
+        _login_attempts[ip] = attempts
+        return True, 0
+
+
+def _login_failed(ip: str) -> None:
+    now = time.time()
+    with _login_lock:
+        attempts = [at for at in _login_attempts.get(ip, [])
+                    if now - at < LOGIN_WINDOW]
+        attempts.append(now)
+        _login_attempts[ip] = attempts[-LOGIN_MAX_ATTEMPTS:]
+
+
+def _login_succeeded(ip: str) -> None:
+    with _login_lock:
+        _login_attempts.pop(ip, None)
 
 
 def _live_scope_refusal(local_ip: str | None, subnet: str | None,
@@ -944,18 +1018,53 @@ async def auth_guard(request: Request, call_next):
                  or path.startswith("/docs/"))
     if not _auth_enabled() or not protected or path in ("/api/auth", "/health"):
         return await call_next(request)
-    role = _request_role(request)
+    role, source = _request_auth(request)
     if role is None:
         return JSONResponse({"ok": False, "error": "authentication required"},
                             status_code=401,
                             headers={"WWW-Authenticate": "Bearer",
                                      "Cache-Control": "no-store"})
-    if request.method not in ("GET", "HEAD", "OPTIONS") and role != "operator":
+    writes = request.method not in ("GET", "HEAD", "OPTIONS")
+    if writes and role != "operator":
         return JSONResponse({"ok": False, "error": "operator token required"},
                             status_code=403,
                             headers={"Cache-Control": "no-store"})
+    if writes and source == "cookie":
+        csrf_header = request.headers.get("x-csrf-token", "")
+        csrf_cookie = request.cookies.get(CSRF_COOKIE, "")
+        if (not csrf_header or not csrf_cookie
+                or not hmac.compare_digest(csrf_header, csrf_cookie)
+                or not _csrf_valid(csrf_header)):
+            return JSONResponse({"ok": False, "error": "CSRF token missing or invalid"},
+                                status_code=403,
+                                headers={"Cache-Control": "no-store"})
     request.state.role = role
     return await call_next(request)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Headers that matter as soon as the dashboard leaves localhost."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy",
+                                "geolocation=(), microphone=(), camera=()")
+    path = request.url.path
+    # Swagger/Redoc load their assets from a CDN; the dashboard is fully local.
+    if path not in ("/docs", "/redoc") and not path.startswith("/docs/"):
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data:; "
+            "style-src 'self' 'unsafe-inline'; script-src 'self'; "
+            "connect-src 'self' ws: wss:; font-src 'self'; "
+            "object-src 'none'; base-uri 'self'; form-action 'self'; "
+            "frame-ancestors 'none'")
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security",
+                                    "max-age=31536000; includeSubDomains")
+    return response
 
 
 @app.middleware("http")
@@ -966,7 +1075,7 @@ async def no_cache_dashboard(request, call_next):
     path = request.url.path
     if path in ("/", "/style.css", "/app.js", "/index.html"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    elif path == "/health" or path.startswith("/api/"):
+    elif path in ("/health", "/healthz", "/readyz") or path.startswith("/api/"):
         # A cached state snapshot or log tail would be actively misleading.
         response.headers["Cache-Control"] = "no-store"
     return response
@@ -1027,16 +1136,32 @@ def _snapshot(role: str = "operator") -> dict:
 
 @app.post("/api/auth")
 def auth_login(req: AuthRequest, request: Request) -> JSONResponse:
-    """Exchange an access token for an HttpOnly session cookie."""
+    """Exchange an access token for an HttpOnly session + CSRF cookie."""
+    ip = _login_ip(request)
+    allowed, retry = _login_gate(ip)
+    if not allowed:
+        audit({"event": "auth_rate_limited", "ip": ip, "actor": "anonymous"})
+        return JSONResponse({"ok": False, "error": "too many login attempts"},
+                            status_code=429,
+                            headers={"Retry-After": str(retry),
+                                     "Cache-Control": "no-store"})
     role = _role_for_token(req.token)
     if not role:
+        _login_failed(ip)
+        audit({"event": "auth_failed", "ip": ip, "actor": "anonymous"})
         return JSONResponse({"ok": False, "error": "invalid token"}, status_code=401,
                             headers={"WWW-Authenticate": "Bearer",
                                      "Cache-Control": "no-store"})
+    _login_succeeded(ip)
+    audit({"event": "auth_login", "role": role, "ip": ip, "actor": role})
     response = JSONResponse({"ok": True, "role": role, "auth_required": True})
+    secure = request.url.scheme == "https"
     response.set_cookie(SESSION_COOKIE, _session_cookie_value(role),
                         httponly=True, samesite="strict",
-                        secure=request.url.scheme == "https", max_age=SESSION_TTL)
+                        secure=secure, max_age=SESSION_TTL)
+    response.set_cookie(CSRF_COOKIE, _csrf_cookie_value(),
+                        httponly=False, samesite="strict",
+                        secure=secure, max_age=SESSION_TTL)
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -1045,6 +1170,7 @@ def auth_login(req: AuthRequest, request: Request) -> JSONResponse:
 def auth_logout() -> JSONResponse:
     response = JSONResponse({"ok": True})
     response.delete_cookie(SESSION_COOKIE)
+    response.delete_cookie(CSRF_COOKIE)
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -1160,6 +1286,35 @@ def verify_logs() -> dict:
     return verify_log()
 
 
+@app.post("/api/logs/checkpoint")
+def create_log_checkpoint() -> JSONResponse:
+    """Sign the current audit-chain tail as an external anchor."""
+    key = (os.getenv("LASSI_CHECKPOINT_KEY") or "").strip()
+    if not key:
+        return JSONResponse({"ok": False, "error": "LASSI_CHECKPOINT_KEY is not set"},
+                            status_code=400,
+                            headers={"Cache-Control": "no-store"})
+    try:
+        data = create_audit_checkpoint(key)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400,
+                            headers={"Cache-Control": "no-store"})
+    return JSONResponse({"ok": True, "checkpoint": data},
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/logs/checkpoint")
+def get_log_checkpoint() -> dict:
+    data = read_audit_checkpoint()
+    if not data:
+        return {"ok": False, "error": "no checkpoint"}
+    key = (os.getenv("LASSI_CHECKPOINT_KEY") or "").strip()
+    verification = (verify_audit_checkpoint(key) if key else
+                    {"ok": False, "signature_ok": False,
+                     "error": "LASSI_CHECKPOINT_KEY is not set"})
+    return {"ok": True, "checkpoint": data, "verification": verification}
+
+
 @app.post("/api/firewall/block")
 def block(req: BlockRequest, request: Request) -> dict:
     actor = _actor(request)
@@ -1244,6 +1399,20 @@ def health() -> dict:
             "flows_total": state.stats["flows_total"],
             "capture_running": capture_running,
             "capture_error": capture_error}
+
+
+@app.get("/healthz")
+def healthz() -> dict:
+    """Liveness only: the web process is up."""
+    return {"ok": True}
+
+
+@app.get("/readyz")
+def readyz() -> JSONResponse:
+    """Readiness: the capture/model view is healthy (503 when it is not)."""
+    data = health()
+    return JSONResponse(data, status_code=200 if data.get("ok") else 503,
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.websocket("/ws")

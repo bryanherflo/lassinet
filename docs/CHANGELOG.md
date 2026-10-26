@@ -2,6 +2,22 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.12.0] — 2026-10-26
+
+### Security / operations
+- **CSRF double-submit** for cookie-authenticated writes; Bearer API calls are exempt.
+- **Login throttle** (per-IP, in-memory) with `auth_failed`/`auth_rate_limited` audit
+  events; generic errors, no token in the log.
+- **Security headers**: CSP, X-Frame-Options, Referrer-Policy, Permissions-Policy,
+  HSTS on HTTPS.
+- **Retention by age**: `LASSI_LOG_RETENTION_DAYS`, applied at startup and rotation.
+- **Signed audit checkpoints**: `POST/GET /api/logs/checkpoint`, HMAC key kept
+  off-box; detects truncation/tampering of the anchored prefix.
+- **Health/readiness**: `/healthz` and `/readyz` (503 when the sensor is unhealthy).
+
+### Tests/Docs
+- 225 tests; docs/env/overview updated; cache v=3.49.
+
 ## [0.11.0] — 2026-10-26
 
 ### Added

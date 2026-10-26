@@ -40,11 +40,12 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 
 - **Live scope + safe modes:** set `LASSI_LIVE_ALLOW` to your own CIDR; live mode refuses to start on any other network and ARP discovery skips it. `LASSI_PASSIVE=1` observes captured flows without ARP sweeps or port probes; `LASSI_DRY_RUN=1` records blocks without touching the firewall. Auto-block is off by default in live mode; when enabled its blocks expire after `LASSI_AUTO_BLOCK_TTL` (1 h by default).
 - **Audit attribution:** block, unblock, trust, rename and dismiss events carry `actor` and UTC timestamps; auto-blocks are attributed to `auto`.
-- **Authentication + RBAC (optional):** set `LASSI_TOKEN_OPERATOR` (can block, unblock, trust, rename, dismiss) and/or `LASSI_TOKEN_VIEWER` (read-only). The dashboard exchanges a token for an HttpOnly session cookie with **server-side expiry** (`LASSI_SESSION_TTL`, 12 h by default); scripts can send `Authorization: Bearer <token>`. Only the WebSocket accepts `?token` (a browser cannot set headers on a WebSocket). Set `LASSI_SECRET` if sessions must survive a restart; otherwise the cookie key is random per process. Docs/OpenAPI are protected too. With neither token set the API stays open, as before (localhost lab).
-- **Tamper-evident audit log:** every JSONL line carries `prev` and `hash`; `GET /api/logs/verify` checks the chain across the active file and the kept archives. It detects edits, insertions and deletions between lines; once the chain starts, an unchained line is a failure. The first kept line is the anchor, so a deleted prefix or suffix and a full rewrite need an external copy to prove (`verified` is false for a legacy-only log).
+- **Authentication + RBAC (optional):** set `LASSI_TOKEN_OPERATOR` (can block, unblock, trust, rename, dismiss) and/or `LASSI_TOKEN_VIEWER` (read-only). The dashboard exchanges a token for an HttpOnly session cookie with **server-side expiry** (`LASSI_SESSION_TTL`, 12 h by default); scripts can send `Authorization: Bearer <token>`. Only the WebSocket accepts `?token` (a browser cannot set headers on a WebSocket). Set `LASSI_SECRET` if sessions must survive a restart; otherwise the cookie key is random per process. Docs/OpenAPI are protected too. With neither token set the API stays open, as before (localhost lab). Dashboard writes use a **CSRF double-submit cookie**; login attempts are throttled per IP; responses carry CSP, X-Frame-Options, Referrer-Policy and Permissions-Policy.
+- **Tamper-evident audit log:** every JSONL line carries `prev` and `hash`; `GET /api/logs/verify` checks the chain across the active file and the kept archives. It detects edits, insertions and deletions between lines; once the chain starts, an unchained line is a failure. The first kept line is the anchor, so a deleted prefix or suffix and a full rewrite need an external copy to prove (`verified` is false for a legacy-only log). `POST /api/logs/checkpoint` signs the current tail with `LASSI_CHECKPOINT_KEY`; copy the checkpoint off-box and `GET` the same endpoint to verify it. HMAC is not public-key: protect the key.
+- **Retention:** `LASSI_LOG_RETENTION_DAYS` removes rotated archives by age at startup and on rotation; `LASSI_LOG_KEEP` still bounds the count. The active file is never deleted by retention.
 - **Metrics:** `GET /metrics` exposes Prometheus counters/gauges (flows, detections, devices, blocks, capture, model, mode). Protected when auth is enabled.
 - **Busy networks:** `LASSI_CAPTURE_FILTER="tcp or udp"` (libpcap/BPF) cuts capture load. For whole-LAN visibility use a SPAN/mirror port or run it on the gateway; it is still not a gigabit sensor.
-- **Availability:** single process, no clustering or shared state. Run it under systemd/a Windows service behind a TLS reverse proxy; do not expose it directly to the internet.
+- **Availability:** single process, no clustering or shared state. `GET /healthz` is liveness, `GET /readyz` is readiness (503 when capture/model is unhealthy). Run it under systemd/a Windows service behind a TLS reverse proxy; do not expose it directly to the internet.
 
 ## 🎯 Who it is for
 
@@ -52,7 +53,7 @@ LassiNet is built for people who want to see and act on **their own LAN**, not f
 
 - **Students and juniors** in systems, networking or security (ASIR, CFGS, master's, self-taught) who want the full path from discovery to detection to a real block.
 - **Homelabbers and home-network owners** who want visibility of their devices and a safe way to practise OPNsense, nftables or Windows Firewall.
-- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 219 tests plus CI make it easy to use in class.
+- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 225 tests plus CI make it easy to use in class.
 - **Recruiters and interviewers** reviewing a portfolio project that covers Python, FastAPI, scapy, ML, firewalls, tests, CI and documentation.
 
 ## 🚫 Who it is not for
@@ -100,7 +101,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (219 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (225 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt
@@ -150,6 +151,8 @@ The badge at the top right of the map shows the live stream state: `live` while 
 | `LASSI_TOKEN_VIEWER` | string | *empty* | read-only token (dashboard, logs, metrics) |
 | `LASSI_SECRET` | string | *random per process* | cookie-signing key; set a stable value if sessions must survive a restart |
 | `LASSI_SESSION_TTL` | seconds | `43200` | server-enforced session lifetime (12 h); the cookie also expires |
+| `LASSI_LOGIN_MAX_ATTEMPTS` | int | `10` | failed logins per IP inside the window before a 429 |
+| `LASSI_LOGIN_WINDOW` | seconds | `60` | sliding window for the login throttle |
 | `LASSI_CAPTURE_FILTER` | BPF | *empty* | libpcap filter for live capture, e.g. `tcp or udp` |
 | `LASSI_SUBNET` | CIDR | *auto-detect* | network to ARP-sweep in live mode; defaults to the subnet the machine lives on |
 | `LASSI_DISCOVERY_INTERVAL` | seconds | `30` | how often live mode refreshes the ARP topology (`0` = every engine tick) |
@@ -157,7 +160,10 @@ The badge at the top right of the map shows the live stream state: `live` while 
 | `LASSI_ALERT_DEDUPE` | seconds | `120` | identical detections (attack, source, destination, severity, engine) inside this window share one card with a `×N` counter; `0` shows every one |
 | `LASSI_LOG_MAX_BYTES` | bytes | `10485760` (10 MB) | rotate the event log when the active file grows past this size (`0` = never rotate) |
 | `LASSI_LOG_KEEP` | int | `5` | rotated archives kept next to the active log (`0` = keep all) |
+| `LASSI_LOG_RETENTION_DAYS` | days | `0` | delete rotated archives older than this at startup/rotation (`0` = keep by count only) |
 | `LASSI_BLOCKFILE` | path | `data/block_expiry.json` | persisted block TTL metadata, so a restart cannot make a temporary block permanent |
+| `LASSI_CHECKPOINT_KEY` | string | *empty* | HMAC key for signed audit checkpoints; keep it off the sensor; empty disables creation |
+| `LASSI_CHECKPOINT_FILE` | path | `data/audit_checkpoint.json` | signed checkpoint file; copy it off-box as the external anchor |
 | `LASSI_DEMO_NET` | CIDR | `10.0.0.0/24` | base subnet for the simulated demo network - change it and every demo device/attack story moves to that addressing |
 | `LASSI_IFACE` | interface name | *default route* | pin the sniffing interface; by default LassiNet uses the NIC of the default route (not the first adapter) |
 | `LASSI_LOGFILE` | path | `logs/events.jsonl` | local JSONL event log: every alert, block and startup appended as one line |

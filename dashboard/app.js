@@ -1162,10 +1162,16 @@ function onAction(ev) {
 
 // Hide one card from the feed. The server also persists the key, so the log
 // replay after a restart will not bring it back; the JSONL audit log keeps it.
+function csrfToken() {
+  var m = document.cookie.match(/(?:^|;\s*)lassi_csrf=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
 async function dismissAlert(key) {
   try {
     var res = await fetch("/api/alerts/dismiss", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
       body: JSON.stringify({ key: key })
     });
     if (res.status === 401) { showAuth(); return; }
@@ -1194,7 +1200,11 @@ async function dismissAlert(key) {
 }
 async function post(url, body) {
   try {
-    var res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    var res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify(body)
+    });
     if (res.status === 401) { showAuth(); return; }
     if (res.status === 403) { toast("Read-only token: this action needs the operator token", "error"); return; }
     if (!res.ok) throw new Error("HTTP " + res.status);
@@ -1369,7 +1379,12 @@ async function submitAuth() {
       body: JSON.stringify({ token: token })
     });
     if (!res.ok) {
-      if (err) { err.textContent = "Invalid token"; err.hidden = false; }
+      if (err) {
+        err.textContent = res.status === 429
+          ? "Too many attempts; wait a minute"
+          : "Invalid token";
+        err.hidden = false;
+      }
       return;
     }
     location.reload();

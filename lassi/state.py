@@ -63,6 +63,8 @@ def _env_int(name: str, default: int) -> int:
 
 LOG_MAX_BYTES = _env_int("LASSI_LOG_MAX_BYTES", 10 * 1024 * 1024)
 LOG_KEEP = _env_int("LASSI_LOG_KEEP", 5)
+# 0 = no age-based retention (the count policy still applies).
+LOG_RETENTION_DAYS = _env_int("LASSI_LOG_RETENTION_DAYS", 0)
 
 
 def _log_archive_dir() -> Path:
@@ -138,17 +140,39 @@ def _rotate_log_locked() -> None:
     except OSError as exc:
         log.warning("could not rotate the event log: %s", exc)
         return
-    if LOG_KEEP <= 0:
-        return
+    _prune_logs_locked()
+
+
+def _prune_logs_locked() -> None:
+    """Apply count and age retention. Caller holds the audit lock."""
     try:
+        archive = _log_archive_dir()
+        if not archive.exists():
+            return
         archives = sorted(
-            _log_archive_dir().glob(f"{EVENTS_LOG_PATH.stem}-*{EVENTS_LOG_PATH.suffix}"),
+            archive.glob(f"{EVENTS_LOG_PATH.stem}-*{EVENTS_LOG_PATH.suffix}"),
             key=lambda path: (path.stat().st_mtime, path.name),
         )
-        for old in archives[:-LOG_KEEP]:
-            old.unlink(missing_ok=True)
+        if LOG_RETENTION_DAYS > 0:
+            cutoff = time.time() - LOG_RETENTION_DAYS * 86400
+            for path in list(archives):
+                try:
+                    if path.stat().st_mtime < cutoff:
+                        path.unlink(missing_ok=True)
+                except OSError:
+                    continue
+            archives = [path for path in archives if path.exists()]
+        if LOG_KEEP > 0:
+            for old in archives[:-LOG_KEEP]:
+                old.unlink(missing_ok=True)
     except OSError as exc:
         log.warning("could not prune old event logs: %s", exc)
+
+
+def prune_logs() -> None:
+    """Apply retention at startup (not only when the active file rotates)."""
+    with _audit_lock:
+        _prune_logs_locked()
 
 
 def audit(event: dict[str, Any]) -> None:
@@ -183,8 +207,13 @@ def audit(event: dict[str, Any]) -> None:
         pass
 
 
-def verify_log() -> dict[str, Any]:
+def verify_log(expect_hash: str | None = None,
+               expect_count: int | None = None) -> dict[str, Any]:
     """Check the hash chain across the active file and the kept archives.
+
+    `expect_hash`/`expect_count` check a signed checkpoint anchor: the chain
+    must still contain that hash at that (chained-line) position, even if it
+    has grown since. A deleted prefix or a truncated log therefore fails.
 
     Legacy lines *before* the chain starts are counted and skipped. Once the
     chain has started, a line without `prev`/`hash` is a failure: otherwise
@@ -197,6 +226,7 @@ def verify_log() -> dict[str, Any]:
     checked = legacy = 0
     previous = ""
     started = False
+    anchor_ok: bool | None = None
     with _audit_lock:
         for path in log_export_files():
             try:
@@ -241,8 +271,83 @@ def verify_log() -> dict[str, Any]:
                 previous = str(event.get("hash") or "")
                 started = True
                 checked += 1
+                if expect_count is not None and checked == expect_count:
+                    anchor_ok = expect_hash is None or previous == expect_hash
+    if expect_count is not None:
+        if checked < expect_count:
+            return {"ok": False, "verified": checked > 0, "checked": checked,
+                    "legacy": legacy, "last_hash": previous,
+                    "error": f"checkpoint expects {expect_count} chained lines, found {checked}"}
+        if anchor_ok is False:
+            return {"ok": False, "verified": checked > 0, "checked": checked,
+                    "legacy": legacy, "last_hash": previous,
+                    "error": "checkpoint anchor hash mismatch"}
     return {"ok": True, "verified": checked > 0, "checked": checked,
-            "legacy": legacy, "error": ""}
+            "legacy": legacy, "last_hash": previous, "error": ""}
+
+def _checkpoint_signature(payload: dict[str, Any], key: str) -> str:
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                           default=str, ensure_ascii=False).encode("utf-8")
+    return hmac.new(key.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+
+
+def create_audit_checkpoint(key: str) -> dict[str, Any]:
+    """Sign the current verified chain tail; store the checkpoint locally.
+
+    The HMAC key is deliberately not stored with the checkpoint. Copy the
+    checkpoint off-box (or print it) so a later full rewrite is detectable.
+    """
+    key = (key or "").strip()
+    if not key:
+        raise ValueError("LASSI_CHECKPOINT_KEY is not set")
+    result = verify_log()
+    if not result.get("ok") or not result.get("verified"):
+        raise ValueError("audit log is not verifiable: " +
+                         (result.get("error") or "no chained lines"))
+    payload = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+               "last_hash": str(result.get("last_hash") or ""),
+               "checked": int(result.get("checked") or 0)}
+    data = {**payload, "algorithm": "HMAC-SHA256",
+            "signature": _checkpoint_signature(payload, key)}
+    CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CHECKPOINT_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return data
+
+
+def read_audit_checkpoint() -> dict[str, Any] | None:
+    try:
+        data = json.loads(CHECKPOINT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def verify_audit_checkpoint(key: str) -> dict[str, Any]:
+    """Verify the checkpoint signature and the anchored chain prefix."""
+    key = (key or "").strip()
+    if not key:
+        return {"ok": False, "signature_ok": False,
+                "error": "LASSI_CHECKPOINT_KEY is not set"}
+    data = read_audit_checkpoint()
+    if not data:
+        return {"ok": False, "signature_ok": False, "error": "no checkpoint"}
+    payload = {"ts": data.get("ts"), "last_hash": data.get("last_hash"),
+               "checked": data.get("checked")}
+    signature_ok = hmac.compare_digest(
+        str(data.get("signature") or ""), _checkpoint_signature(payload, key))
+    if not signature_ok:
+        return {"ok": False, "signature_ok": False, "checkpoint": data,
+                "error": "checkpoint signature mismatch"}
+    try:
+        count = int(data.get("checked") or 0)
+        last_hash = str(data.get("last_hash") or "")
+    except (TypeError, ValueError):
+        return {"ok": False, "signature_ok": True, "checkpoint": data,
+                "error": "invalid checkpoint fields"}
+    chain = verify_log(expect_hash=last_hash, expect_count=count)
+    return {"ok": bool(chain.get("ok")), "signature_ok": True,
+            "checkpoint": data, "chain": chain}
+
 
 # ---- human-friendly device names (editable from the dashboard, persisted) ----
 # Renamed devices keep their display name across restarts: the engine re-upserts
@@ -396,6 +501,12 @@ _load_trusted()
 # block). The expiry is persisted so a restart cannot silently turn a temporary
 # block into a permanent one; `_restore_firewall_blocks` uses it at startup.
 BLOCK_EXPIRY_PATH = Path(os.environ.get("LASSI_BLOCKFILE", "data/block_expiry.json"))
+
+# A signed checkpoint is an external anchor for the audit chain. Keep the HMAC
+# key off the sensor (LASSI_CHECKPOINT_KEY) and copy the checkpoint file to a
+# second location; otherwise a full log rewrite is still undetectable.
+CHECKPOINT_PATH = Path(os.environ.get("LASSI_CHECKPOINT_FILE",
+                                      "data/audit_checkpoint.json"))
 
 
 def _load_block_expiry() -> dict[str, float]:

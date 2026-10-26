@@ -331,6 +331,10 @@ the infrastructure:
 | `GET /api/logs?limit=N` | Tail of the local JSONL event log (bounded to the last megabyte) |
 | `GET /api/logs/export` | Download the complete JSONL event log with a timestamped filename (`application/x-ndjson`); rotated archives are concatenated in order |
 | `GET /api/logs/verify` | Verify the JSONL hash chain (`ok`, `verified`, `checked`, `legacy`, `error`) |
+| `POST /api/logs/checkpoint` | Sign the verified chain tail with `LASSI_CHECKPOINT_KEY` (operator) |
+| `GET /api/logs/checkpoint` | Read the checkpoint and verify its signature + anchored chain prefix |
+| `GET /healthz` | Liveness (process up) |
+| `GET /readyz` | Readiness; 503 when capture/model is unhealthy |
 | `POST /api/auth` | Exchange an operator/viewer token for an HttpOnly session cookie |
 | `GET /metrics` | Prometheus metrics (protected when auth is enabled) |
 | `POST /api/firewall/block` | Block a source (`{"ip": "...", "reason": "...", "ttl_s": 3600}`; `ttl_s=0` is permanent) |
@@ -383,7 +387,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **219 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **225 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows
@@ -402,14 +406,16 @@ See [ci.md](ci.md) for what the pipeline proves and what it still misses.
 
 ## 10. Honest limits
 
-* **Auth/RBAC are opt-in and token-based**: no user database, SSO/MFA, CSRF token, rate
-  limiting or per-route policies. Put the dashboard behind TLS/reverse proxy. HTTP tokens
-  must use the cookie or the Bearer header; only the WebSocket accepts `?token` (which can
-  leak into proxy logs). Sessions are limited server-side (`LASSI_SESSION_TTL`, 12 h default).
+* **Auth/RBAC are opt-in and token-based**: no user database, SSO/MFA or per-route
+  policies. CSRF double-submit and an in-memory per-IP login throttle are implemented;
+  behind a reverse proxy all clients may share one IP unless it forwards the real client
+  address. Put the dashboard behind TLS/reverse proxy. HTTP tokens must use the cookie or
+  the Bearer header; only the WebSocket accepts `?token` (which can leak into proxy logs).
+  Sessions are limited server-side (`LASSI_SESSION_TTL`, 12 h default).
 * **The hash chain detects edits, insertions and deletions between lines**, not a full
   rewrite: the oldest kept line is the anchor, so a deleted prefix or suffix needs an
   external copy. Once the chain starts, an unchained line is a failure; `verified` is false
-  for a legacy-only log. Keep an external copy (the Export endpoint) for stronger evidence.
+  for a legacy-only log. `POST /api/logs/checkpoint` signs the tail with an HMAC key kept off-box; copy the checkpoint elsewhere and verify it later with `GET`. Keep an external copy (the Export endpoint) for stronger evidence. Retention can delete the anchored prefix: keep the checkpoint and any export you may need.
   A truncated final write (power loss) is reported as invalid JSON rather than silently
   accepted; inspect or repair the tail.
 * Still no HA/clustering/shared state, no gigabit capture and no formal compliance

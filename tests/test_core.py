@@ -1334,6 +1334,62 @@ def test_verify_log_reports_legacy_only_as_unverified(monkeypatch, tmp_path) -> 
     assert result["checked"] == 0 and result["legacy"] == 1
 
 
+def test_log_retention_days_prunes_old_archives(monkeypatch, tmp_path) -> None:
+    import os
+
+    import lassi.state as st
+
+    monkeypatch.setattr(st, "LOG_RETENTION_DAYS", 1)
+    monkeypatch.setattr(st, "LOG_KEEP", 0)
+    archive = st._log_archive_dir()
+    archive.mkdir(parents=True, exist_ok=True)
+    old = archive / "events-20200101-000000.jsonl"
+    fresh = archive / "events-20990101-000000.jsonl"
+    old.write_text("{}\n", encoding="utf-8")
+    fresh.write_text("{}\n", encoding="utf-8")
+    os.utime(old, (time.time() - 2 * 86400,) * 2)
+    st.prune_logs()
+    assert not old.exists()
+    assert fresh.exists()
+
+
+def test_audit_checkpoint_detects_tamper_and_extension(monkeypatch, tmp_path) -> None:
+    import json
+
+    import lassi.state as st
+
+    log = tmp_path / "events.jsonl"
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", log)
+    monkeypatch.setattr(st, "CHECKPOINT_PATH", tmp_path / "checkpoint.json")
+    st._hash_path = None
+    for n in range(3):
+        st.audit({"event": "test", "n": n})
+
+    checkpoint = st.create_audit_checkpoint("checkpoint-key")
+    assert checkpoint["checked"] == 3 and checkpoint["last_hash"]
+    assert st.verify_audit_checkpoint("checkpoint-key")["ok"] is True
+
+    # Extending the log after the checkpoint is fine: the anchor still matches.
+    st.audit({"event": "after", "n": 3})
+    assert st.verify_audit_checkpoint("checkpoint-key")["ok"] is True
+    assert st.verify_audit_checkpoint("wrong-key")["ok"] is False
+
+    original = log.read_text(encoding="utf-8")
+    # Truncating below the checkpoint fails.
+    log.write_text(original.splitlines()[0] + "\n", encoding="utf-8")
+    assert st.verify_audit_checkpoint("checkpoint-key")["ok"] is False
+
+    # Editing a line before the checkpoint fails as a hash mismatch.
+    lines = [json.loads(line) for line in original.splitlines()]
+    lines[0]["n"] = 999
+    log.write_text("\n".join(json.dumps(line) for line in lines) + "\n",
+                   encoding="utf-8")
+    assert st.verify_audit_checkpoint("checkpoint-key")["ok"] is False
+
+    with pytest.raises(ValueError):
+        st.create_audit_checkpoint("")
+
+
 def test_verify_log_skips_legacy_lines(monkeypatch, tmp_path) -> None:
     import lassi.state as st
 

@@ -27,13 +27,14 @@ def _isolated_runtime_files(tmp_path_factory):
 
     tmp = tmp_path_factory.mktemp("runtime")
     names = ("EVENTS_LOG_PATH", "ALIAS_PATH", "TRUSTED_PATH", "DISMISSED_PATH",
-             "BLOCK_EXPIRY_PATH")
+             "BLOCK_EXPIRY_PATH", "CHECKPOINT_PATH")
     saved = {name: getattr(state, name) for name in names}
     state.EVENTS_LOG_PATH = tmp / "events.jsonl"
     state.ALIAS_PATH = tmp / "device_names.json"
     state.TRUSTED_PATH = tmp / "trusted_devices.json"
     state.DISMISSED_PATH = tmp / "dismissed_alerts.json"
     state.BLOCK_EXPIRY_PATH = tmp / "block_expiry.json"
+    state.CHECKPOINT_PATH = tmp / "audit_checkpoint.json"
     discovery.CACHE_PATH = tmp / "device_cache.json"
     # app.state was constructed when app.py was imported (before this fixture),
     # so it may have read the real block_expiry.json. Clear it explicitly.
