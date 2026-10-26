@@ -24,6 +24,7 @@ import pytest
 def _isolated_runtime_files(tmp_path_factory):
     import lassi.discovery as discovery
     import lassi.state as state
+    import lassi.triage as triage
 
     tmp = tmp_path_factory.mktemp("runtime")
     names = ("EVENTS_LOG_PATH", "ALIAS_PATH", "TRUSTED_PATH", "DISMISSED_PATH",
@@ -36,6 +37,7 @@ def _isolated_runtime_files(tmp_path_factory):
     state.BLOCK_EXPIRY_PATH = tmp / "block_expiry.json"
     state.CHECKPOINT_PATH = tmp / "audit_checkpoint.json"
     discovery.CACHE_PATH = tmp / "device_cache.json"
+    triage.TRIAGE_DB_PATH = tmp / "triage.db"
     # app.state was constructed when app.py was imported (before this fixture),
     # so it may have read the real block_expiry.json. Clear it explicitly.
     app_module = sys.modules.get("app")

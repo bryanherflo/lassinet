@@ -455,6 +455,15 @@ button.act:active { transform: scale(.96); }
 }
 button.act.unblock { border-color: var(--green); color: var(--green); }
 button.act.unblock:hover { background: var(--green); color: #fff; box-shadow: 0 6px 20px -6px var(--green); }
+.alert .triage-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 10px; color: var(--muted); }
+.triage-badge { font-size: 9px; font-weight: 700; letter-spacing: .4px; padding: 2px 6px; border-radius: 3px; border: 1px solid var(--border-bright); }
+.triage-badge.ack { color: var(--green); border-color: #3fb95066; background: var(--green-dim); }
+.triage-badge.fp { color: var(--red); border-color: #f8514966; background: var(--red-dim); }
+.triage-badge.closed { color: var(--muted); }
+.triage-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.triage-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+button.act.triage { margin-top: 0; padding: 4px 8px; font-size: 9px; text-transform: none; letter-spacing: 0; border-color: var(--border-bright); color: var(--text-dim); }
+button.act.triage:hover { background: var(--panel-elevated); color: var(--text); border-color: var(--accent); box-shadow: none; }
 
 /* ---- system log panel ---- */
 aside .feed.log { flex: 0 0 auto; font-family: var(--font-mono); font-size: 11px; gap: 2px; }

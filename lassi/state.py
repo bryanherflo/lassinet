@@ -682,7 +682,7 @@ class State:
             if is_attack:
                 self.stats["attacks_total"] += 1
 
-    def add_alert(self, alert: dict[str, Any]) -> None:
+    def add_alert(self, alert: dict[str, Any], actor: str = "engine") -> None:
         """Record one detection, collapsing immediate repeats of the same one.
 
         The engine fires once per detected flow, so a single cloud upload used
@@ -710,7 +710,7 @@ class State:
                 self.alerts.appendleft(alert)
             self._last_alert_key = key
             self._last_alert_at = now
-        audit({"event": "alert", **alert, "collapsed": collapsed, "actor": "engine"})
+        audit({"event": "alert", **alert, "collapsed": collapsed, "actor": actor})
 
     def dismiss_alert(self, key: str, actor: str = "system") -> bool:
         """Remove one card from the feed; the audit log keeps the event.
@@ -1063,11 +1063,17 @@ class State:
                         rule = {**rule, "expires_at": expiry}
                     active_rules.append(rule)
                     seen_blocked.add(ip)
+            from lassi.triage import all_entries as _triage_entries
+            triage = _triage_entries()
+            alerts = []
+            for alert in self.alerts:
+                entry = triage.get(alert_dismiss_key(alert))
+                alerts.append({**alert, "triage": entry} if entry else alert)
             return {
                 "nodes": nodes,
                 "edges": ([{"from": a, "to": b, "kind": "link"} for a, b in self.links]
                           + [{"from": a, "to": b, "kind": "traffic"} for a, b in self.edges]),
-                "alerts": list(self.alerts),
+                "alerts": alerts,
                 "rules": self.rules[-50:][::-1],
                 "active_rules": active_rules,
                 "traffic": list(self.traffic)[::-1],

@@ -408,6 +408,7 @@ def start_engine(source: Callable[[], None]) -> None:
 # Live-mode source (optional, requires scapy)
 # --------------------------------------------------------------------------
 _capture = None
+_suricata = None
 _capture_error_reported = False
 _last_discovery_at = 0.0
 _discovered_hosts: list[dict] = []
@@ -740,6 +741,18 @@ async def lifespan(app: FastAPI):
     if restored:
         log.info("restored %d recent alert(s) from the event log", restored)
     start_engine(source)
+    eve_path = (os.getenv("LASSI_SURICATA_EVE") or "").strip()
+    if eve_path:
+        from lassi.suricata import EveTailer
+        global _suricata
+        _suricata = EveTailer(
+            eve_path, state,
+            from_start=_env_flag("LASSI_SURICATA_FROM_START", False))
+        try:
+            _suricata.start_background()
+        except Exception as exc:
+            _suricata.error = f"{type(exc).__name__}: {exc}"
+            log.exception("could not start the Suricata EVE tail")
     log.info("LassiNet running in %s on %s:%d", mode_label,
              getattr(app.state, "host", HOST), getattr(app.state, "port", PORT))
     audit({"event": "startup", "mode": mode_label, "actor": "system",
@@ -775,6 +788,14 @@ class AuthRequest(BaseModel):
 
 class DismissRequest(BaseModel):
     key: str
+
+
+class TriageRequest(BaseModel):
+    key: str
+    status: str = "ack"
+    assignee: str = ""
+    note: str = ""
+    false_positive: bool = False
 
 
 @app.post("/api/devices/trust")
@@ -1125,10 +1146,13 @@ def _snapshot(role: str = "operator") -> dict:
     snap["dry_run"] = DRY_RUN
     snap["live_allow"] = [str(net) for net in LIVE_ALLOW]
     snap["live_allow_any"] = LIVE_ALLOW_ANY
+    snap["suricata"] = _suricata is not None
+    snap["suricata_running"] = bool(getattr(_suricata, "running", False))
+    snap["suricata_error"] = getattr(_suricata, "error", None) if _suricata else None
     # Feature flags: the static dashboard can be newer than the running Python
     # process (e.g. after a git pull). The client only offers actions the
     # server it is talking to actually implements.
-    snap["features"] = ["dismiss_alerts"]
+    snap["features"] = ["dismiss_alerts", "alert_triage"]
     snap["role"] = role
     snap["auth_required"] = _auth_enabled()
     return snap
@@ -1270,6 +1294,24 @@ def export_logs() -> StreamingResponse | JSONResponse:
     )
 
 
+@app.post("/api/alerts/triage")
+def triage_alert(req: TriageRequest, request: Request) -> dict:
+    """Acknowledge/close a card, assign it, add a note or mark a false positive."""
+    from lassi.triage import upsert
+    try:
+        entry = upsert(req.key, status=req.status, assignee=req.assignee,
+                       note=req.note, false_positive=req.false_positive,
+                       actor=_actor(request))
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    audit({"event": "alert_triage", "key": entry["key"],
+           "status": entry["status"], "assignee": entry["assignee"],
+           "note": entry["note"],
+           "false_positive": entry["false_positive"],
+           "actor": _actor(request)})
+    return {"ok": True, "triage": entry}
+
+
 @app.post("/api/alerts/dismiss")
 def dismiss_alert(req: DismissRequest, request: Request) -> dict:
     """Hide one alert card from the feed (the audit log keeps the event)."""
@@ -1389,6 +1431,9 @@ def health() -> dict:
     # raised (sniff() can return normally after the interface disappears).
     ok = not capture_error and (capture is None or capture_running is True)
     fw_ready, fw_note = _firewall_ready()
+    suricata_running = bool(getattr(_suricata, "running", False)) if _suricata else None
+    suricata_error = getattr(_suricata, "error", None) if _suricata else None
+    ok = ok and (_suricata is None or (suricata_running is True and not suricata_error))
     return {"ok": ok, "mode": state.mode, "model": detector.model is not None,
             "firewall": fw.provider, "firewall_ready": fw_ready,
             "firewall_note": fw_note, "auth_required": _auth_enabled(),
@@ -1396,6 +1441,9 @@ def health() -> dict:
             "auto_block_ttl": AUTO_BLOCK_TTL,
             "live_allow": [str(net) for net in LIVE_ALLOW],
             "live_allow_any": LIVE_ALLOW_ANY,
+            "suricata": _suricata is not None,
+            "suricata_running": suricata_running,
+            "suricata_error": suricata_error,
             "flows_total": state.stats["flows_total"],
             "capture_running": capture_running,
             "capture_error": capture_error}

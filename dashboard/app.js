@@ -1015,8 +1015,9 @@ function fmtAlert(a) {
   var div = document.createElement("div");
   var sev = (a.severity || "info").toLowerCase();
   var icon = SEV_ICONS[sev] || "\u2139\uFE0F";
-  var engineName = (a.engine === "rules" || a.engine === "ml+rules") ? a.engine : "ml";
-  var engineClass = engineName === "rules" ? "rules" : "ml";
+  var engineName = a.engine === "suricata" ? "suricata"
+    : (a.engine === "rules" || a.engine === "ml+rules") ? a.engine : "ml";
+  var engineClass = (engineName === "rules" || engineName === "suricata") ? "rules" : "ml";
   var blocked = a.src && blockedHosts.has(a.src);
   var repeats = Number(a.count) > 1
     ? '<span class="repeat-badge" title="The same detection fired ' + esc(a.count) +
@@ -1033,11 +1034,31 @@ function fmtAlert(a) {
     ? '<button type="button" class="alert-dismiss" data-dismiss="' + esc(dismissKey(a)) +
       '" title="Dismiss from the feed \u2014 the audit log keeps it" aria-label="Dismiss alert">\u00d7</button>'
     : '';
+  var triage = a.triage || {};
+  var triageKey = dismissKey(a);
+  var triageBadge = "";
+  if (triage.false_positive) triageBadge = '<span class="triage-badge fp">FALSE POSITIVE</span>';
+  else if (triage.status === "closed") triageBadge = '<span class="triage-badge closed">CLOSED</span>';
+  else if (triage.status === "ack") triageBadge = '<span class="triage-badge ack">ACK</span>';
+  var triageMeta = (triageBadge || triage.assignee || triage.note)
+    ? '<div class="triage-meta">' + triageBadge +
+      (triage.assignee ? ' <span class="triage-assignee">' + esc(triage.assignee) + '</span>' : '') +
+      (triage.note ? ' <span class="triage-note">' + esc(triage.note) + '</span>' : '') + '</div>'
+    : '';
+  var triageActions = "";
+  if (serverFeatures.has("alert_triage") && sev !== "info") {
+    triageActions = '<div class="triage-actions">' +
+      '<button type="button" class="act triage" data-triage="ack" data-triage-key="' + esc(triageKey) + '">Ack</button>' +
+      '<button type="button" class="act triage" data-triage="false_positive" data-triage-key="' + esc(triageKey) + '">False positive</button>' +
+      (triage.status || triage.false_positive ? '<button type="button" class="act triage" data-triage="clear" data-triage-key="' + esc(triageKey) + '">Reopen</button>' : '') +
+      '<button type="button" class="act triage" data-triage="note" data-triage-key="' + esc(triageKey) + '">Note</button>' +
+      '</div>';
+  }
   div.className = "alert " + sev;
   div.innerHTML = '<div class="top"><b>' + icon + " " + esc(attackLabel(a.attack)) + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span>' + repeats + dismiss + '</div>' +
     '<div class="meta">' + esc(a.time) + " \u00B7 " + esc(a.src) + " \u2192 " + esc(a.dst) +
     ' \u00B7 engine: <span class="engine-tag ' + engineClass + '">' + engineName + '</span> \u00B7 conf: ' + esc(a.confidence) + '</div>' +
-    action;
+    action + triageMeta + triageActions;
   return div;
 }
 function fmtRule(r) {
@@ -1127,6 +1148,7 @@ function renderFeeds(data) {
   var shown = data.alerts.slice(0, 30);
   renderKeyed(alertsEl, shown, function(a) {
     return rowKey([a.time, a.attack, a.src, a.dst, a.severity, a.engine, a.confidence, a.count || 1,
+                   JSON.stringify(a.triage || {}),
                    canBlockIp(a.src) ? "blockable" : "infra",
                    a.src && blockedHosts.has(a.src) ? "blocked" : "allowed"]);
   }, fmtAlert, "no threats yet \u2014 watching\u2026");
@@ -1154,10 +1176,48 @@ document.getElementById("alerts").addEventListener("click", onAction); document.
 function onAction(ev) {
   var dismiss = ev.target.closest("[data-dismiss]");
   if (dismiss) { dismissAlert(dismiss.dataset.dismiss); return; }
+  var triage = ev.target.closest("[data-triage]");
+  if (triage) {
+    triageAction(triage.dataset.triage, triage.dataset.triageKey);
+    return;
+  }
   var block = ev.target.closest("[data-ip]");
   var unblock = ev.target.closest("[data-unblock]");
   if (block) post("/api/firewall/block", { ip: block.dataset.ip, reason: "operator blocked from UI" });
   if (unblock) post("/api/firewall/unblock", { ip: unblock.dataset.unblock });
+}
+
+function triageAction(action, key) {
+  var current = null;
+  if (lastData && Array.isArray(lastData.alerts)) {
+    current = lastData.alerts.find(function(a) { return dismissKey(a) === key; });
+  }
+  var existing = (current && current.triage) || {};
+  var body = {
+    key: key,
+    status: existing.status || "open",
+    assignee: existing.assignee || "",
+    note: existing.note || "",
+    false_positive: !!existing.false_positive
+  };
+  if (action === "ack") {
+    body.status = "ack";
+    body.false_positive = false;
+  } else if (action === "false_positive") {
+    body.status = "closed";
+    body.false_positive = true;
+  } else if (action === "clear") {
+    body.status = "open";
+    body.false_positive = false;
+  } else if (action === "note") {
+    var note = window.prompt("Note for this alert", existing.note || "");
+    if (note === null) return;
+    body.note = note;
+    if (!body.status || body.status === "open") body.status = "ack";
+  } else {
+    return;
+  }
+  post("/api/alerts/triage", body);
 }
 
 // Hide one card from the feed. The server also persists the key, so the log

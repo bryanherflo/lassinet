@@ -176,6 +176,14 @@ the platform is never "dead" — the badge says which engine produced each alert
   expiry is persisted in `data/block_expiry.json` and released by the engine.
   Write events record an `actor` (`operator`, `viewer`, `auto`, `system`) and
   UTC timestamps.
+* **Alert triage**: `data/triage.db` (SQLite) stores ack/closed, assignee, notes and
+  false-positive marks keyed by the same card key as Dismiss. The feed is merged on
+  every snapshot; the audit log keeps `alert_triage` events with the actor. The store
+  is single-process and is not a ticket system (no SLA, notifications or history UI).
+* **Suricata EVE**: `LASSI_SURICATA_EVE` tails `event_type: alert` records into the
+  feed with engine `suricata`; it does **not** auto-block. Tail rotation is detected
+  by a shrinking file; a replace-with-larger-file needs a restart. The EVE path is
+  read-only and should come from a SPAN/mirror or the router IDS.
 * **Opt-outs**: `LASSI_ENRICH=0` disables all enrichment, `LASSI_PROBE=0`
   keeps names but skips the TCP ports, `LASSI_MDNS=0` / `LASSI_SSDP=0` skip the
   multicast questions.
@@ -333,6 +341,7 @@ the infrastructure:
 | `GET /api/logs/verify` | Verify the JSONL hash chain (`ok`, `verified`, `checked`, `legacy`, `error`) |
 | `POST /api/logs/checkpoint` | Sign the verified chain tail with `LASSI_CHECKPOINT_KEY` (operator) |
 | `GET /api/logs/checkpoint` | Read the checkpoint and verify its signature + anchored chain prefix |
+| `POST /api/alerts/triage` | Set status/assignee/note/false-positive for one card (`key`, `status`, `assignee`, `note`, `false_positive`) |
 | `GET /healthz` | Liveness (process up) |
 | `GET /readyz` | Readiness; 503 when capture/model is unhealthy |
 | `POST /api/auth` | Exchange an operator/viewer token for an HttpOnly session cookie |
@@ -387,7 +396,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **225 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **231 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows

@@ -2,6 +2,19 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.13.0] — 2026-10-26
+
+### Added
+- **Alert triage**: SQLite store (`data/triage.db`) with ack/closed, assignee, notes
+  and false-positive marks; `POST /api/alerts/triage`; UI Ack / False positive /
+  Reopen / Note; viewer remains read-only; audit events carry the actor.
+- **Suricata EVE ingest**: `LASSI_SURICATA_EVE` tails IDS alerts into the feed with
+  engine `suricata`; `LASSI_SURICATA_FROM_START` for replay. No automatic blocking.
+- Snapshot advertises `alert_triage`; Suricata status in `/health` and the UI engine tag.
+
+### Tests/Docs
+- 231 tests; triage/Suricata coverage; env/README/overview; cache v=3.50.
+
 ## [0.12.0] — 2026-10-26
 
 ### Security / operations
