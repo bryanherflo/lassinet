@@ -16,7 +16,20 @@ jobs:
       - name: Train model (smoke)
         run: python ml-training/train_model.py
       - name: Run tests
-        run: python -m pytest tests/ -q
+        shell: bash
+        run: |
+          set +e
+          python -m pytest tests/ -q --tb=short 2>&1 | tee pytest.out
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::error::Tests failed; tail follows"
+            tail -n 30 pytest.out | while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              line=${line//$'\r'/''}
+              echo "::error::$line"
+            done
+          fi
+          exit "$status"
 
   # The Windows runner is administrator, so the `windows` firewall provider is
   # exercised against the real Windows Firewall instead of a mock.
@@ -33,4 +46,17 @@ jobs:
       - name: Train model (smoke)
         run: python ml-training/train_model.py
       - name: Run tests (real Windows Firewall)
-        run: python -m pytest tests/ -q
+        shell: bash
+        run: |
+          set +e
+          python -m pytest tests/ -q --tb=short 2>&1 | tee pytest.out
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            echo "::error::Tests failed; tail follows"
+            tail -n 30 pytest.out | while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              line=${line//$'\r'/''}
+              echo "::error::$line"
+            done
+          fi
+          exit "$status"
