@@ -51,7 +51,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (193 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (195 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt
@@ -102,6 +102,7 @@ The badge at the top right of the map shows the live stream state: `live` while 
 | `LASSI_IFACE` | interface name | *default route* | pin the sniffing interface; by default LassiNet uses the NIC of the default route (not the first adapter) |
 | `LASSI_LOGFILE` | path | `logs/events.jsonl` | local JSONL event log: every alert, block and startup appended as one line |
 | `LASSI_NAMEFILE` | path | `data/device_names.json` | where user-given device names (double-click on a node) are persisted across restarts |
+| `LASSI_DISMISSED_FILE` | path | `data/dismissed_alerts.json` | alert cards dismissed from the feed; the audit log keeps every event |
 | `LASSI_TRUSTFILE` | path | `data/trusted_devices.json` | where the trusted devices (never blocked) are persisted across restarts |
 
 `.env` files are loaded automatically when `python-dotenv` is installed (it is in `requirements.txt`); existing environment variables win. Start from `.env.example`.

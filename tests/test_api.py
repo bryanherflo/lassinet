@@ -509,6 +509,22 @@ def test_state_and_health_say_whether_blocks_are_real(client: TestClient) -> Non
     assert health["firewall"] == "mock" and health["firewall_ready"] is False
 
 
+def test_alert_dismiss_endpoint(client: TestClient, monkeypatch, tmp_path) -> None:
+    import lassi.state as st
+
+    monkeypatch.setattr(st, "DISMISSED_PATH", tmp_path / "dismissed.json")
+    lassi_app.state.add_alert({"attack": "port_scan", "severity": "high",
+                               "src": "10.88.0.9", "dst": "10.88.0.2",
+                               "engine": "rules", "confidence": 0.9,
+                               "time": "12:34:56"})
+    key = st.alert_dismiss_key(lassi_app.state.alerts[0])
+    data = client.post("/api/alerts/dismiss", json={"key": key}).json()
+    assert data["ok"] is True and data["changed"] is True
+    assert all(a.get("src") != "10.88.0.9" for a in lassi_app.state.alerts)
+    bad = client.post("/api/alerts/dismiss", json={"key": ""}).json()
+    assert bad["ok"] is False
+
+
 def test_firewall_readiness_explains_missing_opnsense_config(monkeypatch) -> None:
     monkeypatch.setattr(lassi_app.fw, "provider", "opnsense")
     monkeypatch.setattr(lassi_app.fw, "opnsense_url", "")

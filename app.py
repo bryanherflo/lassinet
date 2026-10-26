@@ -607,6 +607,10 @@ class TrustRequest(BaseModel):
     trusted: bool = True
 
 
+class DismissRequest(BaseModel):
+    key: str
+
+
 @app.post("/api/devices/trust")
 def trust_device(req: TrustRequest) -> dict:
     """Mark a device as trusted (or clear the mark).
@@ -819,6 +823,15 @@ def export_logs() -> StreamingResponse | JSONResponse:
         media_type="application/x-ndjson",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.post("/api/alerts/dismiss")
+def dismiss_alert(req: DismissRequest) -> dict:
+    """Hide one alert card from the feed (the audit log keeps the event)."""
+    key = (req.key or "").strip()
+    if not key or len(key) > 300:
+        return {"ok": False, "error": "That is not a valid alert key"}
+    return {"ok": True, "changed": state.dismiss_alert(key)}
 
 
 @app.post("/api/firewall/block")

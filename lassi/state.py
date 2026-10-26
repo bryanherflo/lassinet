@@ -139,6 +139,12 @@ ALIAS_PATH = Path(os.environ.get("LASSI_NAMEFILE", "data/device_names.json"))
 _alias_lock = threading.Lock()
 _aliases: dict[str, str] = {}
 
+# Alerts dismissed by the operator (the JSONL audit log keeps them). Persisted
+# so a restart does not resurrect a card the operator already cleared.
+DISMISSED_PATH = Path(os.environ.get("LASSI_DISMISSED_FILE", "data/dismissed_alerts.json"))
+_dismiss_lock = threading.Lock()
+DISMISSED_KEEP = 500
+
 
 def _load_aliases() -> None:
     global _aliases
@@ -158,6 +164,35 @@ def _load_aliases() -> None:
             _aliases = aliases
     except Exception:
         _aliases = {}
+
+
+def _load_dismissed() -> list[str]:
+    """Dismissed-card keys, newest at the end; a corrupt file means none."""
+    try:
+        raw = json.loads(DISMISSED_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(raw, list):
+        return []
+    return [str(key) for key in raw if str(key).strip()][-DISMISSED_KEEP:]
+
+
+def _save_dismissed(keys: list[str]) -> None:
+    try:
+        DISMISSED_PATH.parent.mkdir(parents=True, exist_ok=True)
+        DISMISSED_PATH.write_text(json.dumps(keys[-DISMISSED_KEEP:], indent=0,
+                                             ensure_ascii=False),
+                                  encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _remember_dismissed(key: str) -> None:
+    with _dismiss_lock:
+        keys = _load_dismissed()
+        if key not in keys:
+            keys.append(key)
+        _save_dismissed(keys)
 
 
 def _save_aliases() -> None:
@@ -265,6 +300,16 @@ def _alert_key(alert: dict[str, Any]) -> tuple[str, ...]:
     """Identity of one detection, used for de-duplication and log replay."""
     return tuple(str(alert.get(field) or "")
                  for field in ("attack", "src", "dst", "severity", "engine"))
+
+
+def alert_dismiss_key(alert: dict[str, Any]) -> str:
+    """Identity of one feed card, including its timestamp.
+
+    Dedupe deliberately merges across time; dismissal must not: it removes
+    the card the operator clicked, and its persisted key is skipped on replay.
+    """
+    return "|".join(str(alert.get(field) or "") for field in
+                    ("time", "attack", "src", "dst", "severity", "engine"))
 
 
 # ---- shared state -----------------------------------------------------------
@@ -404,6 +449,25 @@ class State:
             self._last_alert_at = now
         audit({"event": "alert", **alert, "collapsed": collapsed})
 
+    def dismiss_alert(self, key: str) -> bool:
+        """Remove one card from the feed; the audit log keeps the event.
+
+        The key is remembered in `data/dismissed_alerts.json`, so replaying the
+        log after a restart does not bring the card back. A genuinely new
+        detection has a new timestamp and appears normally.
+        """
+        key = str(key or "").strip()
+        if not key:
+            return False
+        with self._lock:
+            kept = [a for a in self.alerts if alert_dismiss_key(a) != key]
+            if len(kept) == len(self.alerts):
+                return False
+            self.alerts = deque(kept, maxlen=self.alerts.maxlen)
+        _remember_dismissed(key)
+        audit({"event": "alert_dismissed", "key": key})
+        return True
+
     def restore_recent_alerts(self, limit: int = 60, max_age: float = 86400.0) -> int:
         """Rebuild the threat feed from the tail of the JSONL log.
 
@@ -440,6 +504,7 @@ class State:
                 part = part[1:]                    # first line may be cut in half
             lines.extend(part)
         cutoff = time.time() - max_age if max_age > 0 else 0.0
+        dismissed = set(_load_dismissed())
         cards: list[dict[str, Any]] = []
         last_ts = ""
         for line in lines:
@@ -453,6 +518,8 @@ class State:
                 continue
             if str(event.get("mode") or "") != str(self.mode):
                 continue                           # never mix demo history into a live feed
+            if alert_dismiss_key(event) in dismissed:
+                continue                           # operator already cleared this card
             try:
                 event_at = datetime.fromisoformat(str(event.get("ts") or "")).timestamp()
             except (TypeError, ValueError):

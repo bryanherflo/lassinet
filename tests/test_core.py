@@ -1257,6 +1257,28 @@ def test_alert_dedupe_expires_and_can_be_disabled(monkeypatch) -> None:
     assert len(off.alerts) == 2                   # 0 keeps every detection
 
 
+def test_dismissed_alert_is_removed_and_not_restored(monkeypatch, tmp_path) -> None:
+    import json
+
+    import lassi.state as st
+
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", tmp_path / "events.jsonl")
+    monkeypatch.setattr(st, "DISMISSED_PATH", tmp_path / "dismissed.json")
+    state = st.State()
+    alert = {"attack": "port_scan", "severity": "high", "src": "10.0.0.9",
+             "dst": "10.0.0.2", "engine": "rules", "confidence": 0.9,
+             "time": "12:00:00"}
+    state.add_alert(dict(alert))
+    key = st.alert_dismiss_key(state.alerts[0])
+    assert state.dismiss_alert(key) is True
+    assert list(state.alerts) == []
+    assert state.dismiss_alert(key) is False          # idempotent
+    fresh = st.State()
+    assert fresh.restore_recent_alerts() == 0        # the log replay skips it
+    assert json.loads((tmp_path / "dismissed.json").read_text(encoding="utf-8")) == [key]
+    assert (tmp_path / "events.jsonl").read_text(encoding="utf-8").strip()  # log keeps it
+
+
 def test_recent_alerts_are_restored_from_the_log(monkeypatch, tmp_path) -> None:
     """A restart used to wipe the threat feed even though the log had it."""
     import json

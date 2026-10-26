@@ -402,6 +402,17 @@ aside h2::before {
 .alert.info { border-left-color: var(--green); }
 .alert .top, .rule .top { display: flex; justify-content: space-between; gap: var(--space-sm); align-items: flex-start; flex-wrap: wrap; margin-bottom: var(--space-xs); }
 .alert b { color: #fff; font-weight: 600; font-size: 13px; }
+
+/* Dismiss one card from the feed; the JSONL audit log keeps the event. */
+.alert .alert-dismiss {
+  margin-left: auto; flex-shrink: 0; width: 20px; height: 20px; padding: 0;
+  border: 1px solid transparent; border-radius: 50%; background: transparent;
+  color: var(--muted); font-family: inherit; font-size: 15px; line-height: 1;
+  cursor: pointer; transition: color .15s, border-color .15s, background .15s;
+}
+.alert .alert-dismiss:hover, .alert .alert-dismiss:focus-visible {
+  color: var(--red); border-color: var(--red); background: var(--red-dim);
+}
 .alert .sev-badge {
   font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
   padding: 2px 8px; border-radius: 4px; background: var(--red-dim); color: var(--red); border: 1px solid var(--red);

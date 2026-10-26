@@ -49,7 +49,7 @@ exactly what happened with the nftables chain name in 0.4.21.
 
 * The code imports and the FastAPI app boots under Python 3.12 on Linux.
 * The model training pipeline is reproducible enough to run in CI.
-* All **193 tests** pass: state/canonicalisation, ML feature sanitisation and
+* All **195 tests** pass: state/canonicalisation, ML feature sanitisation and
   model profiles, firewall providers (mock / nftables / OPNsense / **windows**),
   trusted/protected devices, live-mode routing and discovery helpers, the REST
   API (block, unblock, trust, logs, health, live→demo fallback) and the

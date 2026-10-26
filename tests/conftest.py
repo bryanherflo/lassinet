@@ -25,11 +25,12 @@ def _isolated_runtime_files(tmp_path_factory):
     import lassi.state as state
 
     tmp = tmp_path_factory.mktemp("runtime")
-    names = ("EVENTS_LOG_PATH", "ALIAS_PATH", "TRUSTED_PATH")
+    names = ("EVENTS_LOG_PATH", "ALIAS_PATH", "TRUSTED_PATH", "DISMISSED_PATH")
     saved = {name: getattr(state, name) for name in names}
     state.EVENTS_LOG_PATH = tmp / "events.jsonl"
     state.ALIAS_PATH = tmp / "device_names.json"
     state.TRUSTED_PATH = tmp / "trusted_devices.json"
+    state.DISMISSED_PATH = tmp / "dismissed_alerts.json"
     discovery.CACHE_PATH = tmp / "device_cache.json"
 
     # A test run must never probe the local network: discovery tests opt back

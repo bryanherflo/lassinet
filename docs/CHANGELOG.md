@@ -2,6 +2,21 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.9.5] — 2026-10-26
+
+### Added
+- **Dismiss an alert card**: each alert has a small **×** button. The card leaves the feed
+  and the key (time + attack + source + destination + severity + engine) is stored in
+  `data/dismissed_alerts.json`, so the startup replay of the JSONL log does not bring it
+  back. The audit log still keeps the detection; the dismissal itself is audited
+  (`alert_dismissed`). This clears a stale false positive without rewriting history.
+- `LASSI_DISMISSED_FILE` documented in the README and `.env.example`.
+
+### Changed
+- After a dismissal the client re-derives confirmed attackers from the remaining alerts and
+  re-renders the map, feed and log immediately (the server snapshot confirms it).
+- The test suite is up to 195 tests.
+
 ## [0.9.4] — 2026-10-26
 
 ### Fixed

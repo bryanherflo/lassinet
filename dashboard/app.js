@@ -306,6 +306,13 @@ function alertKey(a) {
   return [a.time, a.attack, a.severity, a.src, a.dst, a.confidence].join("|");
 }
 
+// Identity of one feed card, including its timestamp. Dismissal removes that
+// exact card; the server remembers the key so a restart does not bring it back.
+function dismissKey(a) {
+  return [a.time, a.attack, a.src, a.dst, a.severity, a.engine]
+    .map(function(v) { return v == null ? "" : String(v); }).join("|");
+}
+
 // On the first snapshot, keep known attacker sources as attackers instead of
 // demoting them to "unknown" until the next alert arrives.
 function seedConfirmedAttackers(data) {
@@ -1015,8 +1022,10 @@ function fmtAlert(a) {
     else if (blocked) action = '<span class="blocked-tag">\u26D4 Blocked</span>';
     else action = '<button class="act" data-ip="' + esc(a.src) + '" title="Drop traffic from ' + esc(a.src) + ' at the firewall (reversible)">Block source ' + esc(a.src) + '</button>';
   }
+  var dismiss = '<button type="button" class="alert-dismiss" data-dismiss="' + esc(dismissKey(a)) +
+    '" title="Dismiss from the feed \u2014 the audit log keeps it" aria-label="Dismiss alert">\u00d7</button>';
   div.className = "alert " + sev;
-  div.innerHTML = '<div class="top"><b>' + icon + " " + esc(attackLabel(a.attack)) + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span>' + repeats + '</div>' +
+  div.innerHTML = '<div class="top"><b>' + icon + " " + esc(attackLabel(a.attack)) + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span>' + repeats + dismiss + '</div>' +
     '<div class="meta">' + esc(a.time) + " \u00B7 " + esc(a.src) + " \u2192 " + esc(a.dst) +
     ' \u00B7 engine: <span class="engine-tag ' + engineClass + '">' + engineName + '</span> \u00B7 conf: ' + esc(a.confidence) + '</div>' +
     action;
@@ -1133,7 +1142,45 @@ function renderFeeds(data) {
   setCount("rules-count", activeRules.length);
 }
 document.getElementById("alerts").addEventListener("click", onAction); document.getElementById("rules").addEventListener("click", onAction);
-function onAction(ev) { var block = ev.target.closest("[data-ip]"); var unblock = ev.target.closest("[data-unblock]"); if (block) post("/api/firewall/block", { ip: block.dataset.ip, reason: "operator blocked from UI" }); if (unblock) post("/api/firewall/unblock", { ip: unblock.dataset.unblock }); }
+function onAction(ev) {
+  var dismiss = ev.target.closest("[data-dismiss]");
+  if (dismiss) { dismissAlert(dismiss.dataset.dismiss); return; }
+  var block = ev.target.closest("[data-ip]");
+  var unblock = ev.target.closest("[data-unblock]");
+  if (block) post("/api/firewall/block", { ip: block.dataset.ip, reason: "operator blocked from UI" });
+  if (unblock) post("/api/firewall/unblock", { ip: unblock.dataset.unblock });
+}
+
+// Hide one card from the feed. The server also persists the key, so the log
+// replay after a restart will not bring it back; the JSONL audit log keeps it.
+async function dismissAlert(key) {
+  try {
+    var res = await fetch("/api/alerts/dismiss", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: key })
+    });
+    var data = await res.json().catch(function() { return {}; });
+    if (!res.ok || (data && data.ok === false)) {
+      toast((data && data.error) || "Could not dismiss that alert", "error");
+      return;
+    }
+    if (lastData) {
+      lastData.alerts = (lastData.alerts || []).filter(function(a) { return dismissKey(a) !== key; });
+      confirmedAttackers = new Set();
+      seedConfirmedAttackers(lastData);
+      renderTopology(lastData);
+      renderFeeds(lastData);
+      renderLog(lastData);
+      updateSelectionBar();
+      updateLegend(lastData);
+    }
+    toast("Alert dismissed \u00b7 it stays in the audit log");
+    refresh();
+  } catch (e) {
+    console.error("dismiss failed:", e);
+    toast("Action failed \u2014 check the server log", "error");
+  }
+}
 async function post(url, body) {
   try {
     var res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

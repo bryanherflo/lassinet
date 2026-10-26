@@ -281,7 +281,9 @@ the infrastructure:
   stream). The log header has an **Export** link that downloads the complete
   JSONL file (one line per detection, block, unblock and startup), and the
   feed is replayed from that log at startup, so a restart no longer shows an
-  empty threats panel.
+  empty threats panel. Every alert card has a **dismiss** button: the card
+  leaves the feed (and stays dismissed after a restart), while the JSONL log
+  keeps the event.
 * **Badges**: operating mode (`live (scapy)` / `demo (simulated)`), stream
   state (WebSocket `live` → `polling` fallback), detection engine, the
   metrics of the model that is actually loaded **and the firewall provider**:
@@ -361,7 +363,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **193 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **195 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows
