@@ -11,7 +11,7 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 log = logging.getLogger("lassi")
 
@@ -573,6 +573,24 @@ def alert_dismiss_key(alert: dict[str, Any]) -> str:
                     ("time", "attack", "src", "dst", "severity", "engine"))
 
 
+# Alert listeners are used by the webhook notifier (and tests). They run
+# outside the state lock, must be fast/non-blocking, and cannot prevent the
+# engine from recording a detection.
+_alert_listeners: list[Callable[[dict[str, Any], bool], None]] = []
+_alert_listener_lock = threading.Lock()
+
+
+def add_alert_listener(listener: Callable[[dict[str, Any], bool], None]) -> None:
+    with _alert_listener_lock:
+        if listener not in _alert_listeners:
+            _alert_listeners.append(listener)
+
+
+def clear_alert_listeners() -> None:
+    with _alert_listener_lock:
+        _alert_listeners.clear()
+
+
 # ---- shared state -----------------------------------------------------------
 class State:
     def __init__(self) -> None:
@@ -711,6 +729,13 @@ class State:
             self._last_alert_key = key
             self._last_alert_at = now
         audit({"event": "alert", **alert, "collapsed": collapsed, "actor": actor})
+        with _alert_listener_lock:
+            listeners = list(_alert_listeners)
+        for listener in listeners:
+            try:
+                listener(dict(alert), collapsed)
+            except Exception:
+                log.exception("alert listener failed")
 
     def dismiss_alert(self, key: str, actor: str = "system") -> bool:
         """Remove one card from the feed; the audit log keeps the event.

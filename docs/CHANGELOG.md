@@ -2,6 +2,20 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.15.0] — 2026-10-26
+
+### Added
+- **Outbound webhooks**: Slack/Teams/Discord/generic, minimum severity, bounded
+  queue + daemon thread, HTTPS enforcement, no secrets in payload, stats in
+  `/metrics`/health. Only new cards (not collapsed repeats).
+- **`python -m lassi.doctor`**: preflight for live scope, auth, firewall, Suricata,
+  webhook, storage, audit chain and backups; JSON/Markdown report; no capture/scan.
+- State alert listeners; `lassinet_webhook_*` metrics; `LASSI_FORWARDED_ALLOW_IPS`
+  proxy trust made explicit.
+
+### Tests/Docs
+- 243 tests; webhook/doctor coverage; README/env/runbook/security updated.
+
 ## [0.14.0] — 2026-10-26
 
 ### Operations / portfolio

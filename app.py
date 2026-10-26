@@ -41,8 +41,10 @@ from lassi.devices import classify
 from lassi.firewall import Firewall
 from lassi.ml import Detector
 from lassi.scope import allowlist_from_env, check_live_scope
-from lassi.state import (State, audit, create_audit_checkpoint, is_external,
-                         prune_logs, read_audit_checkpoint, verify_audit_checkpoint)
+from lassi.state import (State, add_alert_listener, audit,
+                         clear_alert_listeners, create_audit_checkpoint,
+                         is_external, prune_logs, read_audit_checkpoint,
+                         verify_audit_checkpoint)
 from lassi.simulator import Simulator
 
 try:                                  # optional: .env support for local runs
@@ -413,6 +415,7 @@ def start_engine(source: Callable[[], None]) -> None:
 # --------------------------------------------------------------------------
 _capture = None
 _suricata = None
+_notifier = None
 _capture_error_reported = False
 _last_discovery_at = 0.0
 _discovered_hosts: list[dict] = []
@@ -673,6 +676,7 @@ def _source_for_mode(mode: str, has_scapy: bool) -> tuple[Callable[[], None], st
 # --------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _notifier
     try:
         import lassi.live as live_module
         has_scapy = live_module.HAS_SCAPY
@@ -744,6 +748,18 @@ async def lifespan(app: FastAPI):
     restored = state.restore_recent_alerts()
     if restored:
         log.info("restored %d recent alert(s) from the event log", restored)
+    from lassi.webhooks import WebhookNotifier
+    clear_alert_listeners()
+    _notifier = WebhookNotifier.from_env()
+    if _notifier is not None:
+        if _notifier.enabled:
+            _notifier.start()
+            add_alert_listener(_notifier.on_alert)
+            log.info("webhook enabled: format=%s min_severity=%s",
+                     _notifier.fmt, _notifier.min_severity)
+        else:
+            log.warning("webhook disabled: %s", _notifier.error)
+
     start_engine(source)
     eve_path = (os.getenv("LASSI_SURICATA_EVE") or "").strip()
     if eve_path:
@@ -765,6 +781,10 @@ async def lifespan(app: FastAPI):
            "passive": PASSIVE, "dry_run": DRY_RUN,
            "live_allow": [str(net) for net in LIVE_ALLOW]})
     yield
+
+    if _notifier is not None:
+        _notifier.stop()
+        clear_alert_listeners()
 
 
 app = FastAPI(title="LassiNet", lifespan=lifespan)
@@ -1153,6 +1173,7 @@ def _snapshot(role: str = "operator") -> dict:
     snap["suricata"] = _suricata is not None
     snap["suricata_running"] = bool(getattr(_suricata, "running", False))
     snap["suricata_error"] = getattr(_suricata, "error", None) if _suricata else None
+    snap["webhook"] = _notifier.stats() if _notifier is not None else None
     # Feature flags: the static dashboard can be newer than the running Python
     # process (e.g. after a git pull). The client only offers actions the
     # server it is talking to actually implements.
@@ -1448,6 +1469,7 @@ def health() -> dict:
             "suricata": _suricata is not None,
             "suricata_running": suricata_running,
             "suricata_error": suricata_error,
+            "webhook": _notifier.stats() if _notifier is not None else None,
             "flows_total": state.stats["flows_total"],
             "capture_running": capture_running,
             "capture_error": capture_error}
@@ -1501,7 +1523,21 @@ def metrics() -> PlainTextResponse:
     running = bool(getattr(capture, "running", False)) if capture else False
     model = 1 if detector.model is not None else 0
     mode = str(state.mode).replace("\\", "").replace('"', "'")
+    webhook = _notifier.stats() if _notifier is not None else {}
+    wh_enabled = 1 if webhook.get("enabled") else 0
     lines = [
+        "# HELP lassinet_webhook_enabled Outbound alert webhook configured",
+        "# TYPE lassinet_webhook_enabled gauge",
+        f"lassinet_webhook_enabled {wh_enabled}",
+        "# HELP lassinet_webhook_sent_total Webhook deliveries",
+        "# TYPE lassinet_webhook_sent_total counter",
+        f"lassinet_webhook_sent_total {int(webhook.get('sent', 0) or 0)}",
+        "# HELP lassinet_webhook_failed_total Webhook delivery failures",
+        "# TYPE lassinet_webhook_failed_total counter",
+        f"lassinet_webhook_failed_total {int(webhook.get('failed', 0) or 0)}",
+        "# HELP lassinet_webhook_dropped_total Queue-full drops",
+        "# TYPE lassinet_webhook_dropped_total counter",
+        f"lassinet_webhook_dropped_total {int(webhook.get('dropped', 0) or 0)}",
         "# HELP lassinet_flows_total Flows processed since startup",
         "# TYPE lassinet_flows_total counter",
         f"lassinet_flows_total {int(stats.get('flows_total', 0) or 0)}",

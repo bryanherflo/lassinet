@@ -3,6 +3,30 @@
 Operate LassiNet as a monitor first. Every command assumes the project root
 (or the service's `WorkingDirectory`).
 
+## Before a real pilot
+
+```bash
+python -m lassi.doctor
+python -m lassi.doctor --json --report pilot.md
+```
+
+Run this **before** live mode. It checks the local IP against
+`LASSI_LIVE_ALLOW`, tokens, firewall readiness, Suricata path, webhook URL,
+storage, audit chain and backups. It does not capture or scan. A FAIL means
+stop; a warning is a conscious decision.
+
+## Webhooks
+
+- `LASSI_WEBHOOK_URL` + `LASSI_WEBHOOK_FORMAT` (`slack`, `teams`, `discord`,
+  `generic`), default only `high`/`critical`; lower it only if the channel can
+  take the volume.
+- Only new cards are posted; collapsed repeats are skipped. The queue is
+  bounded and a broken endpoint increments `lassinet_webhook_failed_total`.
+- The URL is a secret; HTTPS is enforced unless `LASSI_WEBHOOK_ALLOW_HTTP=1`
+  for a localhost lab. The alert payload contains internal IPs/signatures.
+- Verify reachability with a real test alert; the doctor validates the URL
+  syntax but deliberately does not send one.
+
 ## Start and stop
 
 - Dev/demo: `python run.py` (loopback, no real network).
