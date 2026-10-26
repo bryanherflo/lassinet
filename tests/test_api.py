@@ -498,6 +498,26 @@ def test_invalid_ip_rejected(client: TestClient) -> None:
         assert data["ok"] is False and "valid IP" in data["error"]
 
 
+def test_state_and_health_say_whether_blocks_are_real(client: TestClient) -> None:
+    """A mock firewall must never look like enforcement (operator requirement)."""
+    state = client.get("/api/state").json()
+    assert state["firewall"] == "mock"
+    assert state["firewall_ready"] is False
+    assert "mock" in state["firewall_note"]
+    assert isinstance(state["auto_block"], bool)
+    health = client.get("/health").json()
+    assert health["firewall"] == "mock" and health["firewall_ready"] is False
+
+
+def test_block_response_marks_a_mock_block_as_simulated(client: TestClient) -> None:
+    data = client.post("/api/firewall/block",
+                       json={"ip": "203.0.113.77", "reason": "simulated check"}).json()
+    assert data["ok"] is True and data["changed"] is True
+    assert data["simulated"] is True and data["provider"] == "mock"
+    undone = client.post("/api/firewall/unblock", json={"ip": "203.0.113.77"}).json()
+    assert undone["ok"] is True and undone["simulated"] is True
+
+
 @pytest.mark.parametrize("raw,expected", [
     ("camara", "camara"),
     ("  dos   espacios  ", "dos espacios"),

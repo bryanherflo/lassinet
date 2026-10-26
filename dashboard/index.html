@@ -9,8 +9,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.38">
-<script src="vendor/vis-network.min.js?v=3.38"></script>
+<link rel="stylesheet" href="style.css?v=3.39">
+<script src="vendor/vis-network.min.js?v=3.39"></script>
 </head>
 <body>
 <header>
@@ -18,6 +18,7 @@
   <div class="badges">
     <span id="mode-badge" class="badge" title="Demo mode: simulated traffic, no real packets">…</span>
     <span id="model-badge" class="badge secondary" title="Intrusion-detection model"></span>
+    <span id="fw-badge" class="badge fw" title="Firewall provider: real enforcement or simulation"></span>
   </div>
 </header>
 
@@ -100,7 +101,7 @@
     <h2 title="Detections. Block acts on the source IP of the alert.">&#128679; Threat feed <span class="count" id="alerts-count">0</span></h2>
     <div id="alerts" class="feed"></div>
     <h2 title="Active blocks. The system log keeps the full block/unblock history.">&#128274; Firewall rules <span class="count" id="rules-count">0</span></h2>
-    <p class="section-note">Active blocks only. Block source drops traffic from that IP; Unblock reverses it. History stays in the System log.</p>
+    <p class="section-note" id="rules-note">Active blocks only. Block source drops traffic from that IP; Unblock reverses it. History stays in the System log.</p>
     <div id="rules" class="feed"></div>
     <h2>&#128225; System log <span class="count" id="log-count">0</span><a class="feed-export" href="/api/logs/export" download title="Download the complete JSONL audit log, rotated archives included: one line per detection (repeats included), block, unblock and startup">&#8681; Export</a></h2>
     <div id="log" class="feed log"></div>
@@ -157,6 +158,6 @@
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="app.js?v=3.38"></script>
+<script src="app.js?v=3.39"></script>
 </body>
 </html>

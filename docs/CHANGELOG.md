@@ -2,6 +2,25 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.9.2] — 2026-10-26
+
+### Added
+- **The dashboard shows whether a block is real.** The header has a firewall badge:
+  `FW: Windows Firewall` / `OPNsense` / `nftables` in green when a Block drops traffic, and
+  `FW: mock · simulated` (or *needs Administrator/root*) in amber when it is only recorded.
+  `/api/state` and `/health` expose `firewall`, `firewall_ready` and `firewall_note`;
+  block/unblock responses carry `provider` and `simulated`.
+- **`scripts/start-live-windows.ps1`**: a one-click launcher that asks for UAC, starts live with
+  `LASSI_FW=windows` and auto-block off, so the first Block click installs a real inbound rule
+  on this PC. The README explains the scope (inbound to this host only).
+
+### Changed
+- Mock mode is no longer silent: the block toast says *simulated (mock firewall, nothing
+  dropped)*, the Firewall rules note says blocks are only recorded, and the selection-bar
+  button tooltip says so too.
+- Startup logs why the selected provider cannot enforce (mock, pfSense placeholder, Windows
+  without elevation, nftables without root).
+
 ## [0.9.1] — 2026-10-25
 
 ### Fixed

@@ -243,6 +243,7 @@ function syncTrusted(data) {
 var ROLE_ORDER = { server: 0, workstation: 1, iot: 2, printer: 3, attacker: 4, unknown: 5, trusted: 6 };
 var layoutKey = "";
 var kindFilter = null;   // "camera", "unknown", ... or null (show everything)
+var firewallProvider = "mock", firewallReady = false, firewallNote = "";
 var lastData = null;     // last snapshot, so a legend click re-renders immediately
 
 function computeTreeLayout(data) {
@@ -671,7 +672,10 @@ function updateSelectionBar() {
   var btn = document.getElementById("sel-block");
   btn.textContent = blocked ? "Unblock IP" : "Block IP";
   btn.className = "sel-btn " + (blocked ? "safe" : "danger");
-  btn.title = blocked ? "Remove the firewall block for " + selectedNodeIp : "Drop traffic from " + selectedNodeIp + " at the firewall (reversible)";
+  btn.title = blocked
+    ? (firewallReady ? "Remove the firewall block for " : "Remove the recorded block for ") + selectedNodeIp
+    : (firewallReady ? "Drop traffic from " + selectedNodeIp + " at the firewall (reversible)"
+                     : "Record a block for " + selectedNodeIp + " (simulated: no traffic is dropped)");
   btn.setAttribute("aria-label", (blocked ? "Unblock " : "Block ") + selectedNodeIp);
   // Pan only when the selection changes (not on every data tick), so the
   // operator can still pan freely while a device stays selected.
@@ -1138,9 +1142,11 @@ async function post(url, body) {
     if (data && data.ok === false) { toast(data.error || "That action is not allowed right now", "error"); return; }
     if (url.indexOf("/firewall/block") >= 0) {
       if (data.changed === false) toast(body.ip + " is already blocked", "error");
+      else if (data.simulated) toast(body.ip + " marked as blocked \u00B7 simulated (mock firewall, nothing dropped)");
       else toast("Blocked " + body.ip + " \u00B7 traffic from it is dropped");
     } else if (url.indexOf("/firewall/unblock") >= 0) {
       if (data.changed === false) toast("No active block for " + body.ip, "error");
+      else if (data.simulated) toast(body.ip + " unblocked \u00B7 simulated (nothing was enforced)");
       else toast("Unblocked " + body.ip + " \u00B7 traffic is allowed again");
     } else if (url.indexOf("/devices/rename") >= 0) {
       toast("Renamed to " + body.name);
@@ -1176,6 +1182,30 @@ function renderStats(data) {
         ? "Live mode: the packet capture stopped \u2014 check the server log or /health for the reason"
         : "Live mode: reading real traffic from this machine")
     : "Demo mode: simulated traffic on a fictional network \u2014 no real packets";
+  // Enforcement context: the mode badge says how traffic is captured; this
+  // one says whether a Block really drops anything. A mock firewall must
+  // never look like a real one.
+  firewallProvider = String(data.firewall || "mock");
+  firewallReady = data.firewall_ready === true;
+  firewallNote = String(data.firewall_note || "");
+  var fwEl = document.getElementById("fw-badge");
+  if (fwEl) {
+    var fwNames = { mock: "mock \u00b7 simulated", windows: "Windows Firewall",
+                    nftables: "nftables", opnsense: "OPNsense",
+                    pfsense: "pfSense \u00b7 placeholder" };
+    fwEl.textContent = "FW: " + (fwNames[firewallProvider] || firewallProvider);
+    fwEl.className = "badge fw " + (firewallReady ? "ok" : "warn");
+    fwEl.title = firewallReady
+      ? "Firewall " + firewallProvider + " \u2014 blocks are real"
+      : (firewallNote || ("Firewall " + firewallProvider + " \u2014 blocks are simulated"));
+  }
+  var noteEl = document.getElementById("rules-note");
+  if (noteEl) {
+    noteEl.textContent = firewallReady
+      ? "Active blocks only. Block source drops traffic from that IP; Unblock reverses it. History stays in the System log."
+      : (firewallNote || "Simulated: blocks are recorded here but no traffic is dropped.");
+    noteEl.classList.toggle("warn-note", !firewallReady);
+  }
   var m = data.model_metrics;
   var modelEl = document.getElementById("model-badge");
   var accuracy = m ? Number(m.accuracy) : NaN;

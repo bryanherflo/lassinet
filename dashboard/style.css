@@ -78,6 +78,9 @@ header::after {
   cursor: default;
 }
 .badge:hover { background: #1f6feb55; border-color: #1f6feb88; transform: translateY(-1px); }
+.badge.warn { background: #d2992226; color: #e3b341; border-color: #d2992255; }
+.badge.ok { background: #3fb95026; color: #3fb950; border-color: #3fb95055; }
+.section-note.warn-note { color: #e3b341; }
 .badge.secondary { background: var(--green-dim); color: var(--green); border-color: #23863655; }
 .badge.secondary:hover { background: #23863655; border-color: #23863688; }
 

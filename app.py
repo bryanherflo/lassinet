@@ -560,6 +560,12 @@ async def lifespan(app: FastAPI):
         _seed_live_gateway()
         _restore_firewall_blocks()
     _apply_protected_config()
+    fw_ready, fw_note = _firewall_ready()
+    if fw_note:
+        (log.warning if MODE != "demo" else log.info)(
+            "firewall %s cannot enforce right now: %s", fw.provider, fw_note)
+    else:
+        log.info("firewall %s is ready to enforce real blocks", fw.provider)
     if AUTO_BLOCK:
         if mode_label.startswith("live"):
             log.warning("auto-block is ON in live mode (scope=%s): a false positive "
@@ -677,9 +683,39 @@ async def no_cache_dashboard(request, call_next):
     return response
 
 
+def _firewall_ready() -> tuple[bool, str]:
+    """Can the selected provider enforce a block right now? (ready, reason)."""
+    if fw.provider == "mock":
+        return False, ("mock: blocks are recorded in the dashboard but no firewall "
+                       "rule is created")
+    if fw.provider == "pfsense":
+        return False, "pfSense is still a placeholder: nothing is enforced"
+    if fw.provider == "windows" and os.name == "nt":
+        try:
+            import ctypes
+            if not ctypes.windll.shell32.IsUserAnAdmin():
+                return False, "Windows Firewall needs an Administrator shell"
+        except Exception:
+            pass
+    if fw.provider == "nftables" and hasattr(os, "geteuid") and os.geteuid() != 0:
+        return False, "nftables needs root"
+    return True, ""
+
+
+def _snapshot() -> dict:
+    """State payload plus the enforcement context the dashboard must show."""
+    snap = state.snapshot()
+    ready, note = _firewall_ready()
+    snap["firewall"] = fw.provider
+    snap["firewall_ready"] = ready
+    snap["firewall_note"] = note
+    snap["auto_block"] = AUTO_BLOCK
+    return snap
+
+
 @app.get("/api/state")
 def get_state() -> JSONResponse:
-    return JSONResponse(state.snapshot())
+    return JSONResponse(_snapshot())
 
 
 _LOG_TAIL_BYTES = 1_000_000
@@ -793,6 +829,7 @@ def block(req: BlockRequest) -> dict:
             return {"ok": False, "error": f"{ip} cannot be blocked: {why}"}
         if state.is_blocked(ip):
             return {"ok": True, "changed": False, "blocked": True,
+                    "provider": fw.provider, "simulated": fw.provider == "mock",
                     "rules": state.snapshot()["rules"][:10]}
         if not fw.block(ip, reason):
             return {"ok": False, "changed": False, "blocked": state.is_blocked(ip),
@@ -801,6 +838,7 @@ def block(req: BlockRequest) -> dict:
         if not changed and state.is_protected(ip):
             fw.unblock(ip)                  # roll back a rule for infrastructure
         return {"ok": True, "changed": changed, "blocked": state.is_blocked(ip),
+                "provider": fw.provider, "simulated": fw.provider == "mock",
                 "rules": state.snapshot()["rules"][:10]}
 
 
@@ -811,12 +849,14 @@ def unblock(req: BlockRequest) -> dict:
         return {"ok": False, "error": "That is not a valid IP address"}
     with _firewall_lock:
         if not state.is_blocked(ip):
-            return {"ok": True, "changed": False, "blocked": False}
+            return {"ok": True, "changed": False, "blocked": False,
+                    "provider": fw.provider, "simulated": fw.provider == "mock"}
         if not fw.unblock(ip):
             return {"ok": False, "changed": False, "blocked": True,
                     "error": f"Firewall provider '{fw.provider}' could not remove the block; it is still active"}
         changed = state.unblock_host(ip)
-        return {"ok": True, "changed": changed, "blocked": state.is_blocked(ip)}
+        return {"ok": True, "changed": changed, "blocked": state.is_blocked(ip),
+                "provider": fw.provider, "simulated": fw.provider == "mock"}
 
 
 @app.get("/health")
@@ -832,8 +872,10 @@ def health() -> dict:
     # A capture object that is no longer running is unhealthy even if it never
     # raised (sniff() can return normally after the interface disappears).
     ok = not capture_error and (capture is None or capture_running is True)
+    fw_ready, fw_note = _firewall_ready()
     return {"ok": ok, "mode": state.mode, "model": detector.model is not None,
-            "firewall": fw.provider,
+            "firewall": fw.provider, "firewall_ready": fw_ready,
+            "firewall_note": fw_note,
             "flows_total": state.stats["flows_total"],
             "capture_running": capture_running,
             "capture_error": capture_error}
@@ -845,7 +887,7 @@ async def ws(sock: WebSocket) -> None:
     try:
         while True:
             await asyncio.sleep(TICK)
-            await sock.send_json(state.snapshot())
+            await sock.send_json(_snapshot())
     except WebSocketDisconnect:
         pass
 

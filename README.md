@@ -119,6 +119,8 @@ The capture interface and the sweep both follow the **default route**, so a lapt
 
 **Windows Firewall setup (real enforcement on Windows):** set `LASSI_FW=windows` and run the app from an **Administrator** shell - `netsh` is rejected without elevation and the API then reports the error instead of marking the source as blocked. Each blocked source becomes a persistent inbound rule named `LassiNet-Block-<ip>` (`dir=in action=block remoteip=<ip> profile=any`) that is removed again on unblock, and surviving rules are read back on startup. The rule blocks **inbound** traffic from that source on this host; outbound connections the machine starts itself are not affected.
 
+The quickest way is the included launcher: `scripts\start-live-windows.ps1` (right-click *Run with PowerShell*, or `powershell -ExecutionPolicy Bypass -File .\scripts\start-live-windows.ps1`). It asks for UAC, sets `LASSI_MODE=live`, `LASSI_FW=windows`, `LASSI_AUTO_BLOCK=0` and starts the server, so **Block is real** from the first click. The dashboard header always shows the firewall provider: `FW: Windows Firewall` (green) when blocks are enforced, `FW: mock · simulated` (amber) when they are only recorded — in that mode the toast after a block says *simulated* and the Firewall rules note says no traffic is dropped.
+
 **Linux nftables setup (real enforcement on Linux):** set `LASSI_FW=nftables` and create the table and the base chain yourself - LassiNet only adds and removes rules:
 
 ```bash

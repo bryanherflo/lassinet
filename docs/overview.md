@@ -283,8 +283,12 @@ the infrastructure:
   feed is replayed from that log at startup, so a restart no longer shows an
   empty threats panel.
 * **Badges**: operating mode (`live (scapy)` / `demo (simulated)`), stream
-  state (WebSocket `live` → `polling` fallback), detection engine and the
-  metrics of the model that is actually loaded.
+  state (WebSocket `live` → `polling` fallback), detection engine, the
+  metrics of the model that is actually loaded **and the firewall provider**:
+  green (`FW: Windows Firewall`, `OPNsense`, `nftables`) means a Block really
+  drops traffic; amber (`FW: mock · simulated`, or a provider that needs
+  administrator/root) means it is only recorded — the block toast and the
+  rules note say so explicitly.
 * **Keyboard**: `B` block, `R` refit, `M` minimise, `L` legend, `D` dots,
   `H`/`?` help, `Esc` close. Click selects a device, right-click opens the
   trust menu, double-click renames it.
