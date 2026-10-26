@@ -2,6 +2,14 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.9.7] — 2026-10-26
+
+### Fixed
+- **The legend counters were clipped at the right edge** (`Desktop 1`, `TV 2`, `NAS 1` painted
+  under the panel border): the type rows used a negative horizontal margin that made them wider
+  than their grid cell. The rows now have normal margins and 5 px of padding, so the counts stay
+  inside the panel at every map width.
+
 ## [0.9.6] — 2026-10-26
 
 ### Fixed

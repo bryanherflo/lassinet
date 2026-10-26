@@ -269,7 +269,7 @@ main {
   gap: 2px var(--space-sm); padding: 0 var(--space-sm);
 }
 .legend-icons .lg { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-dim);
-  cursor: pointer; border-radius: 6px; padding: 2px 4px; margin: 0 -3px;
+  cursor: pointer; border-radius: 6px; padding: 2px 5px; margin: 0;
   transition: background .15s, outline-color .15s; }
 .legend-icons .lg .lg-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .legend-icons .lg:hover { background: #ffffff0a; }
