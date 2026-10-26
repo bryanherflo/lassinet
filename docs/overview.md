@@ -159,6 +159,23 @@ the platform is never "dead" — the badge says which engine produced each alert
   without that, Windows sent them through the VirtualBox host-only NIC and
   nothing answered. Nothing is probed twice, and the gateway is never
   port-scanned.
+* **Live scope guard**: when `LASSI_LIVE_ALLOW` is set (comma-separated IPv4
+  CIDRs), live mode refuses to start outside it and `discover()` skips any
+  candidate before an ARP sweep. An invalid/empty allowlist with the variable
+  set is a refusal, not a silent bypass. A normal live run **requires** the
+  allowlist; `LASSI_LIVE_ALLOW_ANY=1` is the explicit lab override. At the
+  discovery boundary an unset allowlist is permissive (useful for unit tests),
+  but the app's startup check is the authoritative gate.
+* **Passive mode**: `LASSI_PASSIVE=1` keeps the capture but never runs the ARP
+  sweep or the port/mDNS/SSDP enrichment; hosts are learned only from observed
+  flow endpoints. Use it on networks where active probing is not authorized.
+* **Dry-run**: `LASSI_DRY_RUN=1` forces the mock provider even when `LASSI_FW`
+  names a real one; blocks are recorded and shown, nothing is enforced.
+* **Block TTL + attribution**: automatic blocks expire after
+  `LASSI_AUTO_BLOCK_TTL` (1 h by default); manual blocks accept `ttl_s`. The
+  expiry is persisted in `data/block_expiry.json` and released by the engine.
+  Write events record an `actor` (`operator`, `viewer`, `auto`, `system`) and
+  UTC timestamps.
 * **Opt-outs**: `LASSI_ENRICH=0` disables all enrichment, `LASSI_PROBE=0`
   keeps names but skips the TCP ports, `LASSI_MDNS=0` / `LASSI_SSDP=0` skip the
   multicast questions.
@@ -316,7 +333,7 @@ the infrastructure:
 | `GET /api/logs/verify` | Verify the JSONL hash chain (`ok`, `verified`, `checked`, `legacy`, `error`) |
 | `POST /api/auth` | Exchange an operator/viewer token for an HttpOnly session cookie |
 | `GET /metrics` | Prometheus metrics (protected when auth is enabled) |
-| `POST /api/firewall/block` | Block a source (`{"ip": "...", "reason": "..."}`) |
+| `POST /api/firewall/block` | Block a source (`{"ip": "...", "reason": "...", "ttl_s": 3600}`; `ttl_s=0` is permanent) |
 | `POST /api/firewall/unblock` | Remove the block |
 | `POST /api/devices/rename` | Rename a device (persisted) |
 | `POST /api/devices/trust` | Mark a device as trusted / clear the mark (persisted, enforced server-side) |
@@ -366,7 +383,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **208 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **219 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows

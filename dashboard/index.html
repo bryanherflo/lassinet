@@ -9,8 +9,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.47">
-<script src="vendor/vis-network.min.js?v=3.47"></script>
+<link rel="stylesheet" href="style.css?v=3.48">
+<script src="vendor/vis-network.min.js?v=3.48"></script>
 </head>
 <body>
 <header>
@@ -136,6 +136,10 @@
         <p>In demo mode the rule is simulated (<b>mock</b> provider): nothing on your PC changes. In live mode <b>nftables</b>, <b>OPNsense</b> or <b>Windows Firewall</b> can enforce blocks; <b>pfSense</b> is still a placeholder and reports an error instead of pretending to block. <b>Unblock</b> - on a blocked device or in a rule - reverses it.</p>
         <p class="help-tip">Demo tip: high and critical attacks are auto-blocked by default, so the simulation can go quiet. Unblock the attacker in Firewall rules to let it continue. In live mode auto-block is <b>off</b> and only touches external sources, so a false positive cannot take your LAN down.</p>
       </div>
+      <div class="help-block">
+        <h4>Live safety</h4>
+        <p>Set <b>LASSI_LIVE_ALLOW</b> to your own CIDR (for example <code>192.168.0.0/24</code>): live mode requires it and refuses any other network (<b>LASSI_LIVE_ALLOW_ANY=1</b> is the explicit lab override); ARP discovery skips disallowed networks. <b>LASSI_PASSIVE=1</b> observes captured flows without ARP sweeps or port probes. <b>LASSI_DRY_RUN=1</b> records and shows blocks without changing the firewall. In live mode auto-block is off by default; if enabled, auto-blocks expire after <b>LASSI_AUTO_BLOCK_TTL</b> (1 h by default).</p>
+      </div>
       <div class="help-grid">
         <div>
           <h4>Traffic dots</h4>
@@ -153,7 +157,7 @@
         </div>
         <div>
           <h4>How devices are identified</h4>
-          <p>In live mode LassiNet sweeps the LAN with ARP (IP + MAC), then asks the local resolver for a <b>name</b> and fingerprints a handful of ports (631/9100 printer, 554 camera, 62078 iPhone, 8009 Chromecast, 5000 NAS…) to pick the icon. Results are cached per MAC, so each device is probed <b>once per 12 h</b> and never on the gateway. In demo mode the devices are scripted.</p>
+          <p>In live mode (unless passive) LassiNet sweeps the LAN with ARP (IP + MAC), then asks the local resolver for a <b>name</b> and fingerprints a handful of ports (631/9100 printer, 554 camera, 62078 iPhone, 8009 Chromecast, 5000 NAS…) to pick the icon. Results are cached per MAC, so each device is probed <b>once per 12 h</b> and never on the gateway. In demo mode the devices are scripted.</p>
         </div>
         <div>
           <h4>Right column</h4>
@@ -165,13 +169,13 @@
         <span><kbd>B</kbd> block</span><span><kbd>R</kbd> refit</span><span><kbd>M</kbd> map</span>
         <span><kbd>L</kbd> legend</span><span><kbd>D</kbd> dots</span><span><kbd>/</kbd> find</span><span><kbd>H</kbd> help</span><span><kbd>Esc</kbd> close</span>
       </div>
-      <p class="help-note">In demo mode LassiNet simulates traffic and attacks on a fictional network — nothing is captured from your real network. In live mode the same map shows real devices and flows.</p>
+      <p class="help-note">In demo mode LassiNet simulates traffic and attacks on a fictional network — nothing is captured from your real network. In live mode the same map shows real devices and flows; passive and dry-run modes are shown in the header.</p>
     </div>
   </div>
 </div>
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="app.js?v=3.47"></script>
+<script src="app.js?v=3.48"></script>
 </body>
 </html>

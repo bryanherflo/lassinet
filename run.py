@@ -115,6 +115,8 @@ def main(argv: list[str] | None = None) -> int:
     env = dict(os.environ)
     if args.live:
         env["LASSI_MODE"] = "live"
+        # The app enforces LASSI_LIVE_ALLOW after loading .env (which this
+        # process does not parse). Do not duplicate that policy here.
     if args.fw:
         env["LASSI_FW"] = args.fw
 

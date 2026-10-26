@@ -38,6 +38,8 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 
 ## 🔐 Hardening & operations
 
+- **Live scope + safe modes:** set `LASSI_LIVE_ALLOW` to your own CIDR; live mode refuses to start on any other network and ARP discovery skips it. `LASSI_PASSIVE=1` observes captured flows without ARP sweeps or port probes; `LASSI_DRY_RUN=1` records blocks without touching the firewall. Auto-block is off by default in live mode; when enabled its blocks expire after `LASSI_AUTO_BLOCK_TTL` (1 h by default).
+- **Audit attribution:** block, unblock, trust, rename and dismiss events carry `actor` and UTC timestamps; auto-blocks are attributed to `auto`.
 - **Authentication + RBAC (optional):** set `LASSI_TOKEN_OPERATOR` (can block, unblock, trust, rename, dismiss) and/or `LASSI_TOKEN_VIEWER` (read-only). The dashboard exchanges a token for an HttpOnly session cookie with **server-side expiry** (`LASSI_SESSION_TTL`, 12 h by default); scripts can send `Authorization: Bearer <token>`. Only the WebSocket accepts `?token` (a browser cannot set headers on a WebSocket). Set `LASSI_SECRET` if sessions must survive a restart; otherwise the cookie key is random per process. Docs/OpenAPI are protected too. With neither token set the API stays open, as before (localhost lab).
 - **Tamper-evident audit log:** every JSONL line carries `prev` and `hash`; `GET /api/logs/verify` checks the chain across the active file and the kept archives. It detects edits, insertions and deletions between lines; once the chain starts, an unchained line is a failure. The first kept line is the anchor, so a deleted prefix or suffix and a full rewrite need an external copy to prove (`verified` is false for a legacy-only log).
 - **Metrics:** `GET /metrics` exposes Prometheus counters/gauges (flows, detections, devices, blocks, capture, model, mode). Protected when auth is enabled.
@@ -50,7 +52,7 @@ LassiNet is built for people who want to see and act on **their own LAN**, not f
 
 - **Students and juniors** in systems, networking or security (ASIR, CFGS, master's, self-taught) who want the full path from discovery to detection to a real block.
 - **Homelabbers and home-network owners** who want visibility of their devices and a safe way to practise OPNsense, nftables or Windows Firewall.
-- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 208 tests plus CI make it easy to use in class.
+- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 219 tests plus CI make it easy to use in class.
 - **Recruiters and interviewers** reviewing a portfolio project that covers Python, FastAPI, scapy, ML, firewalls, tests, CI and documentation.
 
 ## 🚫 Who it is not for
@@ -78,7 +80,8 @@ On Windows you can double-click **`start.bat`**; on Linux/macOS, `bash start.sh`
 Demo mode is safe: simulated network, no privileges, no ARP sweep. For the real thing:
 
 ```bash
-python run.py --live          # real capture (needs scapy + Npcap on Windows, root on Linux)
+$env:LASSI_LIVE_ALLOW="192.168.0.0/24"; python run.py --live   # real capture; set YOUR CIDR
+# or: LASSI_LIVE_ALLOW=192.168.0.0/24 python run.py --live
 python run.py --fw windows    # real blocks; start the terminal as Administrator
 python run.py --port 9000     # any app.py flag is passed through
 ```
@@ -97,7 +100,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (208 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (219 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt
@@ -135,6 +138,11 @@ The badge at the top right of the map shows the live stream state: `live` while 
 | `LASSI_FW` | `mock` / `nftables` / `opnsense` / `windows` / `pfsense` | `mock` | firewall provider; `nftables`, `opnsense` and `windows` enforce, `pfsense` is still a placeholder |
 | `LASSI_AUTO_BLOCK` | `0` / `1` | `1` (demo), `0` (live) | auto-block **high and critical** sources |
 | `LASSI_AUTO_BLOCK_SCOPE` | `external` / `any` | `external` (live), `any` (demo) | which sources the auto-block may touch; `external` never blocks a LAN address |
+| `LASSI_LIVE_ALLOW` | CIDR list | *empty* | **required for live** unless `LASSI_LIVE_ALLOW_ANY=1`; the allowlist; live refuses other networks and ARP skips them |
+| `LASSI_LIVE_ALLOW_ANY` | bool | `false` | explicit lab override: allow live on any LAN without an allowlist (not recommended) |
+| `LASSI_PASSIVE` | bool | `false` | live observation only: no ARP sweep and no port fingerprint probes |
+| `LASSI_DRY_RUN` | bool | `false` | keep the mock firewall even with a real provider: actions are recorded, not enforced |
+| `LASSI_AUTO_BLOCK_TTL` | seconds | `3600` | expiry for automatic blocks (`0` = permanent); manual blocks accept `ttl_s` |
 | `LASSI_PROTECT` | IPs (comma separated) | *empty* | addresses that must never be blocked (your DNS/DHCP server, NAS, hypervisor…) |
 | `LASSI_HOST` | IP | `127.0.0.1` | bind address |
 | `LASSI_PORT` | int | `8000` | dashboard port |
@@ -149,6 +157,7 @@ The badge at the top right of the map shows the live stream state: `live` while 
 | `LASSI_ALERT_DEDUPE` | seconds | `120` | identical detections (attack, source, destination, severity, engine) inside this window share one card with a `×N` counter; `0` shows every one |
 | `LASSI_LOG_MAX_BYTES` | bytes | `10485760` (10 MB) | rotate the event log when the active file grows past this size (`0` = never rotate) |
 | `LASSI_LOG_KEEP` | int | `5` | rotated archives kept next to the active log (`0` = keep all) |
+| `LASSI_BLOCKFILE` | path | `data/block_expiry.json` | persisted block TTL metadata, so a restart cannot make a temporary block permanent |
 | `LASSI_DEMO_NET` | CIDR | `10.0.0.0/24` | base subnet for the simulated demo network - change it and every demo device/attack story moves to that addressing |
 | `LASSI_IFACE` | interface name | *default route* | pin the sniffing interface; by default LassiNet uses the NIC of the default route (not the first adapter) |
 | `LASSI_LOGFILE` | path | `logs/events.jsonl` | local JSONL event log: every alert, block and startup appended as one line |
@@ -158,18 +167,18 @@ The badge at the top right of the map shows the live stream state: `live` while 
 
 `.env` files are loaded automatically when `python-dotenv` is installed (it is in `requirements.txt`); existing environment variables win. Start from `.env.example`.
 
-> **Exposure warning:** LassiNet binds to `127.0.0.1` by default and has **no user authentication**. If you set `LASSI_HOST=0.0.0.0`, put it behind a trusted reverse proxy/VPN or firewall — anyone who can reach the port can block IPs through the API.
+> **Exposure warning:** LassiNet binds to `127.0.0.1` by default. Authentication is **optional** (`LASSI_TOKEN_OPERATOR` / `LASSI_TOKEN_VIEWER`): without tokens the API is open on localhost. If you set `LASSI_HOST=0.0.0.0`, set tokens and put it behind a trusted reverse proxy/VPN or firewall — anyone who can reach the port can block IPs through the API. Live mode also requires `LASSI_LIVE_ALLOW` (or the explicit `LASSI_LIVE_ALLOW_ANY=1` lab override).
 
 **Live mode** (real traffic, opt-in — needs `pip install scapy` plus Npcap on Windows or root on Linux, and ideally the real-data model `python ml-training/load_cicids.py`, otherwise the rule-based engine is used):
 
 ```bash
 pip install scapy
 
-# Linux / macOS
-LASSI_MODE=live python app.py
+# Linux / macOS - replace the CIDR with YOUR authorized LAN
+LASSI_MODE=live LASSI_LIVE_ALLOW=192.168.0.0/24 python app.py
 
 # Windows PowerShell
-$env:LASSI_MODE="live"; python app.py
+$env:LASSI_MODE="live"; $env:LASSI_LIVE_ALLOW="192.168.0.0/24"; python app.py
 ```
 
 > In this example the firewall provider stays `mock`: blocks are recorded but **nothing is dropped**. Set `LASSI_FW=windows` (below), `nftables` (Linux) or `opnsense` (router) to enforce them.
@@ -180,7 +189,7 @@ The capture interface and the sweep both follow the **default route**, so a lapt
 
 **Windows Firewall setup (real enforcement on Windows):** set `LASSI_FW=windows` and run the app from an **Administrator** shell - `netsh` is rejected without elevation and the API then reports the error instead of marking the source as blocked. Each blocked source becomes a persistent inbound rule named `LassiNet-Block-<ip>` (`dir=in action=block remoteip=<ip> profile=any`) that is removed again on unblock, and surviving rules are read back on startup. The rule blocks **inbound** traffic from that source on this host; outbound connections the machine starts itself are not affected.
 
-The quickest way is the included launcher: `scripts\start-live-windows.ps1` (right-click *Run with PowerShell*, or `powershell -ExecutionPolicy Bypass -File .\scripts\start-live-windows.ps1`). It asks for UAC, sets `LASSI_MODE=live`, `LASSI_FW=windows`, `LASSI_AUTO_BLOCK=0` and starts the server, so **Block is real** from the first click. If you use a virtual environment, activate it first: the launcher resolves the interpreter before UAC and reuses it. The dashboard header always shows the firewall provider: `FW: Windows Firewall` (green) when blocks are enforced, `FW: mock · simulated` (amber) when they are only recorded — in that mode the toast after a block says *simulated* and the Firewall rules note says no traffic is dropped.
+The quickest way is the included launcher: `scripts\start-live-windows.ps1` (right-click *Run with PowerShell*, or `powershell -ExecutionPolicy Bypass -File .\scripts\start-live-windows.ps1`). It asks for UAC, asks for your authorized LAN CIDR (unless `LASSI_LIVE_ALLOW` is already set), sets `LASSI_MODE=live`, `LASSI_FW=windows`, `LASSI_AUTO_BLOCK=0` and starts the server, so **Block is real** from the first click. If you use a virtual environment, activate it first: the launcher resolves the interpreter before UAC and reuses it. The dashboard header always shows the firewall provider: `FW: Windows Firewall` (green) when blocks are enforced, `FW: mock · simulated` (amber) when they are only recorded — in that mode the toast after a block says *simulated* and the Firewall rules note says no traffic is dropped.
 
 **Linux nftables setup (real enforcement on Linux):** set `LASSI_FW=nftables` and create the table and the base chain yourself - LassiNet only adds and removes rules:
 

@@ -1237,10 +1237,14 @@ function renderStats(data) {
   var mode = String(data.mode || "demo");
   modeEl.textContent = "\u25CF " + mode;
   var isLive = mode.indexOf("live") === 0;
+  var isPassive = mode.indexOf("passive") >= 0;
+  var isDryRun = data.dry_run === true;
   modeEl.title = isLive
     ? (mode.indexOf("capture error") >= 0
         ? "Live mode: the packet capture stopped \u2014 check the server log or /health for the reason"
-        : "Live mode: reading real traffic from this machine")
+        : isPassive
+          ? "Live passive mode: only reads captured flows; no ARP sweep or port probes"
+          : "Live mode: reading real traffic from this machine")
     : "Demo mode: simulated traffic on a fictional network \u2014 no real packets";
   // Enforcement context: the mode badge says how traffic is captured; this
   // one says whether a Block really drops anything. A mock firewall must
@@ -1253,18 +1257,29 @@ function renderStats(data) {
     var fwNames = { mock: "mock \u00b7 simulated", windows: "Windows Firewall",
                     nftables: "nftables", opnsense: "OPNsense",
                     pfsense: "pfSense \u00b7 placeholder" };
-    fwEl.textContent = "FW: " + (fwNames[firewallProvider] || firewallProvider);
-    fwEl.className = "badge fw " + (firewallReady ? "ok" : "warn");
-    fwEl.title = firewallReady
-      ? "Firewall " + firewallProvider + " \u2014 blocks are real"
-      : (firewallNote || ("Firewall " + firewallProvider + " \u2014 blocks are simulated"));
+    var fwLabel = isDryRun ? "mock \u00b7 dry-run"
+      : (fwNames[firewallProvider] || firewallProvider);
+    fwEl.textContent = "FW: " + fwLabel;
+    fwEl.className = "badge fw " + (firewallReady && !isDryRun ? "ok" : "warn");
+    fwEl.title = isDryRun
+      ? "Dry-run: blocks are recorded and shown, but no firewall rule is created"
+      : firewallReady
+        ? "Firewall " + firewallProvider + " \u2014 blocks are real"
+        : (firewallNote || ("Firewall " + firewallProvider + " \u2014 blocks are simulated"));
   }
   var noteEl = document.getElementById("rules-note");
   if (noteEl) {
-    noteEl.textContent = firewallReady
-      ? "Active blocks only. Block source drops traffic from that IP; Unblock reverses it. History stays in the System log."
-      : (firewallNote || "Simulated: blocks are recorded here but no traffic is dropped.");
-    noteEl.classList.toggle("warn-note", !firewallReady);
+    var autoTtl = Number(data.auto_block_ttl) || 0;
+    var ttlNote = autoTtl > 0
+      ? " Auto-blocks expire after " + Math.round(autoTtl / 60) + " min."
+      : " Auto-blocks do not expire.";
+    var baseNote = isDryRun
+      ? "Dry-run: blocks are recorded and shown, but no firewall rule is created."
+      : firewallReady
+        ? "Active blocks only. Block source drops traffic from that IP; Unblock reverses it. History stays in the System log."
+        : (firewallNote || "Simulated: blocks are recorded here but no traffic is dropped.");
+    noteEl.textContent = baseNote + ttlNote;
+    noteEl.classList.toggle("warn-note", !firewallReady || isDryRun);
   }
   var m = data.model_metrics;
   var modelEl = document.getElementById("model-badge");

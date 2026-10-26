@@ -46,6 +46,18 @@ $env:LASSI_MODE = "live"
 $env:LASSI_FW = "windows"
 $env:LASSI_AUTO_BLOCK = "0"
 
+# The app refuses live without a declared scope (a school/customer Wi-Fi must
+# not be swept by accident). Ask once, in the elevated window, unless the
+# caller already provided one.
+if (-not $env:LASSI_LIVE_ALLOW -and -not $env:LASSI_LIVE_ALLOW_ANY) {
+    $cidr = Read-Host "Authorized LAN CIDR for live capture (e.g. 192.168.0.0/24)"
+    if ([string]::IsNullOrWhiteSpace($cidr)) {
+        Write-Error "No scope provided. Set LASSI_LIVE_ALLOW or LASSI_LIVE_ALLOW_ANY=1."
+        exit 1
+    }
+    $env:LASSI_LIVE_ALLOW = $cidr.Trim()
+}
+
 # Fall back to the project virtualenv, then to PATH.
 if (-not $PythonExe -or -not (Test-Path $PythonExe)) {
     $venvPython = Join-Path (Get-Location) ".venv\Scripts\python.exe"

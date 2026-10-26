@@ -9,7 +9,7 @@ import os
 import threading
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -166,7 +166,10 @@ def audit(event: dict[str, Any]) -> None:
             if _hash_path != EVENTS_LOG_PATH:
                 _last_hash = _load_last_hash()
                 _hash_path = EVENTS_LOG_PATH
-            payload = {"ts": datetime.now().isoformat(timespec="seconds"), **event}
+            # UTC, not the host's local clock: the audit trail is compared
+            # across machines and must stay unambiguous (and offset-aware).
+            payload = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                       **event}
             canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"),
                                    default=str, ensure_ascii=False)
             digest = hashlib.sha256((_last_hash + canonical).encode("utf-8")).hexdigest()
@@ -388,6 +391,43 @@ def set_trusted_device(ip: str, trusted: bool) -> bool:
 _load_trusted()
 
 
+# ---- block TTL (persisted) --------------------------------------------------
+# Auto-blocks expire by default (the operator can choose a TTL on a manual
+# block). The expiry is persisted so a restart cannot silently turn a temporary
+# block into a permanent one; `_restore_firewall_blocks` uses it at startup.
+BLOCK_EXPIRY_PATH = Path(os.environ.get("LASSI_BLOCKFILE", "data/block_expiry.json"))
+
+
+def _load_block_expiry() -> dict[str, float]:
+    try:
+        raw = json.loads(BLOCK_EXPIRY_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    found: dict[str, float] = {}
+    for key, value in raw.items():
+        ip = canonical_ip(key)
+        try:
+            expires_at = float(value)
+        except (TypeError, ValueError):
+            continue
+        if ip is not None and expires_at > 0:
+            found[ip] = expires_at
+    return found
+
+
+def _save_block_expiry(expiry: dict[str, float]) -> None:
+    try:
+        BLOCK_EXPIRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        BLOCK_EXPIRY_PATH.write_text(
+            json.dumps({ip: expires_at for ip, expires_at in sorted(expiry.items())
+                        if expires_at > 0}, indent=2),
+            encoding="utf-8")
+    except Exception:
+        pass
+
+
 # ---- freshness (how long a device stays on the map) -------------------------
 def _env_seconds(name: str, default: float) -> float:
     try:
@@ -433,6 +473,7 @@ class State:
         self.alerts: deque[dict[str, Any]] = deque(maxlen=200)
         self.rules: list[dict[str, Any]] = []               # firewall rules
         self.blocked: set[str] = set()                      # IPs with an active BLOCK rule (even if not discovered as a host)
+        self.block_expiry: dict[str, float] = _load_block_expiry()  # ip -> epoch, 0/absent = permanent
         self.trusted: set[str] = trusted_devices()          # never blocked (user marks)
         self.protected: set[str] = set()                    # never blocked (explicit: DNS/DHCP, this host…)
         self.traffic: deque[dict[str, Any]] = deque(maxlen=30)   # recent flows for the live map animation
@@ -466,7 +507,7 @@ class State:
             if alias:                                         # user rename wins, always
                 host["hostname"] = alias
 
-    def rename_host(self, ip: str, name: str) -> bool:
+    def rename_host(self, ip: str, name: str, actor: str = "system") -> bool:
         """Update a live host's display name under the state lock."""
         canonical = canonical_ip(ip)
         name = str(name or "").strip()[:32]
@@ -477,6 +518,7 @@ class State:
             if host is None:
                 return False
             host["hostname"] = name
+        audit({"event": "rename", "ip": canonical, "name": name, "actor": actor})
         return True
 
     def touch_edge(self, a: str, b: str) -> None:
@@ -557,9 +599,9 @@ class State:
                 self.alerts.appendleft(alert)
             self._last_alert_key = key
             self._last_alert_at = now
-        audit({"event": "alert", **alert, "collapsed": collapsed})
+        audit({"event": "alert", **alert, "collapsed": collapsed, "actor": "engine"})
 
-    def dismiss_alert(self, key: str) -> bool:
+    def dismiss_alert(self, key: str, actor: str = "system") -> bool:
         """Remove one card from the feed; the audit log keeps the event.
 
         The key is remembered in `data/dismissed_alerts.json`, so replaying the
@@ -575,7 +617,7 @@ class State:
                 return False
             self.alerts = deque(kept, maxlen=self.alerts.maxlen)
         _remember_dismissed(key)
-        audit({"event": "alert_dismissed", "key": key})
+        audit({"event": "alert_dismissed", "key": key, "actor": actor})
         return True
 
     def restore_recent_alerts(self, limit: int = 60, max_age: float = 86400.0) -> int:
@@ -714,7 +756,7 @@ class State:
         with self._lock:
             return canonical in self.trusted
 
-    def set_trusted(self, ip: str, trusted: bool = True) -> bool:
+    def set_trusted(self, ip: str, trusted: bool = True, actor: str = "system") -> bool:
         """Mark a device as trusted (or clear the mark) and persist it.
 
         A trusted device is protected: the API refuses to block it and the
@@ -730,10 +772,14 @@ class State:
                 self.trusted.discard(canonical)
             if trusted:
                 self.blocked.discard(canonical)     # a trusted host is not blocked
+                self.block_expiry.pop(canonical, None)
+                _save_block_expiry(self.block_expiry)
                 host = self.hosts.get(canonical)
                 if host is not None:
                     host["blocked"] = False
         set_trusted_device(canonical, trusted)
+        audit({"event": "trust" if trusted else "untrust", "ip": canonical,
+               "actor": actor})
         return True
 
     def protect(self, ip: str) -> bool:
@@ -745,12 +791,15 @@ class State:
             self.protected.add(canonical)
         return True
 
-    def block_host(self, ip: str, reason: str = "manual") -> bool:
+    def block_host(self, ip: str, reason: str = "manual", actor: str = "system",
+                   ttl_s: float = 0.0) -> bool:
         """Add a BLOCK rule for `ip`.
 
         The IP does not need to be a discovered host: live alerts can name an
         external source that never appears on the topology map, and it still
-        deserves a firewall rule. Returns True only when a new rule was added.
+        deserves a firewall rule. `ttl_s > 0` makes the block temporary; the
+        expiry is persisted so a restart does not make it permanent.
+        Returns True only when a new rule was added.
         """
         canonical = canonical_ip(ip)
         if canonical is None or canonical == "0.0.0.0":
@@ -762,6 +811,10 @@ class State:
         if address.is_loopback or address.is_unspecified:
             return False                      # never cut the host from itself
         reason = (str(reason or "manual").strip() or "manual")[:120]
+        try:
+            ttl = max(0.0, float(ttl_s or 0))
+        except (TypeError, ValueError):
+            ttl = 0.0
         with self._lock:
             if canonical in self.blocked:
                 return False
@@ -771,15 +824,23 @@ class State:
             if host is not None and host.get("role") in ("router", "external"):
                 return False
             self.blocked.add(canonical)
+            expires_at = time.time() + ttl if ttl > 0 else 0.0
+            if expires_at:
+                self.block_expiry[canonical] = expires_at
+            else:
+                self.block_expiry.pop(canonical, None)
+            _save_block_expiry(self.block_expiry)
             if host is not None:
                 host["blocked"] = True
             self.stats["blocks_total"] += 1
             self.rules.append({"ip": canonical, "action": "BLOCK", "reason": reason,
-                               "time": time.strftime("%H:%M:%S")})
-        audit({"event": "block", "ip": canonical, "reason": reason})
+                               "time": time.strftime("%H:%M:%S"),
+                               "expires_at": expires_at or None})
+        audit({"event": "block", "ip": canonical, "reason": reason, "actor": actor,
+               "ttl_s": ttl, "expires_at": expires_at or None})
         return True
 
-    def unblock_host(self, ip: str) -> bool:
+    def unblock_host(self, ip: str, reason: str = "manual", actor: str = "system") -> bool:
         """Remove an active BLOCK rule for `ip` (known host or not)."""
         canonical = canonical_ip(ip)
         if canonical is None:
@@ -788,13 +849,49 @@ class State:
             if canonical not in self.blocked:
                 return False
             self.blocked.discard(canonical)
+            self.block_expiry.pop(canonical, None)
+            _save_block_expiry(self.block_expiry)
             host = self.hosts.get(canonical)
             if host is not None:
                 host["blocked"] = False
-            self.rules.append({"ip": canonical, "action": "ALLOW", "reason": "manual unblock",
+            self.rules.append({"ip": canonical, "action": "ALLOW", "reason": reason,
                                "time": time.strftime("%H:%M:%S")})
-        audit({"event": "unblock", "ip": canonical})
+        audit({"event": "unblock", "ip": canonical, "reason": reason, "actor": actor})
         return True
+
+    def due_blocks(self, now: float | None = None) -> list[tuple[str, float]]:
+        """Active blocks whose TTL has elapsed (not removed yet)."""
+        at = time.time() if now is None else float(now)
+        with self._lock:
+            return sorted((ip, expires_at) for ip, expires_at in self.block_expiry.items()
+                          if expires_at > 0 and expires_at <= at and ip in self.blocked)
+
+    def block_expiry_for(self, ip: str) -> float:
+        canonical = canonical_ip(ip)
+        if canonical is None:
+            return 0.0
+        with self._lock:
+            if canonical not in self.blocked:
+                return 0.0
+            return float(self.block_expiry.get(canonical) or 0.0)
+
+    def drop_block_expiry(self, ip: str) -> None:
+        canonical = canonical_ip(ip)
+        if canonical is None:
+            return
+        with self._lock:
+            if self.block_expiry.pop(canonical, None) is not None:
+                _save_block_expiry(self.block_expiry)
+
+    def delay_block_expiry(self, ip: str, seconds: float = 60.0) -> None:
+        """Retry a failed TTL release later instead of hammering the provider."""
+        canonical = canonical_ip(ip)
+        if canonical is None:
+            return
+        with self._lock:
+            if canonical in self.block_expiry:
+                self.block_expiry[canonical] = time.time() + max(1.0, float(seconds))
+                _save_block_expiry(self.block_expiry)
 
     # ---- snapshot for UI ----------------------------------------------------
     def expire_hosts(self, ttl: float | None = None) -> list[str]:
@@ -833,7 +930,8 @@ class State:
                 maxlen=self.traffic.maxlen,
             )
         for ip in removed:
-            audit({"event": "host_expired", "ip": ip, "ttl_s": seconds})
+            audit({"event": "host_expired", "ip": ip, "ttl_s": seconds,
+                   "actor": "system"})
         return removed
 
     def snapshot(self) -> dict[str, Any]:
@@ -849,6 +947,9 @@ class State:
             for rule in reversed(self.rules):
                 ip = rule["ip"]
                 if rule["action"] == "BLOCK" and ip in self.blocked and ip not in seen_blocked:
+                    expiry = self.block_expiry.get(ip)
+                    if expiry:
+                        rule = {**rule, "expires_at": expiry}
                     active_rules.append(rule)
                     seen_blocked.add(ip)
             return {

@@ -185,6 +185,14 @@ def discover(cidr: str | None = None, timeout: int = 2) -> tuple[list[dict[str, 
     4. else common private defaults are swept until one returns neighbours.
     Returns (hosts, gateway_ip) — gateway in the SAME network as the sweep.
     """
+    from lassi.scope import allowlist_from_env, check_live_scope
+
+    raw_allow = (os.environ.get("LASSI_LIVE_ALLOW") or "").strip()
+    allow = allowlist_from_env()
+    if raw_allow and not allow:
+        log.error("LASSI_LIVE_ALLOW has no valid IPv4 networks; refusing ARP discovery")
+        return [], None
+
     if cidr:
         candidates: list[str] = [str(cidr).strip()]
     else:
@@ -217,6 +225,11 @@ def discover(cidr: str | None = None, timeout: int = 2) -> tuple[list[dict[str, 
         # never sweep more than a /24 (an ARP storm on big nets is rude)
         scan = net if net.prefixlen >= 24 else ipaddress.ip_network(
             f"{c.rsplit('/', 1)[0]}/24", strict=False)
+        if allow:
+            ok, why = check_live_scope(_route_for()[1], str(scan), allow)
+            if not ok:
+                log.warning("scope: refusing ARP sweep on %s: %s", scan, why)
+                continue
         try:
             hosts = _sweep(str(scan), timeout)
         except Exception:

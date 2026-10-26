@@ -2,6 +2,24 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.11.0] — 2026-10-26
+
+### Added
+- **Live scope guard**: `LASSI_LIVE_ALLOW` (IPv4 CIDRs). Live mode refuses any
+  other network and ARP discovery skips disallowed candidates before sweeping.
+- **Passive live mode**: `LASSI_PASSIVE=1` keeps capture but disables ARP and
+  port/mDNS/SSDP probes; hosts come from observed flows only.
+- **Dry-run**: `LASSI_DRY_RUN=1` forces the mock firewall and records actions
+  without enforcement.
+- **Block TTL**: auto-blocks expire after `LASSI_AUTO_BLOCK_TTL` (1 h default);
+  manual blocks accept `ttl_s`; expiry is persisted and released by the engine.
+- **Audit attribution + UTC**: write events carry `actor`; timestamps are
+  offset-aware UTC. New UI badges for passive/dry-run and TTL.
+
+### Tests/Docs
+- 219 tests; live-safety, TTL, scope, actor/UTC coverage; README/env/overview
+  updated.
+
 ## [0.10.1] — 2026-10-26
 
 ### Security / integrity

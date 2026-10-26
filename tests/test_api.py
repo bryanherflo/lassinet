@@ -1,6 +1,7 @@
 """API smoke tests with FastAPI TestClient (the engine runs in demo mode)."""
 
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -358,6 +359,7 @@ def test_auto_block_skips_lan_sources_when_the_scope_is_external(monkeypatch) ->
     # an external source is still blocked automatically
     lassi_app.process_flows([{"src": "8.8.8.8", "dst": "192.168.0.81", "bytes": 10}])
     assert blocked == ["8.8.8.8"]
+    assert lassi_app.state.block_expiry_for("8.8.8.8") > 0
     lassi_app.state.unblock_host("8.8.8.8")
 
 
@@ -560,6 +562,70 @@ def test_auth_session_roles_expiry_and_docs(monkeypatch) -> None:
         with c.websocket_connect("/ws") as ws:
             hello = ws.receive_json()
         assert hello["role"] == "viewer"
+
+
+def test_block_ttl_expires_and_persists() -> None:
+    import lassi.state as st
+
+    state = st.State()
+    ip = "203.0.113.70"
+    assert state.block_host(ip, ttl_s=60, actor="tester")
+    expires = state.block_expiry_for(ip)
+    assert expires > time.time()
+
+    # A new State loads the persisted expiry (the block itself comes from the
+    # firewall at startup, but the TTL must not be lost).
+    assert st.State().block_expiry.get(ip) == pytest.approx(expires)
+
+    state.block_expiry[ip] = time.time() - 1
+    assert ip in {item for item, _ in state.due_blocks()}
+
+    assert state.unblock_host(ip, reason="test", actor="tester")
+    assert st.State().block_expiry.get(ip) is None
+
+
+def test_audit_events_are_utc_with_actor(client: TestClient) -> None:
+    import json
+    from datetime import datetime
+
+    import lassi.state as st
+
+    ip = "203.0.113.71"
+    data = client.post("/api/firewall/block",
+                       json={"ip": ip, "reason": "audit test", "ttl_s": 60}).json()
+    assert data["ok"] is True and data["expires_at"] > time.time()
+    client.post("/api/firewall/unblock", json={"ip": ip, "reason": "audit test"})
+
+    events = []
+    for path in st.log_export_files():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                events.append(json.loads(line))
+            except (json.JSONDecodeError, TypeError):
+                continue
+    block = next(e for e in events if e.get("event") == "block" and e.get("ip") == ip)
+    assert block["actor"] == "operator"
+    assert block["ttl_s"] == 60 and block["expires_at"]
+    parsed = datetime.fromisoformat(block["ts"])
+    assert parsed.tzinfo is not None
+    unblock = next(e for e in events if e.get("event") == "unblock" and e.get("ip") == ip)
+    assert unblock["actor"] == "operator"
+
+
+def test_expired_block_is_released(client: TestClient) -> None:
+    ip = "203.0.113.72"
+    assert client.post("/api/firewall/block",
+                       json={"ip": ip, "ttl_s": 60}).json()["ok"] is True
+    lassi_app.state.block_expiry[ip] = time.time() - 1
+    lassi_app._expire_blocks()
+    assert lassi_app.state.is_blocked(ip) is False
+    assert ip not in lassi_app.state.block_expiry
+
+
+def test_safety_flags_are_advertised(client: TestClient) -> None:
+    data = client.get("/api/state").json()
+    assert "passive" in data and "dry_run" in data and "live_allow" in data
+    assert data["auto_block_ttl"] >= 0
 
 
 def test_log_verify_and_metrics_endpoints(client: TestClient) -> None:

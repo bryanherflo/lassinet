@@ -40,6 +40,7 @@ from pydantic import BaseModel
 from lassi.devices import classify
 from lassi.firewall import Firewall
 from lassi.ml import Detector
+from lassi.scope import allowlist_from_env, check_live_scope
 from lassi.state import State, audit, is_external
 from lassi.simulator import Simulator
 
@@ -57,8 +58,37 @@ log = logging.getLogger("lassi")
 TICK = 2.0  # seconds between engine cycles
 
 MODE = (os.getenv("LASSI_MODE") or "demo").strip().lower()
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+# Professional live-mode guard: only these networks may be captured/swept.
+# Empty = historical "any LAN" behaviour, with a warning at startup.
+LIVE_ALLOW_RAW = (os.getenv("LASSI_LIVE_ALLOW") or "").strip()
+LIVE_ALLOW = allowlist_from_env(LIVE_ALLOW_RAW)
+# Explicit escape hatch for a lab where the operator accepts any LAN. Live
+# mode otherwise requires a scope declaration: a forgotten allowlist is a
+# refusal, not a silent sweep of whatever Wi-Fi the laptop is attached to.
+LIVE_ALLOW_ANY = _env_flag("LASSI_LIVE_ALLOW_ANY", False)
+# Passive live mode never ARP-sweeps or port-probes; it only reads flows.
+PASSIVE = _env_flag("LASSI_PASSIVE", False)
+# Dry-run keeps the mock firewall even when a real provider is configured:
+# actions are recorded and shown, but nothing is enforced.
+DRY_RUN = _env_flag("LASSI_DRY_RUN", False)
+
 AUTO_BLOCK = (os.getenv("LASSI_AUTO_BLOCK", "1" if MODE == "demo" else "0")
               .strip().lower() in ("1", "true", "yes", "on"))
+try:
+    AUTO_BLOCK_TTL = float(os.getenv("LASSI_AUTO_BLOCK_TTL", "3600"))
+    if not math.isfinite(AUTO_BLOCK_TTL) or AUTO_BLOCK_TTL < 0:
+        raise ValueError
+except ValueError:
+    AUTO_BLOCK_TTL = 3600.0
 # Safety scope for the automatic block. In live mode a false positive that
 # blocks the DNS or DHCP server of the LAN takes the whole network down, so
 # the SOAR path only touches *external* sources unless the operator opts in.
@@ -292,11 +322,13 @@ def process_flows(flows: list[dict]) -> None:
                             log.info("auto-block skipped for LAN address %s "
                                      "(scope=external)", src)
                             audit({"event": "auto_block_skipped", "ip": src,
-                                   "reason": attack, "scope": AUTO_BLOCK_SCOPE})
+                                   "reason": attack, "scope": AUTO_BLOCK_SCOPE,
+                                   "actor": "auto"})
                             continue
                         reason = f"{attack} ({confidence})"[:120]
                         if fw.block(src, reason=reason):
-                            if state.block_host(src, reason=reason):
+                            if state.block_host(src, reason=reason, actor="auto",
+                                                ttl_s=AUTO_BLOCK_TTL):
                                 state.add_alert({**alert, "attack": "auto_block",
                                                  "severity": "info"})
                             elif state.is_protected(src):
@@ -305,7 +337,8 @@ def process_flows(flows: list[dict]) -> None:
                             log.error("auto-block failed for %s via %s; state unchanged",
                                       src, fw.provider)
                             audit({"event": "block_failed", "ip": src,
-                                   "reason": attack, "provider": fw.provider})
+                                   "reason": attack, "provider": fw.provider,
+                                   "actor": "auto"})
 
 
 def demo_loop() -> None:
@@ -346,6 +379,7 @@ def start_engine(source: Callable[[], None]) -> None:
     def runner() -> None:
         while True:
             try:
+                _expire_blocks()
                 source()
             except Exception:  # keep the engine alive no matter what
                 log.exception("engine tick failed")
@@ -400,7 +434,37 @@ def _note_capture_error() -> None:
     _capture_error_reported = True
     state.mode = "live (capture error)"
     log.error("live capture stopped: %s", _capture.error)
-    audit({"event": "capture_error", "error": _capture.error})
+    audit({"event": "capture_error", "error": _capture.error, "actor": "system"})
+
+
+def _passive_tick() -> None:
+    """Passive live tick: no ARP sweep, no port fingerprint, no probe packets."""
+    from lassi.live import default_gateway, local_ip  # lazy import
+
+    gateway = default_gateway()
+    me = local_ip()
+    if gateway:
+        state.upsert_host(gateway, hostname="gateway", role="router", open_ports=[])
+    if me:
+        state.upsert_host(me, hostname="this host", role="workstation", open_ports=[])
+    flows = _capture.drain_flows() if _capture is not None else []
+    observed: set[str] = set()
+    for flow in flows:
+        for key in ("src", "dst"):
+            ip = _clean_ip(flow.get(key, ""))
+            if ip and ip != "0.0.0.0" and not is_external(ip):
+                observed.add(ip)
+    for ip in sorted(observed):
+        if gateway and ip == gateway:
+            continue                      # keep the router role from the route
+        state.upsert_host(ip, hostname=ip, role="workstation", open_ports=[])
+        if gateway:
+            state.add_link(gateway, ip)
+    if flows:
+        if any(is_external(flow.get("dst", "")) for flow in flows):
+            state.register_egress(gateway)
+        process_flows(flows)
+    state.tick_rate(TICK)
 
 
 def live_source() -> None:
@@ -416,6 +480,9 @@ def live_source() -> None:
         # failed (usually missing root/admin or a bad LASSI_IFACE).
         _note_capture_error()
         state.tick_rate(TICK)          # do not leave a stale flows/s reading
+        return
+    if PASSIVE:
+        _passive_tick()
         return
     hosts, gateway_ip = _discover_cached()
     hosts = list(hosts)          # never append synthetic nodes to the cache
@@ -455,13 +522,32 @@ def _release_firewall_block(ip: str, reason: str) -> bool:
     if fw.unblock(ip):
         log.warning("released firewall block for %s (%s)", ip, reason)
         audit({"event": "block_released", "ip": ip, "reason": reason,
-               "provider": fw.provider})
+               "provider": fw.provider, "actor": "system"})
         return True
     log.error("could not release firewall block for %s (%s) via %s; rule may remain",
               ip, reason, fw.provider)
     audit({"event": "block_release_failed", "ip": ip, "reason": reason,
-           "provider": fw.provider})
+           "provider": fw.provider, "actor": "system"})
     return False
+
+
+def _expire_blocks() -> None:
+    """Release blocks whose TTL elapsed; never leave a state-only block behind."""
+    for ip, expires_at in state.due_blocks():
+        with _firewall_lock:
+            if not state.is_blocked(ip):
+                state.drop_block_expiry(ip)
+                continue
+            if fw.unblock(ip):
+                state.unblock_host(ip, reason="block TTL expired", actor="system")
+                log.info("block on %s expired (was due at %s)", ip,
+                         time.strftime("%H:%M:%S", time.localtime(expires_at)))
+            else:
+                log.error("could not release expired block for %s via %s; retrying",
+                          ip, fw.provider)
+                state.delay_block_expiry(ip, 60)
+                audit({"event": "block_expire_failed", "ip": ip,
+                       "provider": fw.provider, "actor": "system"})
 
 
 def _seed_live_gateway() -> None:
@@ -501,11 +587,25 @@ def _restore_firewall_blocks() -> int:
         if state.is_protected(ip):
             _release_firewall_block(ip, "protected infrastructure")
             continue
-        if state.block_host(ip, reason="restored from firewall"):
+        expiry = state.block_expiry.get(ip)
+        if expiry and expiry <= time.time():
+            if _release_firewall_block(ip, "block TTL expired while stopped"):
+                state.drop_block_expiry(ip)
+            else:
+                # Keep it tracked with a short TTL so the engine retries the
+                # release instead of leaving a rule the dashboard cannot see.
+                if state.block_host(ip, reason="restored; expired release failed",
+                                    actor="system", ttl_s=60):
+                    restored += 1
+            continue
+        ttl = max(1.0, expiry - time.time()) if expiry else 0.0
+        if state.block_host(ip, reason="restored from firewall", actor="system",
+                            ttl_s=ttl):
             restored += 1
     if restored:
         log.info("restored %d active block(s) from %s", restored, fw.provider)
-        audit({"event": "blocks_restored", "count": restored, "provider": fw.provider})
+        audit({"event": "blocks_restored", "count": restored,
+               "provider": fw.provider, "actor": "system"})
     return restored
 
 
@@ -565,7 +665,28 @@ async def lifespan(app: FastAPI):
         log.exception("could not import lassi.live; falling back to demo mode")
         has_scapy = False
 
+    if MODE == "live" and has_scapy:
+        from lassi.live import local_ip
+        refusal = _live_scope_refusal(
+            local_ip(), os.getenv("LASSI_SUBNET"), LIVE_ALLOW,
+            LIVE_ALLOW_RAW, LIVE_ALLOW_ANY)
+        if refusal:
+            raise RuntimeError(
+                f"live mode refused: {refusal}. Use LASSI_MODE=demo if you only "
+                "want the simulator; no packets were captured or sent.")
+        if LIVE_ALLOW:
+            log.info("live scope check passed: %s is inside LASSI_LIVE_ALLOW",
+                     local_ip())
+        else:
+            log.warning("LASSI_LIVE_ALLOW_ANY=1: live mode may capture any LAN. "
+                        "This explicit override is not recommended outside a lab.")
+
     source, mode_label = _source_for_mode(MODE, has_scapy)
+    if source is live_source:
+        if PASSIVE:
+            mode_label = "live (passive)"
+        if DRY_RUN:
+            mode_label += " · dry-run"
     state.mode = mode_label
     if source is demo_loop:
         _use_mock_for_simulated_mode()      # demo/fallback must never touch a real firewall
@@ -576,11 +697,19 @@ async def lifespan(app: FastAPI):
             # CICIDS model that may have been loaded from LASSI_MODE=live.
             # This also clears the live model if the demo bundle is missing.
             _use_demo_model()
-    if MODE != "demo" and mode_label != "live (scapy)":
+    if DRY_RUN and fw.provider != "mock":
+        log.warning("dry-run: ignoring LASSI_FW=%s; actions are recorded, not enforced",
+                    fw.provider)
+        fw.provider = "mock"
+    is_live_capture = source is live_source
+    if MODE != "demo" and not is_live_capture:
         log.error("LASSI_MODE=%s is not usable for live capture; %s", MODE, mode_label)
-    if MODE == "live" and mode_label == "live (scapy)":
+    if is_live_capture:
         _seed_live_gateway()
-        _restore_firewall_blocks()
+        # Observation/dry-run must not change firewall state, including the
+        # cleanup of a stale protected rule. Only a normal live run reconciles.
+        if not PASSIVE and not DRY_RUN:
+            _restore_firewall_blocks()
     _apply_protected_config()
     fw_ready, fw_note = _firewall_ready()
     if fw_note:
@@ -602,11 +731,11 @@ async def lifespan(app: FastAPI):
     start_engine(source)
     log.info("LassiNet running in %s on %s:%d", mode_label,
              getattr(app.state, "host", HOST), getattr(app.state, "port", PORT))
-    audit({"event": "startup", "mode": mode_label,
-           "requested_mode": MODE,
-           "firewall": fw.provider,
-           "model": detector.model is not None,
-           "restored_alerts": restored})
+    audit({"event": "startup", "mode": mode_label, "actor": "system",
+           "requested_mode": MODE, "firewall": fw.provider,
+           "model": detector.model is not None, "restored_alerts": restored,
+           "passive": PASSIVE, "dry_run": DRY_RUN,
+           "live_allow": [str(net) for net in LIVE_ALLOW]})
     yield
 
 
@@ -616,6 +745,7 @@ app = FastAPI(title="LassiNet", lifespan=lifespan)
 class BlockRequest(BaseModel):
     ip: str
     reason: str = "manual"
+    ttl_s: int = 0          # 0 = permanent; auto-block uses LASSI_AUTO_BLOCK_TTL
 
 
 class RenameRequest(BaseModel):
@@ -637,7 +767,7 @@ class DismissRequest(BaseModel):
 
 
 @app.post("/api/devices/trust")
-def trust_device(req: TrustRequest) -> dict:
+def trust_device(req: TrustRequest, request: Request) -> dict:
     """Mark a device as trusted (or clear the mark).
 
     Trust is a server-side decision, not only a colour on the map: a trusted
@@ -649,6 +779,7 @@ def trust_device(req: TrustRequest) -> dict:
     if ip is None:
         return {"ok": False, "error": "That is not a valid IP address"}
     trusted = bool(req.trusted)
+    actor = _actor(request)
     if trusted and state.is_protected(ip) and not state.is_trusted(ip):
         # Infrastructure is protected anyway. Do not pretend the mark was
         # stored: say what actually happened (it was not stored).
@@ -664,22 +795,23 @@ def trust_device(req: TrustRequest) -> dict:
             # too. The rule is removed *before* the mark is set, so the state
             # keeps the ALLOW entry in the history.
             if fw.unblock(ip):
-                state.unblock_host(ip)
+                state.unblock_host(ip, reason="trusted by operator", actor=actor)
                 log.info("released the block of %s: the device is trusted now", ip)
                 audit({"event": "block_released", "ip": ip, "reason": "trusted by operator",
-                       "provider": fw.provider})
+                       "provider": fw.provider, "actor": actor})
             else:
                 log.error("could not remove the firewall rule of %s after trusting it", ip)
                 return {"ok": False, "ip": ip, "trusted": state.is_trusted(ip),
                         "error": "the firewall rule could not be removed; "
                                  "the device is still blocked"}
-        if not state.set_trusted(ip, trusted):
+        if not state.set_trusted(ip, trusted, actor=actor):
             return {"ok": False, "error": "That is not a valid IP address"}
     return {"ok": True, "ip": ip, "trusted": trusted}
 
 
 @app.post("/api/devices/rename")
-def rename_device(req: RenameRequest) -> dict:
+def rename_device(req: RenameRequest, request: Request) -> dict:
+    actor = _actor(request)
     name = _clean_device_name(req.name)
     if not name:
         return {"ok": False, "error": "name must not be empty"}
@@ -687,7 +819,7 @@ def rename_device(req: RenameRequest) -> dict:
     if ip is None:
         return {"ok": False, "error": "That is not a valid IP address"}
     from lassi.state import set_device_name
-    if not state.rename_host(ip, name):
+    if not state.rename_host(ip, name, actor=actor):
         return {"ok": False, "error": "device is not on the map yet — wait for discovery"}
     set_device_name(ip, name)              # persisted to data/device_names.json
     # The name is the best device-type clue: re-classify so the icon follows
@@ -697,6 +829,16 @@ def rename_device(req: RenameRequest) -> dict:
     if kind:
         state.upsert_host(ip, kind=kind)
     return {"ok": True, "ip": ip, "name": name, "kind": kind}
+
+
+def _actor(request: Request) -> str:
+    """Who performed an action, for the audit trail.
+
+    With token auth this is the role; when auth is disabled it is the implicit
+    local operator. A future OIDC integration can replace this with an email
+    without changing the event shape.
+    """
+    return str(getattr(request.state, "role", "operator") or "operator")
 
 
 def _auth_enabled() -> bool:
@@ -774,6 +916,19 @@ def _request_role(request: Request) -> str | None:
     # Deliberately no ?token support on HTTP: access logs would record it.
     # The WebSocket still accepts ?token because browsers cannot set headers.
     return None
+
+
+def _live_scope_refusal(local_ip: str | None, subnet: str | None,
+                        allow: list, raw_allow: str,
+                        allow_any: bool) -> str | None:
+    """The live safety gate, testable without touching a network."""
+    if raw_allow and not allow:
+        return "LASSI_LIVE_ALLOW has no valid IPv4 network"
+    if not allow and not allow_any:
+        return ("LASSI_LIVE_ALLOW is not set; set your LAN CIDR (for example "
+                "192.168.0.0/24) or set LASSI_LIVE_ALLOW_ANY=1 only for a lab")
+    ok, why = check_live_scope(local_ip, subnet, allow)
+    return None if ok else why
 
 
 @app.middleware("http")
@@ -856,6 +1011,11 @@ def _snapshot(role: str = "operator") -> dict:
     snap["firewall_ready"] = ready
     snap["firewall_note"] = note
     snap["auto_block"] = AUTO_BLOCK
+    snap["auto_block_ttl"] = AUTO_BLOCK_TTL
+    snap["passive"] = PASSIVE
+    snap["dry_run"] = DRY_RUN
+    snap["live_allow"] = [str(net) for net in LIVE_ALLOW]
+    snap["live_allow_any"] = LIVE_ALLOW_ANY
     # Feature flags: the static dashboard can be newer than the running Python
     # process (e.g. after a git pull). The client only offers actions the
     # server it is talking to actually implements.
@@ -985,12 +1145,12 @@ def export_logs() -> StreamingResponse | JSONResponse:
 
 
 @app.post("/api/alerts/dismiss")
-def dismiss_alert(req: DismissRequest) -> dict:
+def dismiss_alert(req: DismissRequest, request: Request) -> dict:
     """Hide one alert card from the feed (the audit log keeps the event)."""
     key = (req.key or "").strip()
     if not key or len(key) > 300:
         return {"ok": False, "error": "That is not a valid alert key"}
-    return {"ok": True, "changed": state.dismiss_alert(key)}
+    return {"ok": True, "changed": state.dismiss_alert(key, actor=_actor(request))}
 
 
 @app.get("/api/logs/verify")
@@ -1001,11 +1161,17 @@ def verify_logs() -> dict:
 
 
 @app.post("/api/firewall/block")
-def block(req: BlockRequest) -> dict:
+def block(req: BlockRequest, request: Request) -> dict:
+    actor = _actor(request)
     ip = _clean_ip(req.ip)
     if ip is None:
         return {"ok": False, "error": "That is not a valid IP address"}
     reason = (req.reason or "manual").strip()[:120] or "manual"
+    try:
+        ttl_s = int(req.ttl_s or 0)
+    except (TypeError, ValueError):
+        ttl_s = 0
+    ttl_s = max(0, min(ttl_s, 30 * 86400))
     with _firewall_lock:
         if state.is_protected(ip):
             # Say *why*: the operator has to know it is a protected address
@@ -1022,20 +1188,23 @@ def block(req: BlockRequest) -> dict:
         if state.is_blocked(ip):
             return {"ok": True, "changed": False, "blocked": True,
                     "provider": fw.provider, "simulated": fw.provider == "mock",
+                    "expires_at": state.block_expiry_for(ip) or None,
                     "rules": state.snapshot()["rules"][:10]}
         if not fw.block(ip, reason):
             return {"ok": False, "changed": False, "blocked": state.is_blocked(ip),
                     "error": f"Firewall provider '{fw.provider}' could not apply the block; nothing changed"}
-        changed = state.block_host(ip, reason)
+        changed = state.block_host(ip, reason, actor=actor, ttl_s=ttl_s)
         if not changed and state.is_protected(ip):
             fw.unblock(ip)                  # roll back a rule for infrastructure
         return {"ok": True, "changed": changed, "blocked": state.is_blocked(ip),
                 "provider": fw.provider, "simulated": fw.provider == "mock",
+                "expires_at": state.block_expiry_for(ip) or None,
                 "rules": state.snapshot()["rules"][:10]}
 
 
 @app.post("/api/firewall/unblock")
-def unblock(req: BlockRequest) -> dict:
+def unblock(req: BlockRequest, request: Request) -> dict:
+    actor = _actor(request)
     ip = _clean_ip(req.ip)
     if ip is None:
         return {"ok": False, "error": "That is not a valid IP address"}
@@ -1046,7 +1215,7 @@ def unblock(req: BlockRequest) -> dict:
         if not fw.unblock(ip):
             return {"ok": False, "changed": False, "blocked": True,
                     "error": f"Firewall provider '{fw.provider}' could not remove the block; it is still active"}
-        changed = state.unblock_host(ip)
+        changed = state.unblock_host(ip, reason="manual unblock", actor=actor)
         return {"ok": True, "changed": changed, "blocked": state.is_blocked(ip),
                 "provider": fw.provider, "simulated": fw.provider == "mock"}
 
@@ -1068,6 +1237,10 @@ def health() -> dict:
     return {"ok": ok, "mode": state.mode, "model": detector.model is not None,
             "firewall": fw.provider, "firewall_ready": fw_ready,
             "firewall_note": fw_note, "auth_required": _auth_enabled(),
+            "passive": PASSIVE, "dry_run": DRY_RUN,
+            "auto_block_ttl": AUTO_BLOCK_TTL,
+            "live_allow": [str(net) for net in LIVE_ALLOW],
+            "live_allow_any": LIVE_ALLOW_ANY,
             "flows_total": state.stats["flows_total"],
             "capture_running": capture_running,
             "capture_error": capture_error}
