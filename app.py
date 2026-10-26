@@ -105,6 +105,10 @@ try:
 except ValueError:
     PORT = 8000
 HOST = (os.getenv("LASSI_HOST") or "").strip() or "127.0.0.1"
+# Trust X-Forwarded-* only from a local reverse proxy by default; a remote
+# proxy must be added explicitly. This makes request.client/scheme and the
+# Secure cookie flag correct behind Caddy/Nginx on the same host.
+FORWARDED_ALLOW_IPS = (os.getenv("LASSI_FORWARDED_ALLOW_IPS") or "127.0.0.1").strip()
 
 # Optional token authentication. Both empty (default) = open, as before.
 #   LASSI_TOKEN_OPERATOR  can block/unblock/trust/rename/dismiss and read
@@ -1544,4 +1548,6 @@ if __name__ == "__main__":
     app.state.host = args.host
     app.state.port = args.port
     uvicorn.run(app, host=args.host, port=args.port, log_level="info",
-                access_log=False)  # keep ops logs clean (health probes poll every ~2s)
+                access_log=False,
+                proxy_headers=True,
+                forwarded_allow_ips=FORWARDED_ALLOW_IPS)  # keep ops logs clean

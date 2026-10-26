@@ -2,6 +2,18 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.14.0] — 2026-10-26
+
+### Operations / portfolio
+- **Verified backup/restore**: python -m lassi.backup (data/logs, SHA-256
+  manifest, opt-in .env, safe restore into a target directory); tests.
+- **Deployment assets**: systemd unit and env template, Windows Task/NSSM
+  guide, reverse proxy/TLS/OIDC guidance, least-privilege notes.
+- **Design docs**: architecture, threat model, runbook, benchmarks, security
+  policy, contributing guide; Dependabot for pip/actions.
+- **Detector benchmark**: scripts/benchmark.py (synthetic; not a gigabit
+  claim). No UI change; no cache bump.
+- 234 tests.
 ## [0.13.0] — 2026-10-26
 
 ### Added

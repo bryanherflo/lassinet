@@ -38,3 +38,6 @@ Thumbs.db
 .env
 .env.*
 !/.env.example
+
+# --- Local verified backups ---
+backups/

@@ -1,0 +1,40 @@
+# LassiNet runtime layout
+#
+# Install the code in /opt/lassinet, create the `lassinet` system user, copy
+# /etc/lassinet/lassinet.env.example to /etc/lassinet/lassinet.env (chmod 600)
+# and adjust it. This unit is for MONITOR-ONLY live mode with the mock or
+# OPNsense provider: the web process gets CAP_NET_RAW for capture, not root.
+# nftables/Windows Firewall enforcement belongs in a separate privileged
+# helper; see docs/deployment.md.
+
+[Unit]
+Description=LassiNet network visibility and response console
+Documentation=https://github.com/bryanherflo/lassinet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lassinet
+Group=lassinet
+WorkingDirectory=/opt/lassinet
+EnvironmentFile=/etc/lassinet/lassinet.env
+ExecStart=/opt/lassinet/.venv/bin/python app.py --port 8000
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+
+# Capture only. Do not add CAP_NET_ADMIN here unless you accept running the
+# web process as a privileged firewall controller.
+AmbientCapabilities=CAP_NET_RAW
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/lassinet/data /opt/lassinet/logs /opt/lassinet/models
+
+# Bind 127.0.0.1 (default) and put Caddy/Nginx + OIDC in front.
+# For a LAN-only lab, set LASSI_HOST=0.0.0.0 only with tokens + TLS/VPN.
+
+[Install]
+WantedBy=multi-user.target

@@ -49,13 +49,23 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 - **Busy networks:** `LASSI_CAPTURE_FILTER="tcp or udp"` (libpcap/BPF) cuts capture load. For whole-LAN visibility use a SPAN/mirror port or run it on the gateway; it is still not a gigabit sensor.
 - **Availability:** single process, no clustering or shared state. `GET /healthz` is liveness, `GET /readyz` is readiness (503 when capture/model is unhealthy). Run it under systemd/a Windows service behind a TLS reverse proxy; do not expose it directly to the internet.
 
+## 📚 Design, deployment and operations
+
+- [Architecture](docs/architecture.md)
+- [Threat model](docs/threat-model.md)
+- [Deployment (systemd, TLS, OIDC)](docs/deployment.md)
+- [Runbook](docs/runbook.md)
+- [Benchmarks and honest limits](docs/benchmarks.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
+
 ## 🎯 Who it is for
 
 LassiNet is built for people who want to see and act on **their own LAN**, not for running someone else's network:
 
 - **Students and juniors** in systems, networking or security (ASIR, CFGS, master's, self-taught) who want the full path from discovery to detection to a real block.
 - **Homelabbers and home-network owners** who want visibility of their devices and a safe way to practise OPNsense, nftables or Windows Firewall.
-- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 231 tests plus CI make it easy to use in class.
+- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 234 tests plus CI make it easy to use in class.
 - **Recruiters and interviewers** reviewing a portfolio project that covers Python, FastAPI, scapy, ML, firewalls, tests, CI and documentation.
 
 ## 🚫 Who it is not for
@@ -103,7 +113,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (231 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (234 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt
@@ -149,6 +159,7 @@ The badge at the top right of the map shows the live stream state: `live` while 
 | `LASSI_PROTECT` | IPs (comma separated) | *empty* | addresses that must never be blocked (your DNS/DHCP server, NAS, hypervisor…) |
 | `LASSI_HOST` | IP | `127.0.0.1` | bind address |
 | `LASSI_PORT` | int | `8000` | dashboard port |
+| `LASSI_FORWARDED_ALLOW_IPS` | IP list | `127.0.0.1` | trusted reverse-proxy peers for `X-Forwarded-*`; keep HTTP access off the internet |
 | `LASSI_TOKEN_OPERATOR` | string | *empty* | operator token; setting it (or the viewer token) enables auth and allows writes |
 | `LASSI_TOKEN_VIEWER` | string | *empty* | read-only token (dashboard, logs, metrics) |
 | `LASSI_SECRET` | string | *random per process* | cookie-signing key; set a stable value if sessions must survive a restart |
