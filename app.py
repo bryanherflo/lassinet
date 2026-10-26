@@ -82,6 +82,17 @@ AUTH_OPERATOR = (os.getenv("LASSI_TOKEN_OPERATOR") or "").strip()
 AUTH_VIEWER = (os.getenv("LASSI_TOKEN_VIEWER") or "").strip()
 SESSION_COOKIE = "lassi_session"
 try:
+    SESSION_TTL = int(os.getenv("LASSI_SESSION_TTL", str(12 * 3600)))
+    if SESSION_TTL <= 0:
+        raise ValueError
+except ValueError:
+    SESSION_TTL = 12 * 3600
+# The cookie key must not be derivable from a token alone: with only a viewer
+# token configured, the old "operator:viewer" derivation let a viewer sign an
+# operator cookie. A random per-process key is safe by default; LASSI_SECRET
+# makes sessions survive a restart.
+_RANDOM_SESSION_SECRET = secrets.token_hex(32)
+try:
     DISCOVERY_INTERVAL = float(os.getenv("LASSI_DISCOVERY_INTERVAL", "30"))
     if not math.isfinite(DISCOVERY_INTERVAL) or DISCOVERY_INTERVAL < 0:
         raise ValueError
@@ -692,48 +703,77 @@ def _auth_enabled() -> bool:
     return bool(AUTH_OPERATOR or AUTH_VIEWER)
 
 
-def _sign_role(role: str) -> str:
-    """HMAC for the session cookie; the secret is derived from the tokens."""
+def _session_secret() -> bytes:
+    """Cookie HMAC key: explicit LASSI_SECRET or a random per-process value."""
     explicit = (os.getenv("LASSI_SECRET") or "").strip()
-    secret = explicit or f"{AUTH_OPERATOR}:{AUTH_VIEWER}"
-    return hmac.new(hashlib.sha256(secret.encode()).digest(),
-                    role.encode(), hashlib.sha256).hexdigest()
+    return (explicit or _RANDOM_SESSION_SECRET).encode("utf-8")
+
+
+def _sign_role(role: str, expires_at: int) -> str:
+    message = f"{role}|{int(expires_at)}".encode("utf-8")
+    return hmac.new(_session_secret(), message, hashlib.sha256).hexdigest()
+
+
+def _session_cookie_value(role: str, expires_at: int | None = None) -> str:
+    exp = int(expires_at if expires_at is not None else time.time() + SESSION_TTL)
+    return f"{role}.{exp}.{_sign_role(role, exp)}"
+
+
+def _session_from_cookie(value: str | None) -> tuple[str, int] | None:
+    """Validate role, server-side expiry and signature (Max-Age is not enough)."""
+    if not value:
+        return None
+    parts = value.split(".")
+    if len(parts) != 3:
+        return None
+    role, raw_exp, signature = parts
+    if role not in ("operator", "viewer"):
+        return None
+    # A role that has no configured token must never be accepted, even with a
+    # syntactically valid signature.
+    if role == "operator" and not AUTH_OPERATOR:
+        return None
+    if role == "viewer" and not AUTH_VIEWER:
+        return None
+    try:
+        expires_at = int(raw_exp)
+    except (TypeError, ValueError):
+        return None
+    if expires_at <= int(time.time()):
+        return None
+    if not hmac.compare_digest(signature, _sign_role(role, expires_at)):
+        return None
+    return role, expires_at
 
 
 def _role_for_token(token: str | None) -> str | None:
     token = (token or "").strip()
     if not token:
         return None
-    if AUTH_OPERATOR and secrets.compare_digest(token, AUTH_OPERATOR):
+    raw = token.encode("utf-8")
+    if AUTH_OPERATOR and secrets.compare_digest(raw, AUTH_OPERATOR.encode("utf-8")):
         return "operator"
-    if AUTH_VIEWER and secrets.compare_digest(token, AUTH_VIEWER):
+    if AUTH_VIEWER and secrets.compare_digest(raw, AUTH_VIEWER.encode("utf-8")):
         return "viewer"
     return None
-
-
-def _role_for_cookie(value: str | None) -> str | None:
-    if not value or "." not in value:
-        return None
-    role, signature = value.rsplit(".", 1)
-    if role not in ("operator", "viewer"):
-        return None
-    if not hmac.compare_digest(signature, _sign_role(role)):
-        return None
-    return role
 
 
 def _request_role(request: Request) -> str | None:
     if not _auth_enabled():
         return "operator"
-    role = _role_for_cookie(request.cookies.get(SESSION_COOKIE))
-    if role:
-        return role
+    # Explicit credentials win over a browser cookie (a stale viewer cookie
+    # must not silently downgrade an operator Bearer token).
     header = request.headers.get("authorization", "")
     if header.lower().startswith("bearer "):
         role = _role_for_token(header[7:])
         if role:
             return role
-    return _role_for_token(request.query_params.get("token"))
+    session = _session_from_cookie(request.cookies.get(SESSION_COOKIE))
+    if session:
+        return session[0]
+    # Deliberately no ?token support on HTTP: access logs would record it.
+    # The WebSocket still accepts ?token because browsers cannot set headers.
+    return None
 
 
 @app.middleware("http")
@@ -744,17 +784,21 @@ async def auth_guard(request: Request, call_next):
     API stays open (the historical behaviour for a localhost lab).
     """
     path = request.url.path
-    protected = path == "/metrics" or path.startswith("/api/")
+    protected = (path == "/metrics" or path.startswith("/api/")
+                 or path in ("/docs", "/redoc", "/openapi.json")
+                 or path.startswith("/docs/"))
     if not _auth_enabled() or not protected or path in ("/api/auth", "/health"):
         return await call_next(request)
     role = _request_role(request)
     if role is None:
         return JSONResponse({"ok": False, "error": "authentication required"},
                             status_code=401,
-                            headers={"WWW-Authenticate": "Bearer"})
+                            headers={"WWW-Authenticate": "Bearer",
+                                     "Cache-Control": "no-store"})
     if request.method not in ("GET", "HEAD", "OPTIONS") and role != "operator":
         return JSONResponse({"ok": False, "error": "operator token required"},
-                            status_code=403)
+                            status_code=403,
+                            headers={"Cache-Control": "no-store"})
     request.state.role = role
     return await call_next(request)
 
@@ -827,11 +871,13 @@ def auth_login(req: AuthRequest, request: Request) -> JSONResponse:
     role = _role_for_token(req.token)
     if not role:
         return JSONResponse({"ok": False, "error": "invalid token"}, status_code=401,
-                            headers={"WWW-Authenticate": "Bearer"})
+                            headers={"WWW-Authenticate": "Bearer",
+                                     "Cache-Control": "no-store"})
     response = JSONResponse({"ok": True, "role": role, "auth_required": True})
-    response.set_cookie(SESSION_COOKIE, f"{role}.{_sign_role(role)}",
+    response.set_cookie(SESSION_COOKIE, _session_cookie_value(role),
                         httponly=True, samesite="strict",
-                        secure=request.url.scheme == "https", max_age=12 * 3600)
+                        secure=request.url.scheme == "https", max_age=SESSION_TTL)
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -839,6 +885,7 @@ def auth_login(req: AuthRequest, request: Request) -> JSONResponse:
 def auth_logout() -> JSONResponse:
     response = JSONResponse({"ok": True})
     response.delete_cookie(SESSION_COOKIE)
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -1029,9 +1076,14 @@ def health() -> dict:
 @app.websocket("/ws")
 async def ws(sock: WebSocket) -> None:
     role = "operator"
+    expires_at: int | None = None
     if _auth_enabled():
-        role = (_role_for_cookie(sock.cookies.get(SESSION_COOKIE))
-                or _role_for_token(sock.query_params.get("token")) or "")
+        # Explicit ?token wins; otherwise use the browser session cookie.
+        role = _role_for_token(sock.query_params.get("token")) or ""
+        if not role:
+            session = _session_from_cookie(sock.cookies.get(SESSION_COOKIE))
+            if session:
+                role, expires_at = session
         if not role:
             await sock.close(code=1008)
             return
@@ -1039,6 +1091,9 @@ async def ws(sock: WebSocket) -> None:
     try:
         while True:
             await asyncio.sleep(TICK)
+            if expires_at is not None and time.time() >= expires_at:
+                await sock.close(code=1008)
+                break
             await sock.send_json(_snapshot(role))
     except WebSocketDisconnect:
         pass
@@ -1078,7 +1133,8 @@ def metrics() -> PlainTextResponse:
         "# TYPE lassinet_mode gauge",
         f'lassinet_mode{{mode="{mode}"}} 1',
     ]
-    return PlainTextResponse("\n".join(lines) + "\n")
+    return PlainTextResponse("\n".join(lines) + "\n",
+                              headers={"Cache-Control": "no-store"})
 
 
 # dashboard (static, zero build step)

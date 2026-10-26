@@ -887,6 +887,8 @@ network.on("doubleClick", function(p) { var ip = p.nodes[0]; if (!ip) return; if
 window.addEventListener("keydown", function(ev) {
   if (ev.target && (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA" || ev.target.isContentEditable)) return;
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  var authOverlay = document.getElementById("auth-overlay");
+  if (authOverlay && !authOverlay.hidden) return;
   if (helpOverlay && !helpOverlay.hidden) {
     if (ev.key === "Escape") { ev.preventDefault(); closeHelp(); }
     return;
@@ -894,7 +896,8 @@ window.addEventListener("keydown", function(ev) {
   var key = ev.key.toLowerCase();
   if (ev.key === "?" || key === "h") { ev.preventDefault(); openHelp(); }
   else if (key === "b" && selectedNodeIp) {
-    if (!isBlockableNode(selectedNodeIp)) toast("Infrastructure nodes cannot be blocked", "error");
+    if (authRole === "viewer") toast("Read-only token: this action needs the operator token", "error");
+    else if (!isBlockableNode(selectedNodeIp)) toast("Infrastructure nodes cannot be blocked", "error");
     else if (blockedHosts.has(selectedNodeIp)) toast(selectedNodeIp + " is already blocked", "error");
     else post("/api/firewall/block", { ip: selectedNodeIp, reason: "operator blocked selected node" });
   }
@@ -1327,6 +1330,8 @@ function showAuth(message) {
   var overlay = document.getElementById("auth-overlay");
   if (!overlay) return;
   authBlocked = true;
+  stopPolling();
+  if (helpOverlay && !helpOverlay.hidden) closeHelp();
   overlay.hidden = false;
   document.body.classList.add("modal-open");
   var err = document.getElementById("auth-error");
@@ -1625,12 +1630,13 @@ if (pickerInput && pickerList) {
   if (window.matchMedia && window.matchMedia("(max-width: 1120px)").matches) setLegendCollapsed(true);
   if (typeof WebSocket === "undefined") { setConnStatus("polling"); startPolling(); return; }
   var connect = function() {
+    if (authBlocked) return;
     var proto = location.protocol === "https:" ? "wss" : "ws";
     var ws = new WebSocket(proto + "://" + location.host + "/ws");
     ws.onopen = function() { stopPolling(); setConnStatus("live"); console.log("[WS] connected"); };
     ws.onmessage = function(ev) { try { apply(JSON.parse(ev.data)); } catch(e) { console.warn("WS parse error", e); } };
-    ws.onerror = function(e) { setConnStatus("polling"); startPolling(); console.warn("[WS] error", e); };
-    ws.onclose = function() { setConnStatus("polling"); console.log("[WS] closed, fallback to polling"); startPolling(); setTimeout(connect, 4000); };
+    ws.onerror = function(e) { if (authBlocked) return; setConnStatus("polling"); startPolling(); console.warn("[WS] error", e); };
+    ws.onclose = function() { if (authBlocked) return; setConnStatus("polling"); console.log("[WS] closed, fallback to polling"); startPolling(); setTimeout(connect, 4000); };
   };
   setConnStatus("connecting");
   connect();

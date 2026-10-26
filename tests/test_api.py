@@ -510,6 +510,58 @@ def test_state_and_health_say_whether_blocks_are_real(client: TestClient) -> Non
     assert health["firewall"] == "mock" and health["firewall_ready"] is False
 
 
+def test_auth_session_roles_expiry_and_docs(monkeypatch) -> None:
+    import hashlib
+    import hmac
+    import time
+
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    monkeypatch.setattr(lassi_app, "AUTH_OPERATOR", "")
+    monkeypatch.setattr(lassi_app, "AUTH_VIEWER", "view-secret")
+    with TestClient(lassi_app.app) as c:
+        # The old derivation (viewer token) must not let a viewer sign operator.
+        exp = int(time.time() + 60)
+        old_secret = hashlib.sha256(b":view-secret").digest()
+        forged = "operator." + str(exp) + "." + hmac.new(
+            old_secret, f"operator|{exp}".encode(), hashlib.sha256
+        ).hexdigest()
+        c.cookies.set(lassi_app.SESSION_COOKIE, forged)
+        assert c.get("/api/state").status_code == 401
+
+        # Even a cookie signed with the real key is refused for an unconfigured role.
+        c.cookies.set(lassi_app.SESSION_COOKIE, lassi_app._session_cookie_value("operator"))
+        assert c.get("/api/state").status_code == 401
+
+        # Expiry is enforced by the server, not only by the browser Max-Age.
+        c.cookies.set(lassi_app.SESSION_COOKIE, lassi_app._session_cookie_value(
+            "viewer", expires_at=int(time.time()) - 1))
+        assert c.get("/api/state").status_code == 401
+        try:
+            with c.websocket_connect("/ws"):
+                raise AssertionError("expired WebSocket session was accepted")
+        except WebSocketDisconnect as exc:
+            assert exc.code == 1008
+
+        # No tokens in HTTP URLs (they leak into access logs); WebSocket is separate.
+        assert c.get("/api/state?token=view-secret").status_code == 401
+
+        # Docs/OpenAPI are not a public map of the API when auth is enabled.
+        assert c.get("/openapi.json").status_code == 401
+        assert c.get("/docs").status_code == 401
+        headers = {"Authorization": "Bearer view-secret"}
+        assert c.get("/openapi.json", headers=headers).status_code == 200
+        assert c.get("/docs", headers=headers).status_code == 200
+
+        # A valid browser session can still open the stream (viewer role).
+        c.cookies.clear()
+        assert c.post("/api/auth", json={"token": "view-secret"}).status_code == 200
+        with c.websocket_connect("/ws") as ws:
+            hello = ws.receive_json()
+        assert hello["role"] == "viewer"
+
+
 def test_log_verify_and_metrics_endpoints(client: TestClient) -> None:
     verify = client.get("/api/logs/verify").json()
     assert "ok" in verify and "checked" in verify and "legacy" in verify

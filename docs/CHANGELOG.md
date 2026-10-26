@@ -2,6 +2,28 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.10.1] — 2026-10-26
+
+### Security / integrity
+- **Session cookie hardening**: the signing key is random per process by default
+  (`LASSI_SECRET` pins it). With only a viewer token configured, a viewer could derive
+  the old key (`operator:viewer`) and sign an operator cookie; that is now impossible.
+  A cookie for a role with no configured token is rejected.
+- **Server-side session expiry** (`LASSI_SESSION_TTL`, 12 h): a copied cookie stops
+  working; the WebSocket closes when the session expires.
+- **Docs/OpenAPI protected** when auth is enabled; HTTP no longer accepts `?token`
+  (only the WebSocket, which cannot set headers). Auth/metrics responses are no-store.
+- **Audit verification**: once the chain starts, any unchained line is a failure
+  (stripping `prev`/`hash` from the last line or inserting a fake legacy line was
+  previously accepted). `verified` is false for a legacy-only log.
+
+### UI
+- The login modal stops polling/reconnecting; a viewer cannot trigger a write through
+  a shortcut; help cannot open over the login modal.
+
+### Docs/tests
+- Hardening/limits and env table updated; 208 tests.
+
 ## [0.10.0] — 2026-10-26
 
 ### Added

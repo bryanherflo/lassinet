@@ -183,9 +183,13 @@ def audit(event: dict[str, Any]) -> None:
 def verify_log() -> dict[str, Any]:
     """Check the hash chain across the active file and the kept archives.
 
-    Legacy lines written before the chain existed are counted but skipped; the
-    first chained line is the anchor, so a deleted prefix is not detectable
-    without an external copy (honest limit, documented).
+    Legacy lines *before* the chain starts are counted and skipped. Once the
+    chain has started, a line without `prev`/`hash` is a failure: otherwise
+    stripping those fields from the last (or any) line would hide tampering.
+    `verified` is false when there is nothing chained to check.
+
+    Honest limits: the first chained line is the anchor, so a deleted prefix
+    or suffix and a full rewrite need an external copy to prove.
     """
     checked = legacy = 0
     previous = ""
@@ -195,24 +199,31 @@ def verify_log() -> dict[str, Any]:
             try:
                 lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError as exc:
-                return {"ok": False, "checked": checked, "legacy": legacy,
-                        "error": f"{path.name}: {exc}"}
+                return {"ok": False, "verified": checked > 0, "checked": checked,
+                        "legacy": legacy, "error": f"{path.name}: {exc}"}
             for line in lines:
                 if not line.strip():
                     continue
                 try:
                     event = json.loads(line)
                 except (json.JSONDecodeError, TypeError):
-                    return {"ok": False, "checked": checked, "legacy": legacy,
+                    return {"ok": False, "verified": checked > 0, "checked": checked,
+                            "legacy": legacy,
                             "error": f"invalid JSON in {path.name}"}
                 if not isinstance(event, dict):
-                    return {"ok": False, "checked": checked, "legacy": legacy,
+                    return {"ok": False, "verified": checked > 0, "checked": checked,
+                            "legacy": legacy,
                             "error": f"non-object line in {path.name}"}
                 if "hash" not in event:
+                    if started:
+                        return {"ok": False, "verified": checked > 0,
+                                "checked": checked, "legacy": legacy,
+                                "error": f"unchained line after the chain at {path.name}"}
                     legacy += 1
                     continue
                 if started and str(event.get("prev") or "") != previous:
-                    return {"ok": False, "checked": checked, "legacy": legacy,
+                    return {"ok": False, "verified": checked > 0, "checked": checked,
+                            "legacy": legacy,
                             "error": f"broken chain at {path.name}"}
                 payload = {k: v for k, v in event.items() if k not in ("prev", "hash")}
                 canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"),
@@ -221,13 +232,14 @@ def verify_log() -> dict[str, Any]:
                     (str(event.get("prev") or "") + canonical).encode("utf-8")
                 ).hexdigest()
                 if not hmac.compare_digest(str(event.get("hash") or ""), expected):
-                    return {"ok": False, "checked": checked + 1, "legacy": legacy,
+                    return {"ok": False, "verified": checked > 0,
+                            "checked": checked + 1, "legacy": legacy,
                             "error": f"hash mismatch at {path.name}"}
                 previous = str(event.get("hash") or "")
                 started = True
                 checked += 1
-    return {"ok": True, "checked": checked, "legacy": legacy, "error": ""}
-
+    return {"ok": True, "verified": checked > 0, "checked": checked,
+            "legacy": legacy, "error": ""}
 
 # ---- human-friendly device names (editable from the dashboard, persisted) ----
 # Renamed devices keep their display name across restarts: the engine re-upserts

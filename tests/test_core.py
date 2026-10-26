@@ -1289,6 +1289,51 @@ def test_audit_log_is_hash_chained_and_verifiable(monkeypatch, tmp_path) -> None
     assert bad["ok"] is False and "hash mismatch" in bad["error"]
 
 
+def test_verify_log_rejects_unchained_line_after_chain(monkeypatch, tmp_path) -> None:
+    import lassi.state as st
+
+    log = tmp_path / "events.jsonl"
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", log)
+    st.audit({"event": "test", "n": 0})
+    with log.open("a", encoding="utf-8") as fh:
+        fh.write('{"event": "legacy-after-chain", "n": 1}' + chr(10))
+    result = st.verify_log()
+    assert result["ok"] is False
+    assert result["verified"] is True and "unchained" in result["error"]
+
+
+def test_verify_log_rejects_stripped_hash_on_last_line(monkeypatch, tmp_path) -> None:
+    import json
+
+    import lassi.state as st
+
+    log = tmp_path / "events.jsonl"
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", log)
+    st.audit({"event": "test", "n": 0})
+    st.audit({"event": "test", "n": 1})
+    lines = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    lines[-1].pop("hash", None)
+    lines[-1].pop("prev", None)
+    lines[-1]["n"] = 999
+    log.write_text(chr(10).join(json.dumps(line) for line in lines) + chr(10),
+                   encoding="utf-8")
+    result = st.verify_log()
+    assert result["ok"] is False and result["verified"] is True
+    assert "unchained" in result["error"]
+
+
+def test_verify_log_reports_legacy_only_as_unverified(monkeypatch, tmp_path) -> None:
+    import lassi.state as st
+
+    log = tmp_path / "events.jsonl"
+    log.write_text('{"event": "old", "n": 0}' + chr(10), encoding="utf-8")
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", log)
+    result = st.verify_log()
+    assert result["ok"] is True
+    assert result["verified"] is False
+    assert result["checked"] == 0 and result["legacy"] == 1
+
+
 def test_verify_log_skips_legacy_lines(monkeypatch, tmp_path) -> None:
     import lassi.state as st
 

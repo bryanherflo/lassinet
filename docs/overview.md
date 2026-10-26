@@ -313,7 +313,7 @@ the infrastructure:
 | `GET /api/state` | Full snapshot: nodes, edges, alerts, rules, traffic, statistics, trusted/protected lists |
 | `GET /api/logs?limit=N` | Tail of the local JSONL event log (bounded to the last megabyte) |
 | `GET /api/logs/export` | Download the complete JSONL event log with a timestamped filename (`application/x-ndjson`); rotated archives are concatenated in order |
-| `GET /api/logs/verify` | Verify the JSONL hash chain (`ok`, `checked`, `legacy`, `error`) |
+| `GET /api/logs/verify` | Verify the JSONL hash chain (`ok`, `verified`, `checked`, `legacy`, `error`) |
 | `POST /api/auth` | Exchange an operator/viewer token for an HttpOnly session cookie |
 | `GET /metrics` | Prometheus metrics (protected when auth is enabled) |
 | `POST /api/firewall/block` | Block a source (`{"ip": "...", "reason": "..."}`) |
@@ -366,7 +366,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **204 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **208 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows
@@ -385,11 +385,16 @@ See [ci.md](ci.md) for what the pipeline proves and what it still misses.
 
 ## 10. Honest limits
 
-* **Auth/RBAC are opt-in and token-based**: no user database, SSO/MFA, rate limiting or
-  per-route policies. Put the dashboard behind TLS/reverse proxy; a token in a query string
-  can leak into logs (use the cookie or the Bearer header).
-* **The hash chain detects edits/deletions in the kept log**, not a full rewrite: the oldest
-  kept line is the anchor. Keep an external copy (the Export endpoint) for stronger evidence.
+* **Auth/RBAC are opt-in and token-based**: no user database, SSO/MFA, CSRF token, rate
+  limiting or per-route policies. Put the dashboard behind TLS/reverse proxy. HTTP tokens
+  must use the cookie or the Bearer header; only the WebSocket accepts `?token` (which can
+  leak into proxy logs). Sessions are limited server-side (`LASSI_SESSION_TTL`, 12 h default).
+* **The hash chain detects edits, insertions and deletions between lines**, not a full
+  rewrite: the oldest kept line is the anchor, so a deleted prefix or suffix needs an
+  external copy. Once the chain starts, an unchained line is a failure; `verified` is false
+  for a legacy-only log. Keep an external copy (the Export endpoint) for stronger evidence.
+  A truncated final write (power loss) is reported as invalid JSON rather than silently
+  accepted; inspect or repair the tail.
 * Still no HA/clustering/shared state, no gigabit capture and no formal compliance
   certification; the capture filter and SPAN/mirror only reduce or widen the traffic seen.
 
