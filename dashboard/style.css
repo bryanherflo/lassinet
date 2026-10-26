@@ -31,7 +31,7 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   --toolbar-h: 48px;
-  --legend-w: 200px;
+  --legend-w: 290px;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 ::selection { background: #1f6feb55; }

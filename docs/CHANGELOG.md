@@ -2,6 +2,14 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.9.8] — 2026-10-26
+
+### Fixed
+- **The legend was too narrow for its two columns** (200 px): labels such as `Desktop` or
+  `Speaker` and the type counters were clipped at the panel edge. The legend is now 290 px, so
+  the full type names and the counts are visible. The map layout already reserved ~300 px for
+  it, so no device moves.
+
 ## [0.9.7] — 2026-10-26
 
 ### Fixed
