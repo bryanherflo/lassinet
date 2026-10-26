@@ -14,11 +14,14 @@ Modes (env vars):
 """
 
 import asyncio
+import hashlib
+import hmac
 import ipaddress
 import json
 import logging
 import math
 import os
+import secrets
 import shutil
 import threading
 import time
@@ -29,8 +32,8 @@ from typing import Any
 
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -71,6 +74,13 @@ try:
 except ValueError:
     PORT = 8000
 HOST = (os.getenv("LASSI_HOST") or "").strip() or "127.0.0.1"
+
+# Optional token authentication. Both empty (default) = open, as before.
+#   LASSI_TOKEN_OPERATOR  can block/unblock/trust/rename/dismiss and read
+#   LASSI_TOKEN_VIEWER    can only read (dashboard, logs, metrics)
+AUTH_OPERATOR = (os.getenv("LASSI_TOKEN_OPERATOR") or "").strip()
+AUTH_VIEWER = (os.getenv("LASSI_TOKEN_VIEWER") or "").strip()
+SESSION_COOKIE = "lassi_session"
 try:
     DISCOVERY_INTERVAL = float(os.getenv("LASSI_DISCOVERY_INTERVAL", "30"))
     if not math.isfinite(DISCOVERY_INTERVAL) or DISCOVERY_INTERVAL < 0:
@@ -607,6 +617,10 @@ class TrustRequest(BaseModel):
     trusted: bool = True
 
 
+class AuthRequest(BaseModel):
+    token: str
+
+
 class DismissRequest(BaseModel):
     key: str
 
@@ -674,6 +688,77 @@ def rename_device(req: RenameRequest) -> dict:
     return {"ok": True, "ip": ip, "name": name, "kind": kind}
 
 
+def _auth_enabled() -> bool:
+    return bool(AUTH_OPERATOR or AUTH_VIEWER)
+
+
+def _sign_role(role: str) -> str:
+    """HMAC for the session cookie; the secret is derived from the tokens."""
+    explicit = (os.getenv("LASSI_SECRET") or "").strip()
+    secret = explicit or f"{AUTH_OPERATOR}:{AUTH_VIEWER}"
+    return hmac.new(hashlib.sha256(secret.encode()).digest(),
+                    role.encode(), hashlib.sha256).hexdigest()
+
+
+def _role_for_token(token: str | None) -> str | None:
+    token = (token or "").strip()
+    if not token:
+        return None
+    if AUTH_OPERATOR and secrets.compare_digest(token, AUTH_OPERATOR):
+        return "operator"
+    if AUTH_VIEWER and secrets.compare_digest(token, AUTH_VIEWER):
+        return "viewer"
+    return None
+
+
+def _role_for_cookie(value: str | None) -> str | None:
+    if not value or "." not in value:
+        return None
+    role, signature = value.rsplit(".", 1)
+    if role not in ("operator", "viewer"):
+        return None
+    if not hmac.compare_digest(signature, _sign_role(role)):
+        return None
+    return role
+
+
+def _request_role(request: Request) -> str | None:
+    if not _auth_enabled():
+        return "operator"
+    role = _role_for_cookie(request.cookies.get(SESSION_COOKIE))
+    if role:
+        return role
+    header = request.headers.get("authorization", "")
+    if header.lower().startswith("bearer "):
+        role = _role_for_token(header[7:])
+        if role:
+            return role
+    return _role_for_token(request.query_params.get("token"))
+
+
+@app.middleware("http")
+async def auth_guard(request: Request, call_next):
+    """Token auth + roles: writes require the operator token, reads the viewer.
+
+    Opt-in: if neither LASSI_TOKEN_OPERATOR nor LASSI_TOKEN_VIEWER is set, the
+    API stays open (the historical behaviour for a localhost lab).
+    """
+    path = request.url.path
+    protected = path == "/metrics" or path.startswith("/api/")
+    if not _auth_enabled() or not protected or path in ("/api/auth", "/health"):
+        return await call_next(request)
+    role = _request_role(request)
+    if role is None:
+        return JSONResponse({"ok": False, "error": "authentication required"},
+                            status_code=401,
+                            headers={"WWW-Authenticate": "Bearer"})
+    if request.method not in ("GET", "HEAD", "OPTIONS") and role != "operator":
+        return JSONResponse({"ok": False, "error": "operator token required"},
+                            status_code=403)
+    request.state.role = role
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def no_cache_dashboard(request, call_next):
     """Static dashboard assets must always revalidate — stale CSS/JS was
@@ -719,7 +804,7 @@ def _firewall_ready() -> tuple[bool, str]:
     return True, ""
 
 
-def _snapshot() -> dict:
+def _snapshot(role: str = "operator") -> dict:
     """State payload plus the enforcement context the dashboard must show."""
     snap = state.snapshot()
     ready, note = _firewall_ready()
@@ -731,12 +816,35 @@ def _snapshot() -> dict:
     # process (e.g. after a git pull). The client only offers actions the
     # server it is talking to actually implements.
     snap["features"] = ["dismiss_alerts"]
+    snap["role"] = role
+    snap["auth_required"] = _auth_enabled()
     return snap
 
 
+@app.post("/api/auth")
+def auth_login(req: AuthRequest, request: Request) -> JSONResponse:
+    """Exchange an access token for an HttpOnly session cookie."""
+    role = _role_for_token(req.token)
+    if not role:
+        return JSONResponse({"ok": False, "error": "invalid token"}, status_code=401,
+                            headers={"WWW-Authenticate": "Bearer"})
+    response = JSONResponse({"ok": True, "role": role, "auth_required": True})
+    response.set_cookie(SESSION_COOKIE, f"{role}.{_sign_role(role)}",
+                        httponly=True, samesite="strict",
+                        secure=request.url.scheme == "https", max_age=12 * 3600)
+    return response
+
+
+@app.delete("/api/auth")
+def auth_logout() -> JSONResponse:
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(SESSION_COOKIE)
+    return response
+
+
 @app.get("/api/state")
-def get_state() -> JSONResponse:
-    return JSONResponse(_snapshot())
+def get_state(request: Request) -> JSONResponse:
+    return JSONResponse(_snapshot(getattr(request.state, "role", "operator")))
 
 
 _LOG_TAIL_BYTES = 1_000_000
@@ -838,6 +946,13 @@ def dismiss_alert(req: DismissRequest) -> dict:
     return {"ok": True, "changed": state.dismiss_alert(key)}
 
 
+@app.get("/api/logs/verify")
+def verify_logs() -> dict:
+    """Check the hash chain of the JSONL audit log (tamper evidence)."""
+    from lassi.state import verify_log
+    return verify_log()
+
+
 @app.post("/api/firewall/block")
 def block(req: BlockRequest) -> dict:
     ip = _clean_ip(req.ip)
@@ -905,7 +1020,7 @@ def health() -> dict:
     fw_ready, fw_note = _firewall_ready()
     return {"ok": ok, "mode": state.mode, "model": detector.model is not None,
             "firewall": fw.provider, "firewall_ready": fw_ready,
-            "firewall_note": fw_note,
+            "firewall_note": fw_note, "auth_required": _auth_enabled(),
             "flows_total": state.stats["flows_total"],
             "capture_running": capture_running,
             "capture_error": capture_error}
@@ -913,13 +1028,57 @@ def health() -> dict:
 
 @app.websocket("/ws")
 async def ws(sock: WebSocket) -> None:
+    role = "operator"
+    if _auth_enabled():
+        role = (_role_for_cookie(sock.cookies.get(SESSION_COOKIE))
+                or _role_for_token(sock.query_params.get("token")) or "")
+        if not role:
+            await sock.close(code=1008)
+            return
     await sock.accept()
     try:
         while True:
             await asyncio.sleep(TICK)
-            await sock.send_json(_snapshot())
+            await sock.send_json(_snapshot(role))
     except WebSocketDisconnect:
         pass
+
+
+@app.get("/metrics")
+def metrics() -> PlainTextResponse:
+    """Prometheus exposition of the sensor state (no extra dependency)."""
+    stats = state.stats
+    capture = _capture if MODE == "live" else None
+    running = bool(getattr(capture, "running", False)) if capture else False
+    model = 1 if detector.model is not None else 0
+    mode = str(state.mode).replace("\\", "").replace('"', "'")
+    lines = [
+        "# HELP lassinet_flows_total Flows processed since startup",
+        "# TYPE lassinet_flows_total counter",
+        f"lassinet_flows_total {int(stats.get('flows_total', 0) or 0)}",
+        "# HELP lassinet_attacks_total Detections since startup",
+        "# TYPE lassinet_attacks_total counter",
+        f"lassinet_attacks_total {int(stats.get('attacks_total', 0) or 0)}",
+        "# HELP lassinet_flows_per_sec Flows in the last engine window",
+        "# TYPE lassinet_flows_per_sec gauge",
+        f"lassinet_flows_per_sec {float(stats.get('flows_per_sec', 0) or 0)}",
+        "# HELP lassinet_devices Devices currently on the map",
+        "# TYPE lassinet_devices gauge",
+        f"lassinet_devices {len(state.hosts)}",
+        "# HELP lassinet_blocked Active firewall blocks",
+        "# TYPE lassinet_blocked gauge",
+        f"lassinet_blocked {len(state.blocked)}",
+        "# HELP lassinet_capture_running Live capture running",
+        "# TYPE lassinet_capture_running gauge",
+        f"lassinet_capture_running {1 if running else 0}",
+        "# HELP lassinet_model_loaded Detection model loaded",
+        "# TYPE lassinet_model_loaded gauge",
+        f"lassinet_model_loaded {model}",
+        "# HELP lassinet_mode Active mode (1 for the current one)",
+        "# TYPE lassinet_mode gauge",
+        f'lassinet_mode{{mode="{mode}"}} 1',
+    ]
+    return PlainTextResponse("\n".join(lines) + "\n")
 
 
 # dashboard (static, zero build step)

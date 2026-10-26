@@ -1257,6 +1257,62 @@ def test_alert_dedupe_expires_and_can_be_disabled(monkeypatch) -> None:
     assert len(off.alerts) == 2                   # 0 keeps every detection
 
 
+def test_capture_filter_is_opt_in(monkeypatch) -> None:
+    from lassi.live import _capture_filter
+
+    monkeypatch.delenv("LASSI_CAPTURE_FILTER", raising=False)
+    assert _capture_filter() is None
+    monkeypatch.setenv("LASSI_CAPTURE_FILTER", "  tcp or udp  ")
+    assert _capture_filter() == "tcp or udp"
+
+
+def test_audit_log_is_hash_chained_and_verifiable(monkeypatch, tmp_path) -> None:
+    import json
+
+    import lassi.state as st
+
+    log = tmp_path / "events.jsonl"
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", log)
+    for n in range(3):
+        st.audit({"event": "test", "n": n})
+    result = st.verify_log()
+    assert result["ok"] is True
+    assert result["checked"] == 3 and result["legacy"] == 0
+    lines = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert lines[0]["prev"] == ""
+    assert lines[1]["prev"] == lines[0]["hash"]
+    assert lines[2]["prev"] == lines[1]["hash"]
+
+    lines[1]["n"] = 99                      # tamper with one event
+    log.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+    bad = st.verify_log()
+    assert bad["ok"] is False and "hash mismatch" in bad["error"]
+
+
+def test_verify_log_skips_legacy_lines(monkeypatch, tmp_path) -> None:
+    import lassi.state as st
+
+    log = tmp_path / "events.jsonl"
+    log.write_text('{"event": "legacy", "n": 0}\n', encoding="utf-8")
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", log)
+    st.audit({"event": "new", "n": 1})
+    result = st.verify_log()
+    assert result["ok"] is True
+    assert result["legacy"] == 1 and result["checked"] == 1
+
+
+def test_hash_chain_survives_rotation(monkeypatch, tmp_path) -> None:
+    import lassi.state as st
+
+    monkeypatch.setattr(st, "EVENTS_LOG_PATH", tmp_path / "events.jsonl")
+    monkeypatch.setattr(st, "LOG_MAX_BYTES", 300)
+    monkeypatch.setattr(st, "LOG_KEEP", 0)   # keep every archive to check all 12
+    for n in range(12):
+        st.audit({"event": "test", "n": n, "payload": "x" * 40})
+    result = st.verify_log()
+    assert result["ok"] is True and result["checked"] == 12
+
+
 def test_dismissed_alert_is_removed_and_not_restored(monkeypatch, tmp_path) -> None:
     import json
 

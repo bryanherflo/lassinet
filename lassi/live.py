@@ -65,6 +65,14 @@ def local_ip() -> str | None:
     return _route_for()[1]
 
 
+def _capture_filter() -> str | None:
+    """Optional libpcap/BPF filter, e.g. `tcp or udp` or `not port 22`.
+
+    Useful on busy networks: capture only the traffic the detector needs.
+    """
+    return (os.getenv("LASSI_CAPTURE_FILTER") or "").strip() or None
+
+
 def _local_addresses() -> set[str]:
     """Every IPv4 address of this machine (best-effort, empty without scapy)."""
     try:
@@ -315,7 +323,8 @@ class LiveCapture:
 
     def _sniff_loop(self) -> None:
         try:
-            sniff(iface=self.iface, prn=self._on_packet, store=False)
+            sniff(iface=self.iface, prn=self._on_packet, store=False,
+                  filter=_capture_filter())
         except Exception as exc:  # permissions, bad interface, driver error...
             self.error = f"{type(exc).__name__}: {exc}"
             log.exception("live capture stopped")

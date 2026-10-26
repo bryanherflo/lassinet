@@ -9,8 +9,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.45">
-<script src="vendor/vis-network.min.js?v=3.45"></script>
+<link rel="stylesheet" href="style.css?v=3.46">
+<script src="vendor/vis-network.min.js?v=3.46"></script>
 </head>
 <body>
 <header>
@@ -108,6 +108,20 @@
   </aside>
 </main>
 
+<div id="auth-overlay" class="modal-overlay" hidden>
+  <div class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+    <div class="modal-head">
+      <h3 id="auth-title">Sign in</h3>
+    </div>
+    <div class="modal-body">
+      <p class="section-note">This dashboard is protected. Paste an <strong>operator</strong> or <strong>viewer</strong> access token.</p>
+      <input id="auth-token" class="auth-input" type="password" autocomplete="current-password" placeholder="Access token" />
+      <p id="auth-error" class="auth-error" hidden></p>
+      <button type="button" id="auth-submit" class="sel-btn danger">Sign in</button>
+    </div>
+  </div>
+</div>
+
 <div id="help-overlay" class="modal-overlay" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
     <div class="modal-head">
@@ -158,6 +172,6 @@
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="app.js?v=3.45"></script>
+<script src="app.js?v=3.46"></script>
 </body>
 </html>

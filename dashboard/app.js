@@ -245,6 +245,8 @@ var layoutKey = "";
 var kindFilter = null;   // "camera", "unknown", ... or null (show everything)
 var firewallProvider = "mock", firewallReady = false, firewallNote = "";
 var serverFeatures = new Set();   // capabilities advertised by /api/state
+var authBlocked = false;          // the sign-in modal is waiting
+var authRole = "operator";        // "viewer" hides the write actions
 var lastData = null;     // last snapshot, so a legend click re-renders immediately
 
 function computeTreeLayout(data) {
@@ -771,6 +773,7 @@ fxHost.addEventListener("contextmenu", function(ev) {
 function closeTrustMenu() { var m = document.getElementById("trust-menu"); if (m) m.remove(); }
 
 function showTrustMenu(event, ip) {
+  if (authRole === "viewer") { toast("Read-only token: this action needs the operator token", "error"); return; }
   closeTrustMenu();
   var node = nodes.get(ip); if (!node) return;
   var isTrusted = trustedDevices.has(ip), isSuspicious = suspiciousDevices.has(ip), isAttacker = confirmedAttackers.has(ip);
@@ -879,7 +882,7 @@ function revertToOriginalRole(ip) {
   applyNodeRole(ip, role, label + (role === "unknown" ? " (unverified traffic)" : ""));
 }
 
-network.on("doubleClick", function(p) { var ip = p.nodes[0]; if (!ip) return; var label = nodes.get(ip)?.label || ""; var current = label.split("\n")[0]; var name = window.prompt("Name this device (" + ip + ")", current); if (name && name.trim()) post("/api/devices/rename", { ip: ip, name: name.trim() }); });
+network.on("doubleClick", function(p) { var ip = p.nodes[0]; if (!ip) return; if (authRole === "viewer") { toast("Read-only token: this action needs the operator token", "error"); return; } var label = nodes.get(ip)?.label || ""; var current = label.split("\n")[0]; var name = window.prompt("Name this device (" + ip + ")", current); if (name && name.trim()) post("/api/devices/rename", { ip: ip, name: name.trim() }); });
 
 window.addEventListener("keydown", function(ev) {
   if (ev.target && (ev.target.tagName === "INPUT" || ev.target.tagName === "TEXTAREA" || ev.target.isContentEditable)) return;
@@ -1162,6 +1165,8 @@ async function dismissAlert(key) {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key: key })
     });
+    if (res.status === 401) { showAuth(); return; }
+    if (res.status === 403) { toast("Read-only token: this action needs the operator token", "error"); return; }
     var data = await res.json().catch(function() { return {}; });
     if (!res.ok || (data && data.ok === false)) {
       toast((data && data.error) || "Could not dismiss that alert", "error");
@@ -1187,6 +1192,8 @@ async function dismissAlert(key) {
 async function post(url, body) {
   try {
     var res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (res.status === 401) { showAuth(); return; }
+    if (res.status === 403) { toast("Read-only token: this action needs the operator token", "error"); return; }
     if (!res.ok) throw new Error("HTTP " + res.status);
     var data = await res.json().catch(function() { return {}; });
     if (data && data.ok === false) { toast(data.error || "That action is not allowed right now", "error"); return; }
@@ -1316,7 +1323,50 @@ function setFxEnabled(on) {
 function toggleFx() { setFxEnabled(!FX_ENABLED); }
 function fitMap() { fitMapView(true); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 560); }
 var pollTimer = null; function startPolling() { if (pollTimer) return; pollTimer = setInterval(refresh, 2000); } function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
-async function refresh() { try { var res = await fetch("/api/state"); if (!res.ok) throw new Error("HTTP " + res.status); apply(await res.json()); } catch (e) { console.warn("refresh failed:", e); } }
+function showAuth(message) {
+  var overlay = document.getElementById("auth-overlay");
+  if (!overlay) return;
+  authBlocked = true;
+  overlay.hidden = false;
+  document.body.classList.add("modal-open");
+  var err = document.getElementById("auth-error");
+  if (err) { err.textContent = message || ""; err.hidden = !message; }
+  var input = document.getElementById("auth-token");
+  if (input) setTimeout(function() { input.focus(); }, 50);
+}
+
+async function submitAuth() {
+  var input = document.getElementById("auth-token");
+  var err = document.getElementById("auth-error");
+  var token = input ? input.value.trim() : "";
+  if (!token) {
+    if (err) { err.textContent = "Enter an access token"; err.hidden = false; }
+    return;
+  }
+  try {
+    var res = await fetch("/api/auth", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: token })
+    });
+    if (!res.ok) {
+      if (err) { err.textContent = "Invalid token"; err.hidden = false; }
+      return;
+    }
+    location.reload();
+  } catch (e) {
+    if (err) { err.textContent = "Could not sign in"; err.hidden = false; }
+  }
+}
+
+async function refresh() {
+  if (authBlocked) return;
+  try {
+    var res = await fetch("/api/state");
+    if (res.status === 401) { showAuth(); return; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    apply(await res.json());
+  } catch (e) { console.warn("refresh failed:", e); }
+}
 function setConnStatus(state) {
   var el = document.getElementById("map-status");
   if (!el) return;
@@ -1324,7 +1374,10 @@ function setConnStatus(state) {
   el.textContent = state === "live" ? "live" : state === "polling" ? "polling" : "connecting\u2026";
   el.title = state === "live" ? "Live \u2014 WebSocket stream connected" : state === "polling" ? "WebSocket unavailable \u2014 refreshing over /api/state" : "Connecting to the live stream\u2026";
 }
-function apply(data) { lastData = data; serverFeatures = new Set((data && data.features) || []); renderTopology(data); renderFeeds(data); renderLog(data); renderStats(data); updateSelectionBar(); updateLegend(data); }
+function apply(data) { lastData = data; serverFeatures = new Set((data && data.features) || []);
+  authRole = (data && data.role) || "operator";
+  document.body.classList.toggle("read-only", authRole === "viewer");
+  renderTopology(data); renderFeeds(data); renderLog(data); renderStats(data); updateSelectionBar(); updateLegend(data); }
 // The legend lists the icon set once, built from the same glyph map the map
 // uses (so the SVG is never duplicated in the HTML).
 function buildLegendIcons() {
@@ -1552,6 +1605,13 @@ if (pickerInput && pickerList) {
   } else {
     window.addEventListener("resize", syncHeaderHeight);
   }
+
+  var authSubmitBtn = document.getElementById("auth-submit");
+  if (authSubmitBtn) authSubmitBtn.addEventListener("click", submitAuth);
+  var authTokenInput = document.getElementById("auth-token");
+  if (authTokenInput) authTokenInput.addEventListener("keydown", function(ev) {
+    if (ev.key === "Enter") { ev.preventDefault(); submitAuth(); }
+  });
 
   refresh().catch(function() {});
   buildLegendIcons();

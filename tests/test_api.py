@@ -510,6 +510,44 @@ def test_state_and_health_say_whether_blocks_are_real(client: TestClient) -> Non
     assert health["firewall"] == "mock" and health["firewall_ready"] is False
 
 
+def test_log_verify_and_metrics_endpoints(client: TestClient) -> None:
+    verify = client.get("/api/logs/verify").json()
+    assert "ok" in verify and "checked" in verify and "legacy" in verify
+    metrics = client.get("/metrics")
+    assert metrics.status_code == 200
+    assert "lassinet_flows_total" in metrics.text
+    assert "lassinet_devices" in metrics.text
+
+
+def test_auth_tokens_and_roles(monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    monkeypatch.setattr(lassi_app, "AUTH_OPERATOR", "op-secret")
+    monkeypatch.setattr(lassi_app, "AUTH_VIEWER", "view-secret")
+    with TestClient(lassi_app.app) as c:
+        assert c.get("/health").json()["auth_required"] is True
+        assert c.get("/api/state").status_code == 401
+        assert c.post("/api/auth", json={"token": "bad"}).status_code == 401
+
+        assert c.post("/api/auth", json={"token": "view-secret"}).status_code == 200
+        assert c.get("/api/state").json()["role"] == "viewer"
+        assert c.post("/api/alerts/dismiss", json={"key": "x"}).status_code == 403
+
+        c.delete("/api/auth")
+        assert c.get("/api/state").status_code == 401
+        headers = {"Authorization": "Bearer op-secret"}
+        assert c.get("/api/state", headers=headers).json()["role"] == "operator"
+        assert c.post("/api/alerts/dismiss", json={"key": "x"},
+                      headers=headers).status_code == 200
+
+        try:
+            with c.websocket_connect("/ws"):
+                raise AssertionError("unauthenticated WebSocket was accepted")
+        except WebSocketDisconnect as exc:
+            assert exc.code == 1008
+
+
 def test_alert_dismiss_endpoint(client: TestClient, monkeypatch, tmp_path) -> None:
     import lassi.state as st
 

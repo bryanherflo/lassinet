@@ -313,6 +313,9 @@ the infrastructure:
 | `GET /api/state` | Full snapshot: nodes, edges, alerts, rules, traffic, statistics, trusted/protected lists |
 | `GET /api/logs?limit=N` | Tail of the local JSONL event log (bounded to the last megabyte) |
 | `GET /api/logs/export` | Download the complete JSONL event log with a timestamped filename (`application/x-ndjson`); rotated archives are concatenated in order |
+| `GET /api/logs/verify` | Verify the JSONL hash chain (`ok`, `checked`, `legacy`, `error`) |
+| `POST /api/auth` | Exchange an operator/viewer token for an HttpOnly session cookie |
+| `GET /metrics` | Prometheus metrics (protected when auth is enabled) |
 | `POST /api/firewall/block` | Block a source (`{"ip": "...", "reason": "..."}`) |
 | `POST /api/firewall/unblock` | Remove the block |
 | `POST /api/devices/rename` | Rename a device (persisted) |
@@ -363,7 +366,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **198 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **204 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows
@@ -381,6 +384,14 @@ See [ci.md](ci.md) for what the pipeline proves and what it still misses.
 ---
 
 ## 10. Honest limits
+
+* **Auth/RBAC are opt-in and token-based**: no user database, SSO/MFA, rate limiting or
+  per-route policies. Put the dashboard behind TLS/reverse proxy; a token in a query string
+  can leak into logs (use the cookie or the Bearer header).
+* **The hash chain detects edits/deletions in the kept log**, not a full rewrite: the oldest
+  kept line is the anchor. Keep an external copy (the Export endpoint) for stronger evidence.
+* Still no HA/clustering/shared state, no gigabit capture and no formal compliance
+  certification; the capture filter and SPAN/mirror only reduce or widen the traffic seen.
 
 * A host-level sniffer sees **only its own traffic** (plus broadcast). To
   see a whole switched LAN you need a SPAN/mirror port or to run LassiNet

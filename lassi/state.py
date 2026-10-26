@@ -1,5 +1,7 @@
 """Shared in-memory state (thread-safe)."""
 
+import hashlib
+import hmac
 import ipaddress
 import json
 import logging
@@ -44,6 +46,8 @@ def is_external(ip: str) -> bool:
 # file, so there is a persistent record even with no dashboard open.
 EVENTS_LOG_PATH = Path(os.environ.get("LASSI_LOGFILE", "logs/events.jsonl"))
 _audit_lock = threading.Lock()
+_last_hash = ""          # tail of the hash chain, kept in memory
+_hash_path: Path | None = None
 
 # A sensor that runs for months cannot keep appending to one file: rotation
 # moves the active log to `events-archive/events-<stamp>.jsonl` once it passes
@@ -65,11 +69,40 @@ def _log_archive_dir() -> Path:
     return EVENTS_LOG_PATH.parent / (EVENTS_LOG_PATH.stem + "-archive")
 
 
+def _load_last_hash() -> str:
+    """Hash of the newest chained line (empty for a legacy/empty log)."""
+    try:
+        files = [path for path in log_export_files()
+                 if path.exists() and path.stat().st_size > 0]
+    except OSError:
+        return ""
+    for path in reversed(files):
+        try:
+            with path.open("rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                fh.seek(max(0, size - 65536))
+                chunk = fh.read().decode("utf-8", "replace")
+        except OSError:
+            continue
+        for line in reversed(chunk.splitlines()):
+            try:
+                event = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            return str(event.get("hash") or "")
+    return ""
+
+
 def log_export_files() -> list[Path]:
     """Every file that belongs to the record, oldest first (archives + active)."""
     try:
-        files = sorted(_log_archive_dir().glob(
-            f"{EVENTS_LOG_PATH.stem}-*{EVENTS_LOG_PATH.suffix}"))
+        # Sort by mtime: two rotations in the same second get names ending in
+        # "-2"/"-3", which do not sort chronologically by name.
+        files = sorted(
+            _log_archive_dir().glob(f"{EVENTS_LOG_PATH.stem}-*{EVENTS_LOG_PATH.suffix}"),
+            key=lambda path: (path.stat().st_mtime, path.name),
+        )
     except OSError:
         files = []
     if EVENTS_LOG_PATH.exists():
@@ -108,8 +141,10 @@ def _rotate_log_locked() -> None:
     if LOG_KEEP <= 0:
         return
     try:
-        archives = sorted(_log_archive_dir().glob(
-            f"{EVENTS_LOG_PATH.stem}-*{EVENTS_LOG_PATH.suffix}"))
+        archives = sorted(
+            _log_archive_dir().glob(f"{EVENTS_LOG_PATH.stem}-*{EVENTS_LOG_PATH.suffix}"),
+            key=lambda path: (path.stat().st_mtime, path.name),
+        )
         for old in archives[:-LOG_KEEP]:
             old.unlink(missing_ok=True)
     except OSError as exc:
@@ -117,18 +152,81 @@ def _rotate_log_locked() -> None:
 
 
 def audit(event: dict[str, Any]) -> None:
-    """Append one structured event to the local log. Best-effort: a logging
-    failure must never break the engine (logging-guard rules itself)."""
+    """Append one event to the hash-chained JSONL log (best-effort).
+
+    Each line carries `prev` (the previous hash) and `hash` (SHA-256 of the
+    previous hash + the canonical event). Removing or editing a line breaks
+    the chain and `verify_log()` reports it. This detects partial tampering,
+    not a full rewrite: the first line of the oldest kept file is the anchor.
+    """
+    global _last_hash, _hash_path
     try:
         EVENTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps({"ts": datetime.now().isoformat(timespec="seconds"), **event},
-                          default=str, ensure_ascii=False)
         with _audit_lock:
+            if _hash_path != EVENTS_LOG_PATH:
+                _last_hash = _load_last_hash()
+                _hash_path = EVENTS_LOG_PATH
+            payload = {"ts": datetime.now().isoformat(timespec="seconds"), **event}
+            canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                                   default=str, ensure_ascii=False)
+            digest = hashlib.sha256((_last_hash + canonical).encode("utf-8")).hexdigest()
+            row = {**payload, "prev": _last_hash, "hash": digest}
+            line = json.dumps(row, default=str, ensure_ascii=False)
             _rotate_log_locked()
             with EVENTS_LOG_PATH.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
+            _last_hash = digest
     except Exception:
         pass
+
+
+def verify_log() -> dict[str, Any]:
+    """Check the hash chain across the active file and the kept archives.
+
+    Legacy lines written before the chain existed are counted but skipped; the
+    first chained line is the anchor, so a deleted prefix is not detectable
+    without an external copy (honest limit, documented).
+    """
+    checked = legacy = 0
+    previous = ""
+    started = False
+    with _audit_lock:
+        for path in log_export_files():
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError as exc:
+                return {"ok": False, "checked": checked, "legacy": legacy,
+                        "error": f"{path.name}: {exc}"}
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except (json.JSONDecodeError, TypeError):
+                    return {"ok": False, "checked": checked, "legacy": legacy,
+                            "error": f"invalid JSON in {path.name}"}
+                if not isinstance(event, dict):
+                    return {"ok": False, "checked": checked, "legacy": legacy,
+                            "error": f"non-object line in {path.name}"}
+                if "hash" not in event:
+                    legacy += 1
+                    continue
+                if started and str(event.get("prev") or "") != previous:
+                    return {"ok": False, "checked": checked, "legacy": legacy,
+                            "error": f"broken chain at {path.name}"}
+                payload = {k: v for k, v in event.items() if k not in ("prev", "hash")}
+                canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                                       default=str, ensure_ascii=False)
+                expected = hashlib.sha256(
+                    (str(event.get("prev") or "") + canonical).encode("utf-8")
+                ).hexdigest()
+                if not hmac.compare_digest(str(event.get("hash") or ""), expected):
+                    return {"ok": False, "checked": checked + 1, "legacy": legacy,
+                            "error": f"hash mismatch at {path.name}"}
+                previous = str(event.get("hash") or "")
+                started = True
+                checked += 1
+    return {"ok": True, "checked": checked, "legacy": legacy, "error": ""}
 
 
 # ---- human-friendly device names (editable from the dashboard, persisted) ----
@@ -527,7 +625,7 @@ class State:
             if cutoff and event_at < cutoff:
                 continue
             alert = {k: v for k, v in event.items()
-                     if k not in ("event", "ts", "collapsed")}
+                     if k not in ("event", "ts", "collapsed", "prev", "hash")}
             alert["count"] = int(alert.get("count") or 1)
             alert.setdefault("time", str(event.get("ts") or "")[11:19])
             last_ts = str(event.get("ts") or last_ts)

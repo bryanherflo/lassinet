@@ -572,6 +572,16 @@ body.modal-open { overflow: hidden; }
   font-size: 18px; line-height: 1; cursor: pointer; transition: all .15s ease; flex-shrink: 0;
 }
 .modal-close:hover { background: var(--red-dim); border-color: var(--red); color: var(--red); }
+.auth-modal { width: min(430px, 100%); }
+.auth-input {
+  width: 100%; margin: var(--space-md) 0 var(--space-sm); padding: 10px 12px;
+  border-radius: var(--radius-sm); border: 1px solid var(--border-bright);
+  background: var(--panel-elevated); color: var(--text); font: inherit;
+}
+.auth-error { color: var(--red); font-size: 12px; margin: 0 0 var(--space-sm); }
+/* A viewer token is read-only: hide the actions that would get a 403. */
+body.read-only #sel-block, body.read-only #sel-actions,
+body.read-only .act, body.read-only .alert-dismiss { display: none !important; }
 .modal-body { padding: var(--space-lg) var(--space-xl) var(--space-xl); font-size: 13px; line-height: 1.6; color: var(--text-dim); overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
 .modal-body .lead { color: var(--text); margin-bottom: var(--space-lg); }
 .modal-body b { color: var(--text); font-weight: 600; }

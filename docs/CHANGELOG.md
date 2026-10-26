@@ -2,6 +2,31 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.10.0] — 2026-10-26
+
+### Added
+- **Optional authentication + RBAC**: `LASSI_TOKEN_OPERATOR` can block/unblock/trust/rename/
+  dismiss, `LASSI_TOKEN_VIEWER` is read-only. The dashboard exchanges a token for an HttpOnly
+  session cookie (`POST /api/auth`); scripts can use `Authorization: Bearer`; the WebSocket
+  accepts the cookie or `?token=`. With no tokens the API stays open (localhost lab). The UI
+  has a sign-in modal and hides write actions for a viewer token.
+- **Tamper-evident audit log**: every JSONL line carries `prev` + `hash`; `GET /api/logs/verify`
+  checks the chain across the active file and the kept archives. Legacy lines are counted and
+  skipped; the first kept line is the anchor (partial tampering is detectable, a full rewrite
+  is not — honest limit).
+- **Prometheus `/metrics`**: flows, detections, devices, blocks, capture state, model, mode.
+- **`LASSI_CAPTURE_FILTER`**: libpcap/BPF filter for live capture (e.g. `tcp or udp`), to cut
+  the load on busy networks.
+
+### Fixed
+- **Archive order is chronological by mtime**: two rotations in the same second produce names
+  ending in `-2`/`-3`, which sort before the base name. Export, restore and verify now read the
+  files in the right order.
+
+### Docs
+- New *Hardening & operations* section (auth, TLS, metrics, audit chain, SPAN, availability),
+  env table rows, and an updated audience/limits section. Test suite: 204 tests.
+
 ## [0.9.9] — 2026-10-26
 
 ### Added
