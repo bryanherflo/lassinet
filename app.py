@@ -19,6 +19,7 @@ import json
 import logging
 import math
 import os
+import shutil
 import threading
 import time
 from collections.abc import Callable
@@ -690,15 +691,27 @@ def _firewall_ready() -> tuple[bool, str]:
                        "rule is created")
     if fw.provider == "pfsense":
         return False, "pfSense is still a placeholder: nothing is enforced"
-    if fw.provider == "windows" and os.name == "nt":
+    if fw.provider == "opnsense":
+        if not (fw.opnsense_url and fw.opnsense_key and fw.opnsense_secret
+                and fw.opnsense_alias):
+            return False, ("OPNsense is not configured (OPNSENSE_URL, OPNSENSE_KEY, "
+                           "OPNSENSE_SECRET, OPNSENSE_ALIAS)")
+    if fw.provider == "windows":
+        if os.name != "nt":
+            return False, "Windows Firewall is only available on Windows"
         try:
             import ctypes
             if not ctypes.windll.shell32.IsUserAnAdmin():
                 return False, "Windows Firewall needs an Administrator shell"
         except Exception:
             pass
-    if fw.provider == "nftables" and hasattr(os, "geteuid") and os.geteuid() != 0:
-        return False, "nftables needs root"
+    if fw.provider == "nftables":
+        if not hasattr(os, "geteuid"):
+            return False, "nftables is only available on Linux"
+        if os.geteuid() != 0:
+            return False, "nftables needs root"
+        if shutil.which("nft") is None:
+            return False, "nftables (nft) is not installed"
     return True, ""
 
 

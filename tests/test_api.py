@@ -509,6 +509,13 @@ def test_state_and_health_say_whether_blocks_are_real(client: TestClient) -> Non
     assert health["firewall"] == "mock" and health["firewall_ready"] is False
 
 
+def test_firewall_readiness_explains_missing_opnsense_config(monkeypatch) -> None:
+    monkeypatch.setattr(lassi_app.fw, "provider", "opnsense")
+    monkeypatch.setattr(lassi_app.fw, "opnsense_url", "")
+    ready, note = lassi_app._firewall_ready()
+    assert ready is False and "not configured" in note
+
+
 def test_block_response_marks_a_mock_block_as_simulated(client: TestClient) -> None:
     data = client.post("/api/firewall/block",
                        json={"ip": "203.0.113.77", "reason": "simulated check"}).json()

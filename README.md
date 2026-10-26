@@ -38,6 +38,8 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 
 ## 🚀 Quickstart
 
+> Python 3.10–3.12 recommended (CI runs 3.12); on newer versions some dependencies may not have wheels yet.
+
 ```bash
 git clone https://github.com/bryanherflo/lassinet.git
 cd lassinet
@@ -49,7 +51,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (158 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (193 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt

@@ -2,6 +2,22 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.9.3] — 2026-10-26
+
+### Fixed
+- **The firewall badge can no longer claim real enforcement for a provider that cannot
+  work**: OPNsense without `OPNSENSE_URL/KEY/SECRET/ALIAS`, Windows Firewall off Windows or
+  without an Administrator shell, and nftables off Linux, without root or without `nft` are
+  reported in amber with the reason instead of green.
+- **Role bands are hidden while a type filter is active**, so a filtered map does not keep a
+  band around dimmed devices.
+- **The Windows launcher is portable**: it writes its PID to `%TEMP%\lassinet-live.pid`
+  instead of an agent-specific folder.
+
+### Docs
+- README: supported Python range (3.10–3.12 recommended, CI on 3.12) and the current test
+  count (193); `docs/ci.md` and `docs/overview.md` updated too.
+
 ## [0.9.2] — 2026-10-26
 
 ### Added

@@ -589,7 +589,7 @@ function drawAttackFx(now) {
   while (ambientDots.length && ambientDots[0].until < now) ambientDots.shift();
   spawnAmbient(now);
   fctx.clearRect(0, 0, fx.width, fx.height);
-  drawGroupBoxes();
+  if (!kindFilter) drawGroupBoxes();
   if (FX_ENABLED) {
     for (var i = 0; i < attackPaths.length; i++) drawRider(Object.assign({}, attackPaths[i], { kind: "attack" }), now);
     for (var j = 0; j < ambientDots.length; j++) drawRider(ambientDots[j], now);

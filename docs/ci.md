@@ -49,7 +49,7 @@ exactly what happened with the nftables chain name in 0.4.21.
 
 * The code imports and the FastAPI app boots under Python 3.12 on Linux.
 * The model training pipeline is reproducible enough to run in CI.
-* All **158 tests** pass: state/canonicalisation, ML feature sanitisation and
+* All **193 tests** pass: state/canonicalisation, ML feature sanitisation and
   model profiles, firewall providers (mock / nftables / OPNsense / **windows**),
   trusted/protected devices, live-mode routing and discovery helpers, the REST
   API (block, unblock, trust, logs, health, live→demo fallback) and the
@@ -79,7 +79,7 @@ exactly what happened with the nftables chain name in 0.4.21.
 |---|---|
 | ~~No **Windows** runner~~ | **closed in 0.4.22**: the `windows` job runs the suite on `windows-latest`, where the runner is administrator and the Windows Firewall provider is tested for real |
 | No **macOS** runner | the BSD/macOS capture path is never executed by CI |
-| Single **Python 3.12** | the project is developed on 3.15; a syntax/typing regression that only appears on 3.13/3.14 would only be found by users |
+| Single **Python 3.12** | a syntax/typing regression that only appears on 3.13/3.14 would only be found by users |
 | `scapy` is **not installed** in CI | `HAS_SCAPY` is always `False` there, so the live-mode import fallback and the interface/gateway helpers are only tested through fakes |
 
 ### 2.2 Quality gates
