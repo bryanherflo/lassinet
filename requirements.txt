@@ -1,7 +1,7 @@
 # --- Core (obligatorio) ---
 fastapi>=0.115
 uvicorn[standard]>=0.32
-pydantic>=2.9
+pydantic>=2.14.1
 numpy>=1.26
 scikit-learn>=1.5
 joblib>=1.4
