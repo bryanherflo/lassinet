@@ -2,6 +2,22 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.16.0] — 2026-10-26
+
+### Added
+- **API v1**: versioned reads with pagination/filters, operator write wrappers,
+  sensor list, audit verify and stable `X-LassiNet-API: 1` responses.
+- **Remote sensors**: central `POST /api/v1/ingest/alerts` with a sensor-only
+  token, per-sensor event de-duplication, no auto-block; `lassi.sensor_agent`
+  tails Suricata EVE, batches, retries and spools.
+- **OIDC via trusted proxy**: secret-gated user/group headers mapped to
+  operator/viewer, email audit actor, CSRF bootstrap for proxy-auth writes.
+- UI sensor label; cache v=3.51; doctor checks for sensor agent and proxy auth.
+
+### Tests/Docs
+- 252 tests; docs/api-v1.md, docs/remote-sensors.md, docs/oidc.md; env/runbook/
+  deployment/threat-model updated.
+
 ## [0.15.0] — 2026-10-26
 
 ### Added

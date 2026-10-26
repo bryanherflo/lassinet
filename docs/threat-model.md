@@ -47,6 +47,9 @@ are explicit.
 | Unauthorized network sweep | `LASSI_LIVE_ALLOW`, passive mode, no live without scope | Explicit `LASSI_LIVE_ALLOW_ANY=1` override |
 | Data leakage via internet exposure | Loopback default, tokens, CSP/XFO, TLS/OIDC guidance | Misconfigured `LASSI_HOST=0.0.0.0` without a proxy |
 | Dependency compromise | Pinned-ish requirements, Dependabot, CI matrix | No SBOM/signing yet |
+| Spoofed proxy identity | Shared `X-LassiNet-Proxy-Secret` + loopback/TLS proxy | Secret leakage or direct exposure bypasses it |
+| Malicious remote sensor alerts | Sensor-only bearer token, parsed fields, no auto-block, audit actor | Sensor can lie about src/dst; it is evidence |
+| Sensor token leakage | Separate from operator token, TLS, rotate all agents | Shared token, no per-sensor revocation |
 | Disk exhaustion | Log rotation/retention, bounded alerts | No global disk quota |
 | Denial of service on the UI | Bounded feeds, auth, reverse proxy recommendation | No rate limiting on all APIs |
 

@@ -27,6 +27,21 @@ stop; a warning is a conscious decision.
 - Verify reachability with a real test alert; the doctor validates the URL
   syntax but deliberately does not send one.
 
+## API v1 and remote sensors
+
+- API v1: `/api/v1/version`, `/state`, `/alerts`, `/devices`, `/rules`,
+  `/sensors`, `/logs`, `/health`, `/audit/verify`; writes under
+  `/api/v1/firewall/*`, `/api/v1/alerts/*`, `/api/v1/devices/*`.
+- Ingest token: `LASSI_SENSOR_TOKEN`; only `POST /api/v1/ingest/alerts`.
+  Rotate it on the central and every agent together.
+- Agent: `python -m lassi.sensor_agent` (or `--once`); it tails
+  `LASSI_SENSOR_EVE` and spools when the central is down.
+- Ingested alerts are tagged `sensor:<id>`, go through triage, and are
+  **never auto-blocked**.
+- OIDC: `LASSI_PROXY_AUTH=1` + `LASSI_PROXY_AUTH_SECRET`; the proxy must send
+  the secret/user/groups headers. See `docs/oidc.md`. Direct access without the
+  secret is a 401.
+
 ## Start and stop
 
 - Dev/demo: `python run.py` (loopback, no real network).

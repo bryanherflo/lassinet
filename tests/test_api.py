@@ -702,6 +702,87 @@ def test_checkpoint_endpoint(client: TestClient, monkeypatch) -> None:
     assert read_back["verification"]["ok"] is True
 
 
+def test_proxy_auth_roles_csrf_and_secret(monkeypatch) -> None:
+    monkeypatch.setattr(lassi_app, "PROXY_AUTH_ENABLED", True)
+    monkeypatch.setattr(lassi_app, "PROXY_AUTH_SECRET", "proxy-secret")
+    monkeypatch.setattr(lassi_app, "AUTH_OPERATOR", "")
+    monkeypatch.setattr(lassi_app, "AUTH_VIEWER", "")
+    base = {
+        "X-LassiNet-Proxy-Secret": "proxy-secret",
+        "X-Auth-Request-User": "ana@example.test",
+        "X-Auth-Request-Groups": "lassinet-operators",
+    }
+    with TestClient(lassi_app.app) as c:
+        response = c.get("/api/state", headers=base)
+        assert response.status_code == 200
+        assert response.json()["role"] == "operator"
+        csrf = c.cookies.get(lassi_app.CSRF_COOKIE)
+        assert csrf and lassi_app._csrf_valid(csrf)
+
+        assert c.post("/api/alerts/dismiss", json={"key": "x"},
+                      headers=base).status_code == 403
+        assert c.post("/api/alerts/dismiss", json={"key": "x"},
+                      headers={**base, "X-CSRF-Token": csrf}).status_code == 200
+
+        with c.websocket_connect("/ws", headers=base) as ws:
+            hello = ws.receive_json()
+        assert hello["role"] == "operator"
+
+        bad = {**base, "X-LassiNet-Proxy-Secret": "wrong"}
+        assert c.get("/api/state", headers=bad).status_code == 401
+
+        viewer = {**base, "X-Auth-Request-Groups": "lassinet-viewers"}
+        assert c.get("/api/state", headers=viewer).json()["role"] == "viewer"
+        assert c.post("/api/alerts/dismiss", json={"key": "x"},
+                      headers={**viewer, "X-CSRF-Token": csrf}).status_code == 403
+
+
+def test_api_v1_and_remote_ingest(client: TestClient, monkeypatch) -> None:
+    version = client.get("/api/v1/version")
+    assert version.status_code == 200
+    assert version.headers["x-lassinet-api"] == "1"
+    assert version.json()["version"]
+
+    alerts = client.get("/api/v1/alerts", params={"limit": 1})
+    assert alerts.status_code == 200
+    assert "pagination" in alerts.json()
+
+    monkeypatch.setattr(lassi_app, "SENSOR_TOKEN", "sensor-token")
+    payload = {
+        "sensor": "office-1",
+        "alerts": [{
+            "src": "203.0.113.60", "dst": "192.168.0.20",
+            "attack": "suricata: ET TEST", "severity": "high",
+            "engine": "suricata", "confidence": 1.0,
+            "time": "12:00:00", "ports": 443, "event_id": "evt-1",
+        }],
+    }
+    accepted = client.post("/api/v1/ingest/alerts", json=payload,
+                           headers={"Authorization": "Bearer sensor-token"})
+    assert accepted.status_code == 200
+    assert accepted.json()["accepted"] == 1
+    duplicate = client.post("/api/v1/ingest/alerts", json=payload,
+                            headers={"Authorization": "Bearer sensor-token"})
+    assert duplicate.json()["duplicates"] == 1
+
+    remote = client.get("/api/v1/alerts", params={"sensor": "office-1"}).json()
+    assert remote["pagination"]["total"] >= 1
+    assert remote["items"][0]["sensor"] == "office-1"
+    assert remote["items"][0]["src"] == "203.0.113.60"
+
+    ip = "203.0.113.99"
+    assert client.post("/api/v1/firewall/block", json={"ip": ip}).json()["ok"] is True
+    assert client.post("/api/v1/firewall/unblock", json={"ip": ip}).json()["ok"] is True
+
+
+def test_remote_ingest_requires_sensor_token(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(lassi_app, "SENSOR_TOKEN", "sensor-token")
+    body = {"sensor": "x", "alerts": [{"src": "203.0.113.61",
+                                        "dst": "192.168.0.2",
+                                        "attack": "test"}]}
+    assert client.post("/api/v1/ingest/alerts", json=body).status_code == 401
+
+
 def test_log_verify_and_metrics_endpoints(client: TestClient) -> None:
     verify = client.get("/api/logs/verify").json()
     assert "ok" in verify and "checked" in verify and "legacy" in verify

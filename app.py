@@ -25,6 +25,7 @@ import secrets
 import shutil
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -37,6 +38,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from lassi import __version__
 from lassi.devices import classify
 from lassi.firewall import Firewall
 from lassi.ml import Detector
@@ -117,6 +119,27 @@ FORWARDED_ALLOW_IPS = (os.getenv("LASSI_FORWARDED_ALLOW_IPS") or "127.0.0.1").st
 #   LASSI_TOKEN_VIEWER    can only read (dashboard, logs, metrics)
 AUTH_OPERATOR = (os.getenv("LASSI_TOKEN_OPERATOR") or "").strip()
 AUTH_VIEWER = (os.getenv("LASSI_TOKEN_VIEWER") or "").strip()
+# Separate credential for remote sensor alert ingestion; never accepted as an
+# operator/viewer token and never granted write access to blocks/trust.
+SENSOR_TOKEN = (os.getenv("LASSI_SENSOR_TOKEN") or "").strip()
+SENSOR_INGEST_PATH = "/api/v1/ingest/alerts"
+# Trusted reverse-proxy identity (OIDC via Authelia/oauth2-proxy or similar).
+# The proxy must add the secret header; direct access without it is rejected.
+PROXY_AUTH_ENABLED = _env_flag("LASSI_PROXY_AUTH", False)
+PROXY_AUTH_SECRET = (os.getenv("LASSI_PROXY_AUTH_SECRET") or "").strip()
+PROXY_AUTH_OPERATOR_GROUP = (os.getenv("LASSI_PROXY_AUTH_OPERATOR_GROUP")
+                             or "lassinet-operators").strip()
+PROXY_AUTH_VIEWER_GROUP = (os.getenv("LASSI_PROXY_AUTH_VIEWER_GROUP")
+                           or "lassinet-viewers").strip()
+PROXY_AUTH_DEFAULT_ROLE = (os.getenv("LASSI_PROXY_AUTH_DEFAULT_ROLE")
+                           or "viewer").strip().lower()
+if PROXY_AUTH_DEFAULT_ROLE not in ("viewer", "operator", "none"):
+    PROXY_AUTH_DEFAULT_ROLE = "viewer"
+PROXY_AUTH_USER_HEADER = (os.getenv("LASSI_PROXY_AUTH_USER_HEADER")
+                          or "X-Auth-Request-User").strip()
+PROXY_AUTH_GROUPS_HEADER = (os.getenv("LASSI_PROXY_AUTH_GROUPS_HEADER")
+                            or "X-Auth-Request-Groups").strip()
+PROXY_AUTH_SECRET_HEADER = "X-LassiNet-Proxy-Secret"
 SESSION_COOKIE = "lassi_session"
 CSRF_COOKIE = "lassi_csrf"
 try:
@@ -822,6 +845,23 @@ class TriageRequest(BaseModel):
     false_positive: bool = False
 
 
+class IngestAlert(BaseModel):
+    src: str
+    dst: str
+    attack: str
+    severity: str = "medium"
+    engine: str = "suricata"
+    confidence: float = 1.0
+    time: str | None = None
+    ports: int | None = None
+    event_id: str | None = None
+
+
+class IngestBatch(BaseModel):
+    sensor: str
+    alerts: list[IngestAlert]
+
+
 @app.post("/api/devices/trust")
 def trust_device(req: TrustRequest, request: Request) -> dict:
     """Mark a device as trusted (or clear the mark).
@@ -888,17 +928,30 @@ def rename_device(req: RenameRequest, request: Request) -> dict:
 
 
 def _actor(request: Request) -> str:
-    """Who performed an action, for the audit trail.
-
-    With token auth this is the role; when auth is disabled it is the implicit
-    local operator. A future OIDC integration can replace this with an email
-    without changing the event shape.
-    """
+    """Who performed an action: proxy identity email, role, or local operator."""
+    actor = getattr(request.state, "actor", None)
+    if actor:
+        return str(actor)
     return str(getattr(request.state, "role", "operator") or "operator")
 
 
 def _auth_enabled() -> bool:
-    return bool(AUTH_OPERATOR or AUTH_VIEWER)
+    return bool(AUTH_OPERATOR or AUTH_VIEWER or PROXY_AUTH_ENABLED)
+
+
+_sensor_lock = threading.Lock()
+_sensor_seen: dict[str, deque[str]] = {}
+
+
+def _sensor_duplicate(sensor: str, event_id: str) -> bool:
+    if not event_id:
+        return False
+    with _sensor_lock:
+        seen = _sensor_seen.setdefault(sensor, deque(maxlen=5000))
+        if event_id in seen:
+            return True
+        seen.append(event_id)
+    return False
 
 
 def _session_secret() -> bytes:
@@ -975,27 +1028,53 @@ def _role_for_token(token: str | None) -> str | None:
     return None
 
 
-def _request_auth(request: Request) -> tuple[str | None, str]:
-    """Return (role, credential source); source is bearer/cookie/open."""
+def _proxy_identity(request: Request) -> tuple[str, str] | None:
+    """(role, user) from a trusted proxy, or None."""
+    if not PROXY_AUTH_ENABLED or not PROXY_AUTH_SECRET:
+        return None
+    supplied = request.headers.get(PROXY_AUTH_SECRET_HEADER, "")
+    if not supplied or not hmac.compare_digest(
+            supplied.encode("utf-8"), PROXY_AUTH_SECRET.encode("utf-8")):
+        return None
+    user = (request.headers.get(PROXY_AUTH_USER_HEADER) or "").strip()
+    if not user:
+        return None
+    groups = {part.strip() for part in
+              (request.headers.get(PROXY_AUTH_GROUPS_HEADER) or "").split(",")
+              if part.strip()}
+    if PROXY_AUTH_OPERATOR_GROUP and PROXY_AUTH_OPERATOR_GROUP in groups:
+        return "operator", user
+    if PROXY_AUTH_VIEWER_GROUP and PROXY_AUTH_VIEWER_GROUP in groups:
+        return "viewer", user
+    if PROXY_AUTH_DEFAULT_ROLE in ("viewer", "operator"):
+        return PROXY_AUTH_DEFAULT_ROLE, user
+    return None
+
+
+def _request_auth(request: Request) -> tuple[str | None, str, str | None]:
+    """Return (role, credential source, actor); source is proxy/bearer/cookie/open."""
     if not _auth_enabled():
-        return "operator", "open"
+        return "operator", "open", None
+    proxy = _proxy_identity(request)
+    if proxy:
+        return proxy[0], "proxy", proxy[1]
     # Explicit credentials win over a browser cookie (a stale viewer cookie
     # must not silently downgrade an operator Bearer token).
     header = request.headers.get("authorization", "")
     if header.lower().startswith("bearer "):
         role = _role_for_token(header[7:])
         if role:
-            return role, "bearer"
+            return role, "bearer", None
     session = _session_from_cookie(request.cookies.get(SESSION_COOKIE))
     if session:
-        return session[0], "cookie"
+        return session[0], "cookie", None
     # Deliberately no ?token support on HTTP: access logs would record it.
     # The WebSocket still accepts ?token because browsers cannot set headers.
-    return None, ""
+    return None, "", None
 
 
 def _request_role(request: Request) -> str | None:
-    role, _source = _request_auth(request)
+    role, _source, _actor = _request_auth(request)
     return role
 
 
@@ -1058,12 +1137,28 @@ async def auth_guard(request: Request, call_next):
     API stays open (the historical behaviour for a localhost lab).
     """
     path = request.url.path
+    if path == SENSOR_INGEST_PATH:
+        if not SENSOR_TOKEN:
+            return JSONResponse({"ok": False, "error": "sensor ingest is disabled"},
+                                status_code=403,
+                                headers={"Cache-Control": "no-store"})
+        header = request.headers.get("authorization", "")
+        token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+        if not token or not secrets.compare_digest(
+                token.encode("utf-8"), SENSOR_TOKEN.encode("utf-8")):
+            return JSONResponse({"ok": False, "error": "invalid sensor token"},
+                                status_code=401,
+                                headers={"WWW-Authenticate": "Bearer",
+                                         "Cache-Control": "no-store"})
+        request.state.role = "sensor"
+        request.state.actor = "sensor"
+        return await call_next(request)
     protected = (path == "/metrics" or path.startswith("/api/")
                  or path in ("/docs", "/redoc", "/openapi.json")
                  or path.startswith("/docs/"))
     if not _auth_enabled() or not protected or path in ("/api/auth", "/health"):
         return await call_next(request)
-    role, source = _request_auth(request)
+    role, source, actor = _request_auth(request)
     if role is None:
         return JSONResponse({"ok": False, "error": "authentication required"},
                             status_code=401,
@@ -1074,7 +1169,7 @@ async def auth_guard(request: Request, call_next):
         return JSONResponse({"ok": False, "error": "operator token required"},
                             status_code=403,
                             headers={"Cache-Control": "no-store"})
-    if writes and source == "cookie":
+    if writes and source in ("cookie", "proxy"):
         csrf_header = request.headers.get("x-csrf-token", "")
         csrf_cookie = request.cookies.get(CSRF_COOKIE, "")
         if (not csrf_header or not csrf_cookie
@@ -1084,7 +1179,32 @@ async def auth_guard(request: Request, call_next):
                                 status_code=403,
                                 headers={"Cache-Control": "no-store"})
     request.state.role = role
+    if actor:
+        request.state.actor = actor
     return await call_next(request)
+
+
+@app.middleware("http")
+async def proxy_csrf_bootstrap(request: Request, call_next):
+    """Give a proxy-authenticated browser a CSRF double-submit cookie."""
+    response = await call_next(request)
+    if (PROXY_AUTH_ENABLED and PROXY_AUTH_SECRET
+            and request.method in ("GET", "HEAD")
+            and not request.cookies.get(CSRF_COOKIE)
+            and response.status_code < 400):
+        response.set_cookie(CSRF_COOKIE, _csrf_cookie_value(),
+                            httponly=False, samesite="strict",
+                            secure=request.url.scheme == "https",
+                            max_age=SESSION_TTL)
+    return response
+
+
+@app.middleware("http")
+async def api_version_header(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/v1/"):
+        response.headers["X-LassiNet-API"] = "1"
+    return response
 
 
 @app.middleware("http")
@@ -1346,11 +1466,235 @@ def dismiss_alert(req: DismissRequest, request: Request) -> dict:
     return {"ok": True, "changed": state.dismiss_alert(key, actor=_actor(request))}
 
 
+def _page(limit: int, offset: int, total: int) -> tuple[int, int, dict]:
+    limit = min(max(int(limit), 1), 200)
+    offset = max(int(offset), 0)
+    return limit, offset, {"limit": limit, "offset": offset, "total": total}
+
+
+@app.get("/api/v1/version")
+def api_v1_version() -> dict:
+    return {"ok": True, "api": 1, "name": "LassiNet", "version": __version__}
+
+
+@app.get("/api/v1/state")
+def api_v1_state(request: Request) -> dict:
+    return _snapshot(getattr(request.state, "role", "operator"))
+
+
+@app.get("/api/v1/alerts")
+def api_v1_alerts(limit: int = 50, offset: int = 0, severity: str = "",
+                  status: str = "", engine: str = "", sensor: str = "",
+                  q: str = "") -> dict:
+    """Paginated/filterable alert feed (newest first, max 200/page)."""
+    wanted_severity = {s.strip().lower() for s in severity.split(",") if s.strip()}
+    wanted_status = {s.strip().lower() for s in status.split(",") if s.strip()}
+    engine = engine.strip().lower()
+    sensor = sensor.strip()
+    needle = q.strip().lower()
+    items = []
+    for alert in state.snapshot()["alerts"]:
+        triage = alert.get("triage") or {}
+        alert_status = str(triage.get("status") or "open").lower()
+        if wanted_severity and str(alert.get("severity") or "").lower() not in wanted_severity:
+            continue
+        if wanted_status and alert_status not in wanted_status:
+            continue
+        if engine and str(alert.get("engine") or "").lower() != engine:
+            continue
+        if sensor and str(alert.get("sensor") or "") != sensor:
+            continue
+        if needle and needle not in " ".join(str(alert.get(k) or "") for k in
+                                              ("attack", "src", "dst", "sensor", "engine")).lower():
+            continue
+        items.append(alert)
+    limit, offset, pagination = _page(limit, offset, len(items))
+    return {"ok": True, "items": items[offset:offset + limit],
+            "pagination": pagination}
+
+
+@app.get("/api/v1/devices")
+def api_v1_devices(limit: int = 200, offset: int = 0, role: str = "",
+                   kind: str = "", q: str = "") -> dict:
+    role = role.strip().lower()
+    kind = kind.strip().lower()
+    needle = q.strip().lower()
+    items = []
+    for host in state.snapshot()["nodes"]:
+        if role and str(host.get("role") or "").lower() != role:
+            continue
+        if kind and str(host.get("kind") or "").lower() != kind:
+            continue
+        if needle and needle not in " ".join(str(host.get(k) or "") for k in
+                                              ("ip", "hostname", "kind", "role")).lower():
+            continue
+        items.append(host)
+    limit, offset, pagination = _page(limit, offset, len(items))
+    return {"ok": True, "items": items[offset:offset + limit],
+            "pagination": pagination}
+
+
+@app.get("/api/v1/rules")
+def api_v1_rules() -> dict:
+    snap = state.snapshot()
+    return {"ok": True, "items": snap.get("active_rules", []),
+            "pagination": {"limit": 200, "offset": 0,
+                           "total": len(snap.get("active_rules", []))}}
+
+
+@app.get("/api/v1/sensors")
+def api_v1_sensors() -> dict:
+    counts: dict[str, int] = {}
+    last: dict[str, str] = {}
+    for alert in state.snapshot()["alerts"]:
+        sensor = str(alert.get("sensor") or "")
+        if not sensor:
+            continue
+        counts[sensor] = counts.get(sensor, 0) + 1
+        last[sensor] = str(alert.get("time") or last.get(sensor, ""))
+    return {"ok": True, "items": [
+        {"sensor": name, "alerts": counts[name], "last_seen": last.get(name, "")}
+        for name in sorted(counts)
+    ]}
+
+
+@app.get("/api/v1/logs")
+def api_v1_logs(limit: int = 100, offset: int = 0, event: str = "") -> dict:
+    """Read the newest log lines, with an exact event filter."""
+    from lassi.state import log_export_files
+    event = event.strip()
+    items: list[dict] = []
+    for path in reversed(log_export_files()):
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(row, dict):
+                continue
+            if event and str(row.get("event") or "") != event:
+                continue
+            items.append(row)
+            if len(items) >= 5000:
+                break
+        if len(items) >= 5000:
+            break
+    limit, offset, pagination = _page(limit, offset, len(items))
+    return {"ok": True, "items": items[offset:offset + limit],
+            "pagination": pagination}
+
+
+@app.get("/api/v1/health")
+def api_v1_health() -> JSONResponse:
+    data = health()
+    return JSONResponse({"ok": bool(data.get("ok")), "health": data},
+                        status_code=200 if data.get("ok") else 503)
+
+
+@app.get("/api/v1/audit/verify")
+def api_v1_audit() -> dict:
+    from lassi.state import verify_log
+    return {"ok": True, "verification": verify_log()}
+
+
+@app.post("/api/v1/firewall/block")
+def api_v1_block(req: BlockRequest, request: Request) -> dict:
+    return block(req, request)
+
+
+@app.post("/api/v1/firewall/unblock")
+def api_v1_unblock(req: BlockRequest, request: Request) -> dict:
+    return unblock(req, request)
+
+
+@app.post("/api/v1/alerts/triage")
+def api_v1_triage(req: TriageRequest, request: Request) -> dict:
+    return triage_alert(req, request)
+
+
+@app.post("/api/v1/alerts/dismiss")
+def api_v1_dismiss(req: DismissRequest, request: Request) -> dict:
+    return dismiss_alert(req, request)
+
+
+@app.post("/api/v1/devices/trust")
+def api_v1_trust(req: TrustRequest, request: Request) -> dict:
+    return trust_device(req, request)
+
+
+@app.post("/api/v1/devices/rename")
+def api_v1_rename(req: RenameRequest, request: Request) -> dict:
+    return rename_device(req, request)
+
+
 @app.get("/api/logs/verify")
 def verify_logs() -> dict:
     """Check the hash chain of the JSONL audit log (tamper evidence)."""
     from lassi.state import verify_log
     return verify_log()
+
+
+@app.post("/api/v1/ingest/alerts")
+def ingest_alerts(req: IngestBatch) -> JSONResponse:
+    """Remote sensor alert ingest. Never auto-blocks; operator decides."""
+    sensor = str(req.sensor or "").strip()[:64]
+    if not sensor:
+        return JSONResponse({"ok": False, "error": "sensor id is required"},
+                            status_code=400,
+                            headers={"Cache-Control": "no-store"})
+    if not req.alerts:
+        return JSONResponse({"ok": False, "error": "alerts must not be empty"},
+                            status_code=400,
+                            headers={"Cache-Control": "no-store"})
+    if len(req.alerts) > 100:
+        return JSONResponse({"ok": False, "error": "maximum 100 alerts per batch"},
+                            status_code=400,
+                            headers={"Cache-Control": "no-store"})
+    accepted = duplicates = 0
+    rejected: list[str] = []
+    for item in req.alerts:
+        src = _clean_ip(item.src)
+        dst = _clean_ip(item.dst)
+        if src is None or dst is None:
+            rejected.append("invalid source/destination")
+            continue
+        severity = str(item.severity or "medium").lower()
+        if severity not in ("low", "medium", "high", "critical"):
+            severity = "medium"
+        attack = str(item.attack or "remote alert").strip()[:200] or "remote alert"
+        engine = str(item.engine or "suricata").strip()[:32] or "suricata"
+        event_id = str(item.event_id or "").strip()[:128]
+        if _sensor_duplicate(sensor, event_id):
+            duplicates += 1
+            continue
+        try:
+            confidence = max(0.0, min(1.0, float(item.confidence)))
+        except (TypeError, ValueError):
+            confidence = 1.0
+        alert = {
+            "severity": severity,
+            "attack": attack,
+            "src": src,
+            "dst": dst,
+            "confidence": confidence,
+            "engine": engine,
+            "ports": item.ports,
+            "time": str(item.time or time.strftime("%H:%M:%S"))[:32],
+            "sensor": sensor,
+            "mode": state.mode,
+        }
+        state.add_alert(alert, actor=f"sensor:{sensor}")
+        accepted += 1
+    return JSONResponse({"ok": True, "sensor": sensor, "accepted": accepted,
+                         "duplicates": duplicates, "rejected": rejected,
+                         "auto_block": False},
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.post("/api/logs/checkpoint")
@@ -1494,8 +1838,14 @@ async def ws(sock: WebSocket) -> None:
     role = "operator"
     expires_at: int | None = None
     if _auth_enabled():
-        # Explicit ?token wins; otherwise use the browser session cookie.
-        role = _role_for_token(sock.query_params.get("token")) or ""
+        role = ""
+        if PROXY_AUTH_ENABLED and PROXY_AUTH_SECRET:
+            proxy = _proxy_identity(sock)
+            if proxy:
+                role = proxy[0]
+        if not role:
+            # Explicit ?token wins; otherwise use the browser session cookie.
+            role = _role_for_token(sock.query_params.get("token")) or ""
         if not role:
             session = _session_from_cookie(sock.cookies.get(SESSION_COOKIE))
             if session:

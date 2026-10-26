@@ -58,3 +58,23 @@ def test_plain_http_webhook_is_refused(tmp_path) -> None:
     env = {"LASSI_MODE": "demo", "LASSI_WEBHOOK_URL": "http://example.invalid/hook"}
     checks = check_environment(env, root=tmp_path, skip_audit=True)
     assert _by_name(checks)["Webhook"].status == "fail"
+
+
+def test_proxy_auth_requires_a_long_secret(tmp_path) -> None:
+    env = {"LASSI_MODE": "demo", "LASSI_PROXY_AUTH": "1"}
+    checks = check_environment(env, root=tmp_path, skip_audit=True)
+    assert _by_name(checks)["Proxy auth"].status == "fail"
+
+
+def test_sensor_agent_config_is_checked(tmp_path) -> None:
+    eve = tmp_path / "eve.json"
+    eve.write_text("{}\n", encoding="utf-8")
+    env = {
+        "LASSI_MODE": "demo",
+        "LASSI_SENSOR_URL": "https://central.example/api/v1/ingest/alerts",
+        "LASSI_SENSOR_TOKEN": "sensor-token",
+        "LASSI_SENSOR_ID": "office-1",
+        "LASSI_SENSOR_EVE": str(eve),
+    }
+    checks = check_environment(env, root=tmp_path, skip_audit=True)
+    assert _by_name(checks)["Sensor agent"].status == "ok"

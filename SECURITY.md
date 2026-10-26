@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The current release (`0.14.x` / `0.15.x` in this tree) receives security fixes.
+The current release (`0.15.x` / `0.16.x` in this tree) receives security fixes.
 Older releases may not; upgrade and run the test suite/CI before deploying.
 
 ## Reporting a vulnerability

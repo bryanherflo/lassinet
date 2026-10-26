@@ -92,6 +92,17 @@ sees HTTPS via `X-Forwarded-Proto`; without it they may not be marked Secure
 - Always set `LASSI_PROTECT` (DNS/DHCP/NAS/hypervisor) and keep the gateway
   protected.
 
+## Remote sensors and OIDC
+
+- Central: set a long `LASSI_SENSOR_TOKEN`; publish `/api/v1/ingest/alerts` only
+  to sensor hosts (VPN/firewall/reverse proxy), never the open internet.
+- Agent: see `docs/remote-sensors.md`; it reads a local Suricata EVE and pushes
+  alerts; no packet forwarding and no auto-block.
+- OIDC: run Authelia/oauth2-proxy, inject `X-LassiNet-Proxy-Secret`,
+  `X-Auth-Request-User` and `X-Auth-Request-Groups`, and set
+  `LASSI_PROXY_AUTH=1`; see `docs/oidc.md`. Keep the app on loopback.
+- Proxy auth writes still require the CSRF double-submit cookie/header.
+
 ## Storage, retention, backup
 
 - `logs/events.jsonl`: audit chain; rotate with `LASSI_LOG_MAX_BYTES` and

@@ -432,6 +432,7 @@ aside h2::before {
 .rule .action { font-size: 9px; font-weight: 700; letter-spacing: .5px; padding: 2px 7px; border-radius: 4px; text-transform: uppercase; white-space: nowrap; }
 .rule .action.block { color: var(--red); background: var(--red-dim); border: 1px solid #f8514966; }
 .meta { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.meta .sensor-tag { font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 3px; background: #8b5cf622; color: #a78bfa; border: 1px solid #8b5cf666; }
 .meta .engine-tag {
   font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 3px;
   background: var(--purple-dim); color: var(--purple); border: 1px solid var(--purple);

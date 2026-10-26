@@ -18,6 +18,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 
 from lassi.scope import allowlist_from_env, check_live_scope
+from lassi.sensor_agent import config_from_env as sensor_config_from_env
 from lassi.webhooks import WebhookNotifier
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -127,7 +128,8 @@ def check_environment(env: dict[str, str] | None = None,
     # Authentication / exposure
     op = (env.get("LASSI_TOKEN_OPERATOR") or "").strip()
     viewer = (env.get("LASSI_TOKEN_VIEWER") or "").strip()
-    if not op and not viewer:
+    proxy_auth = _flag(env, "LASSI_PROXY_AUTH")
+    if not op and not viewer and not proxy_auth:
         if host not in LOOPBACK:
             _add(checks, "Auth", "fail",
                  "no tokens and LASSI_HOST is not loopback: the API would be open")
@@ -136,7 +138,10 @@ def check_environment(env: dict[str, str] | None = None,
                  "no tokens: API is open on localhost (lab default)")
     else:
         if not op:
-            _add(checks, "Auth", "warn", "viewer token only: no operator can write")
+            if proxy_auth:
+                _add(checks, "Auth", "ok", "trusted proxy identity")
+            else:
+                _add(checks, "Auth", "warn", "viewer token only: no operator can write")
         elif len(op) < 16:
             _add(checks, "Auth", "warn", "operator token is short; use a random value")
         else:
@@ -146,6 +151,19 @@ def check_environment(env: dict[str, str] | None = None,
                  "LASSI_SECRET is not set: sessions reset on restart")
         else:
             _add(checks, "Session key", "ok", "stable session key configured")
+
+    if proxy_auth:
+        secret = (env.get("LASSI_PROXY_AUTH_SECRET") or "").strip()
+        if len(secret) < 16:
+            _add(checks, "Proxy auth", "fail",
+                 "LASSI_PROXY_AUTH=1 requires a long LASSI_PROXY_AUTH_SECRET")
+        else:
+            role = (env.get("LASSI_PROXY_AUTH_DEFAULT_ROLE") or "viewer").lower()
+            _add(checks, "Proxy auth", "ok",
+                 f"trusted proxy identity; default role {role}")
+            if role == "operator":
+                _add(checks, "Proxy auth", "warn",
+                     "default role operator: every proxy user can write; use groups")
 
     # Firewall provider
     provider = (env.get("LASSI_FW") or "mock").strip().lower()
@@ -200,6 +218,19 @@ def check_environment(env: dict[str, str] | None = None,
                  f"not a readable file: {path}")
     else:
         _add(checks, "Suricata EVE", "ok", "not configured")
+
+    if (env.get("LASSI_SENSOR_URL") or "").strip():
+        sensor_cfg, sensor_error = sensor_config_from_env(env)
+        if sensor_cfg is None:
+            _add(checks, "Sensor agent", "fail", sensor_error)
+        elif not sensor_cfg.eve.is_file():
+            _add(checks, "Sensor agent", "fail",
+                 f"EVE file is not readable: {sensor_cfg.eve}")
+        else:
+            _add(checks, "Sensor agent", "ok",
+                 f"{sensor_cfg.sensor} -> {sensor_cfg.url}")
+    else:
+        _add(checks, "Sensor agent", "ok", "not configured")
 
     url = (env.get("LASSI_WEBHOOK_URL") or "").strip()
     if not url:

@@ -52,6 +52,13 @@ small office can run it without a cluster.
   no tickets/SLA.
 - **Suricata**: optional `lassi/suricata.py` tailer; IDS signatures become
   feed cards, never automatic blocks.
+- **Remote sensors**: `lassi/sensor_agent.py` tails an EVE file on another
+  segment and POSTs to `/api/v1/ingest/alerts` with a sensor-only bearer
+  token; the central tags cards with `sensor` and still never auto-blocks.
+- **API v1**: stable `/api/v1/*` reads/writes plus sensor ingest; the old
+  `/api/*` routes remain for the dashboard.
+- **OIDC proxy auth**: trusted user/group headers plus a shared secret from
+  Authelia/oauth2-proxy; mapped to operator/viewer; audit actor is the email.
 - **UI**: vanilla JS + bundled vis-network; no build step.
 
 ## Modes

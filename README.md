@@ -42,6 +42,8 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 - **Audit attribution:** block, unblock, trust, rename and dismiss events carry `actor` and UTC timestamps; auto-blocks are attributed to `auto`.
 - **Alert triage:** SQLite (`LASSI_TRIAGE_DB`) stores ack/closed, assignee, notes and false-positive marks keyed by the alert card; the JSONL audit log records every triage action with its actor. Viewer tokens can read the status but cannot change it.
 - **Suricata EVE ingest:** point `LASSI_SURICATA_EVE` at an `eve.json`; LassiNet tails `event_type: alert` records into the same feed (engine `suricata`). It never auto-blocks on an IDS signature; the operator decides. This is the recommended way to add real signature/DPI detection without pretending scapy is Suricata.
+- **Versioned API + remote sensors:** `/api/v1/*` has paginated/filterable reads, operator writes and a dedicated sensor ingest (`POST /api/v1/ingest/alerts`). `python -m lassi.sensor_agent` tails a Suricata EVE on another segment and pushes alerts to the central; it never forwards packets and never auto-blocks. See [docs/api-v1.md](docs/api-v1.md) and [docs/remote-sensors.md](docs/remote-sensors.md).
+- **OIDC via trusted proxy:** `LASSI_PROXY_AUTH=1` trusts user/group headers only with a shared `X-LassiNet-Proxy-Secret`, maps groups to operator/viewer and uses the email as the audit actor. OIDC/MFA/session handling stays in Authelia/oauth2-proxy. See [docs/oidc.md](docs/oidc.md).
 - **Outbound webhooks:** `LASSI_WEBHOOK_URL` posts new (non-collapsed) cards to Slack, Teams, Discord or a generic JSON endpoint; `LASSI_WEBHOOK_MIN_SEVERITY` (default `high`) controls noise. A bounded queue and daemon thread keep a broken webhook away from the capture loop. HTTPS is enforced unless explicitly relaxed for a lab.
 - **Preflight doctor:** `python -m lassi.doctor` checks the live scope/allowlist, tokens, firewall readiness, Suricata path, webhook URL, storage, audit chain and backups without starting the capture or sending a packet. `--json`/`--report` produce a pilot report; FAIL exits 1.
 - **Authentication + RBAC (optional):** set `LASSI_TOKEN_OPERATOR` (can block, unblock, trust, rename, dismiss) and/or `LASSI_TOKEN_VIEWER` (read-only). The dashboard exchanges a token for an HttpOnly session cookie with **server-side expiry** (`LASSI_SESSION_TTL`, 12 h by default); scripts can send `Authorization: Bearer <token>`. Only the WebSocket accepts `?token` (a browser cannot set headers on a WebSocket). Set `LASSI_SECRET` if sessions must survive a restart; otherwise the cookie key is random per process. Docs/OpenAPI are protected too. With neither token set the API stays open, as before (localhost lab). Dashboard writes use a **CSRF double-submit cookie**; login attempts are throttled per IP; responses carry CSP, X-Frame-Options, Referrer-Policy and Permissions-Policy.
@@ -54,6 +56,9 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 ## 📚 Design, deployment and operations
 
 - [Architecture](docs/architecture.md)
+- [API v1](docs/api-v1.md)
+- [Remote sensors](docs/remote-sensors.md)
+- [OIDC / trusted proxy](docs/oidc.md)
 - [Threat model](docs/threat-model.md)
 - [Deployment (systemd, TLS, OIDC)](docs/deployment.md)
 - [Runbook](docs/runbook.md)
@@ -67,7 +72,7 @@ LassiNet is built for people who want to see and act on **their own LAN**, not f
 
 - **Students and juniors** in systems, networking or security (ASIR, CFGS, master's, self-taught) who want the full path from discovery to detection to a real block.
 - **Homelabbers and home-network owners** who want visibility of their devices and a safe way to practise OPNsense, nftables or Windows Firewall.
-- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 243 tests plus CI make it easy to use in class.
+- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 252 tests plus CI make it easy to use in class.
 - **Recruiters and interviewers** reviewing a portfolio project that covers Python, FastAPI, scapy, ML, firewalls, tests, CI and documentation.
 
 ## 🚫 Who it is not for
@@ -115,7 +120,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (243 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (252 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt
@@ -162,6 +167,21 @@ The badge at the top right of the map shows the live stream state: `live` while 
 | `LASSI_HOST` | IP | `127.0.0.1` | bind address |
 | `LASSI_PORT` | int | `8000` | dashboard port |
 | `LASSI_FORWARDED_ALLOW_IPS` | IP list | `127.0.0.1` | trusted reverse-proxy peers for `X-Forwarded-*`; keep HTTP access off the internet |
+| `LASSI_SENSOR_TOKEN` | string | *empty* | bearer token accepted only by the central ingest endpoint |
+| `LASSI_SENSOR_URL` | URL | *empty* | sensor agent target; the `/api/v1/ingest/alerts` suffix is added when absent |
+| `LASSI_SENSOR_ID` | string | *empty* | sensor label shown on cards (`office-1`, `dmz-a`…) |
+| `LASSI_SENSOR_EVE` | path | *empty* | sensor agent: local Suricata EVE file |
+| `LASSI_SENSOR_MIN_SEVERITY` | severity | `medium` | sensor agent: drop lower-severity EVE alerts |
+| `LASSI_SENSOR_BATCH` | int | `20` | sensor agent: max alerts per POST (1–100) |
+| `LASSI_SENSOR_SPOOL` | path | `data/sensor_spool.jsonl` | agent retry spool when the central is down |
+| `LASSI_SENSOR_FROM_START` | bool | `false` | agent: replay the EVE file from the beginning |
+| `LASSI_SENSOR_ALLOW_HTTP` | bool | `false` | agent: allow plain HTTP only for a lab |
+| `LASSI_SENSOR_VERIFY_TLS` | bool | `true` | agent: verify the central certificate |
+| `LASSI_PROXY_AUTH` | bool | `false` | trust OIDC reverse-proxy identity headers |
+| `LASSI_PROXY_AUTH_SECRET` | string | *empty* | shared secret the proxy must send; required when proxy auth is on |
+| `LASSI_PROXY_AUTH_OPERATOR_GROUP` | string | `lassinet-operators` | group mapped to operator |
+| `LASSI_PROXY_AUTH_VIEWER_GROUP` | string | `lassinet-viewers` | group mapped to viewer |
+| `LASSI_PROXY_AUTH_DEFAULT_ROLE` | `viewer`/`operator`/`none` | `viewer` | role when the user has no matching group |
 | `LASSI_TOKEN_OPERATOR` | string | *empty* | operator token; setting it (or the viewer token) enables auth and allows writes |
 | `LASSI_TOKEN_VIEWER` | string | *empty* | read-only token (dashboard, logs, metrics) |
 | `LASSI_SECRET` | string | *random per process* | cookie-signing key; set a stable value if sessions must survive a restart |

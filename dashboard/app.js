@@ -1057,7 +1057,8 @@ function fmtAlert(a) {
   div.className = "alert " + sev;
   div.innerHTML = '<div class="top"><b>' + icon + " " + esc(attackLabel(a.attack)) + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span>' + repeats + dismiss + '</div>' +
     '<div class="meta">' + esc(a.time) + " \u00B7 " + esc(a.src) + " \u2192 " + esc(a.dst) +
-    ' \u00B7 engine: <span class="engine-tag ' + engineClass + '">' + engineName + '</span> \u00B7 conf: ' + esc(a.confidence) + '</div>' +
+    ' \u00B7 engine: <span class="engine-tag ' + engineClass + '">' + engineName + '</span> \u00B7 conf: ' + esc(a.confidence) +
+    (a.sensor ? ' \u00B7 <span class="sensor-tag">sensor ' + esc(a.sensor) + '</span>' : '') + '</div>' +
     action + triageMeta + triageActions;
   return div;
 }
