@@ -36,6 +36,22 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 | ⚡ **Zero config** | `python run.py` → open `http://localhost:8000`. It creates `.venv`, installs the dependencies once and starts the app. Demo mode needs no privileges. Map library bundled locally — no CDN, no build step, works offline. |
 | 🎯 **Intuitive UX** | Click a device for the **action bar** (Block/Unblock, Actions…), right-click for the **trust menu**, double-click to rename, and press `?`/`H` for the built-in Help. Confirmed attackers escalate on the map; `B` blocks, `R` refits, `M` minimizes, `L` toggles the legend, `D` hides the traffic dots, `Esc` closes. Responsive layout, live-stream indicator, reduced-motion support. |
 
+## 🎯 Who it is for
+
+LassiNet is built for people who want to see and act on **their own LAN**, not for running someone else's network:
+
+- **Students and juniors** in systems, networking or security (ASIR, CFGS, master's, self-taught) who want the full path from discovery to detection to a real block.
+- **Homelabbers and home-network owners** who want visibility of their devices and a safe way to practise OPNsense, nftables or Windows Firewall.
+- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 198 tests plus CI make it easy to use in class.
+- **Recruiters and interviewers** reviewing a portfolio project that covers Python, FastAPI, scapy, ML, firewalls, tests, CI and documentation.
+
+## 🚫 Who it is not for
+
+- **Enterprise / production SOC/IPS** — no authentication, no high availability, no RBAC, no formal retention/compliance policy, and host-level visibility only (the sensor sees the traffic that reaches its host, plus broadcast; not the whole switched LAN).
+- **Large or gigabit networks** — scapy in Python and a sensor on a PC do not replace a network IDS/IPS.
+- **Non-technical users** — you need to understand networks, ports and firewalls, and be comfortable running a console.
+- **Regulated environments** — the dashboard and the log are not designed for formal audit.
+
 ## 🚀 Quickstart
 
 > Python 3.10–3.12 recommended (CI runs 3.12); on newer versions some dependencies may not have wheels yet.
