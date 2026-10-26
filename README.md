@@ -33,32 +33,47 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 | 🛡️ **Protected devices** | The router, the Internet placeholder, the sensor itself, the devices you mark as **trusted** and the addresses in `LASSI_PROTECT` (your DNS/DHCP server, NAS…) can **never** be blocked — not by the API and not by the auto-block. In live mode the auto-block only touches *external* sources by default, so a false positive cannot take your LAN down. |
 | 🤖 **Auto-response** | Optional auto-block of high/critical sources. Configurable via `LASSI_AUTO_BLOCK`. |
 | 📜 **System log + audit trail** | Colour-coded event stream in UI **and** local JSONL log (`logs/events.jsonl`, tail via `GET /api/logs?limit=N`). The Firewall panel shows active blocks only; the log keeps the full BLOCK/ALLOW history. |
-| ⚡ **Zero config** | `pip install` → `python app.py` → open `http://localhost:8000`. Demo mode needs no privileges. Map library bundled locally — no CDN, no build step, works offline. |
+| ⚡ **Zero config** | `python run.py` → open `http://localhost:8000`. It creates `.venv`, installs the dependencies once and starts the app. Demo mode needs no privileges. Map library bundled locally — no CDN, no build step, works offline. |
 | 🎯 **Intuitive UX** | Click a device for the **action bar** (Block/Unblock, Actions…), right-click for the **trust menu**, double-click to rename, and press `?`/`H` for the built-in Help. Confirmed attackers escalate on the map; `B` blocks, `R` refits, `M` minimizes, `L` toggles the legend, `D` hides the traffic dots, `Esc` closes. Responsive layout, live-stream indicator, reduced-motion support. |
 
 ## 🚀 Quickstart
 
 > Python 3.10–3.12 recommended (CI runs 3.12); on newer versions some dependencies may not have wheels yet.
 
+**The simple way.** Clone and run:
+
 ```bash
 git clone https://github.com/bryanherflo/lassinet.git
 cd lassinet
+python run.py
+```
 
-# optional but recommended: keep the dependencies in a virtualenv
+On Windows you can double-click **`start.bat`**; on Linux/macOS, `bash start.sh`.
+`run.py` creates `.venv`, installs `requirements.txt` once (and only again when the file changes) and starts the app. The first run downloads the dependencies and trains the demo model (1–3 minutes); later runs start immediately. Open **http://127.0.0.1:8000**.
+
+Demo mode is safe: simulated network, no privileges, no ARP sweep. For the real thing:
+
+```bash
+python run.py --live          # real capture (needs scapy + Npcap on Windows, root on Linux)
+python run.py --fw windows    # real blocks; start the terminal as Administrator
+python run.py --port 9000     # any app.py flag is passed through
+```
+
+**Manual installation** (if you prefer to manage the environment yourself):
+
+```bash
 python -m venv .venv
 # Windows PowerShell: .venv\Scripts\Activate.ps1
 # Windows cmd:        .venv\Scripts\activate.bat
 # Linux / macOS:      source .venv/bin/activate
 
 pip install -r requirements.txt
-
-# run (demo mode, simulated network, safe everywhere)
 python app.py
 ```
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (195 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (198 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt

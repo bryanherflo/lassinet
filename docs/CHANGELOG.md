@@ -2,6 +2,21 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.9.9] — 2026-10-26
+
+### Added
+- **One-command launcher** (`run.py`): creates `.venv` if needed, installs `requirements.txt`
+  once (a hash marker skips the step until the file changes) and starts `app.py`. It accepts
+  `--live`, `--fw <provider>`, `--no-install` and passes any other flag to `app.py`
+  (`--port`, `--host`). This removes the manual venv/pip steps for a newcomer.
+- **`start.bat`** (double-click on Windows) and **`start.sh`** (Linux/macOS) as thin wrappers
+  around `run.py`; `.gitattributes` keeps `.sh` LF and `.bat` CRLF.
+
+### Docs
+- Quickstart now presents the simple path first (`git clone`, `python run.py`) and keeps the
+  manual venv/pip path for people who want to manage the environment themselves.
+- Test suite: 198 tests.
+
 ## [0.9.8] — 2026-10-26
 
 ### Fixed
