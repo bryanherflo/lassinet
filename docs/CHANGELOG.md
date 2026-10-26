@@ -2,6 +2,20 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.9.4] — 2026-10-26
+
+### Fixed
+- **The attack banner no longer overlaps the header** on narrow screens: the header grows
+  when the mode/model/firewall badges wrap (measured 123 px at 496 px wide), and the banner
+  was fixed at 96 px. Its `top` now follows a `--header-h` variable kept in sync with a
+  `ResizeObserver`, so the banner always starts below the real header.
+- **The Windows launcher works with a virtual environment**: it resolves the interpreter of
+  the current session before asking for UAC (an elevated PowerShell does not inherit an
+  activated venv) and falls back to `.venv\Scripts\python.exe`, then to `python`.
+
+### Docs
+- README: the launcher note explains the virtualenv behaviour.
+
 ## [0.9.3] — 2026-10-26
 
 ### Fixed

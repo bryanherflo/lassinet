@@ -477,7 +477,7 @@ aside .feed.log { flex: 0 0 auto; font-family: var(--font-mono); font-size: 11px
 
 /* ---- attack banner ---- */
 #attack-banner {
-  position: fixed; top: 80px; left: 50%; transform: translateX(-50%); z-index: 100;
+  position: fixed; top: calc(var(--header-h, 60px) + 12px); left: 50%; transform: translateX(-50%); z-index: 100;
   background: linear-gradient(135deg, #1c1010, #2a0a0a);
   border: 2px solid var(--red); border-radius: var(--radius-lg);
   padding: var(--space-md) var(--space-lg); box-shadow: 0 20px 60px -20px #000f, 0 0 0 1px #f8514944;
@@ -657,16 +657,11 @@ kbd {
   .modal-head { padding: var(--space-md) var(--space-lg); }
   .modal-body { padding: var(--space-md) var(--space-lg) var(--space-lg); }
   #toast-container { right: var(--space-md); bottom: var(--space-md); }
-  #attack-banner { top: 72px; width: calc(100% - 24px); min-width: 0; }
+  #attack-banner { width: calc(100% - 24px); min-width: 0; }
   .banner-content { flex-wrap: wrap; position: relative; padding-right: 24px; }
   .banner-close { position: absolute; top: 0; right: 0; }
   .banner-act { width: 100%; }
   .vis-tooltip { display: none !important; }
-}
-
-@media (max-width: 480px) {
-  /* header badges wrap onto a second row below 480px, so clear them */
-  #attack-banner { top: 96px; }
 }
 
 /* ---- reduced motion ---- */

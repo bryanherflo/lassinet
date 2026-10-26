@@ -1489,6 +1489,20 @@ if (pickerInput && pickerList) {
 }
 
 (function() {
+  // The header grows when the badges wrap (mobile / narrow windows). The
+  // attack banner is fixed, so follow the real header height instead of a
+  // hard-coded top that overlapped it.
+  var headerEl = document.querySelector("header");
+  function syncHeaderHeight() {
+    if (headerEl) document.documentElement.style.setProperty("--header-h", headerEl.offsetHeight + "px");
+  }
+  syncHeaderHeight();
+  if (headerEl && typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(syncHeaderHeight).observe(headerEl);
+  } else {
+    window.addEventListener("resize", syncHeaderHeight);
+  }
+
   refresh().catch(function() {});
   buildLegendIcons();
   document.getElementById("btn-toggle-map").onclick = toggleMapMinimize;
