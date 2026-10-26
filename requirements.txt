@@ -4,7 +4,7 @@ uvicorn[standard]>=0.32
 pydantic>=2.9
 numpy>=1.26
 scikit-learn>=1.5
-joblib>=1.4
+joblib>=1.6.0
 python-dotenv>=1.0
 
 # --- Live mode (opcional: captura real de tráfico y descubrimiento) ---
