@@ -43,6 +43,13 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 ```bash
 git clone https://github.com/bryanherflo/lassinet.git
 cd lassinet
+
+# optional but recommended: keep the dependencies in a virtualenv
+python -m venv .venv
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+# Windows cmd:        .venv\Scripts\activate.bat
+# Linux / macOS:      source .venv/bin/activate
+
 pip install -r requirements.txt
 
 # run (demo mode, simulated network, safe everywhere)
@@ -113,8 +120,15 @@ The badge at the top right of the map shows the live stream state: `live` while 
 
 ```bash
 pip install scapy
+
+# Linux / macOS
 LASSI_MODE=live python app.py
+
+# Windows PowerShell
+$env:LASSI_MODE="live"; python app.py
 ```
+
+> In this example the firewall provider stays `mock`: blocks are recorded but **nothing is dropped**. Set `LASSI_FW=windows` (below), `nftables` (Linux) or `opnsense` (router) to enforce them.
 
 Live mode performs an **auto-detected ARP sweep** - it starts on the subnet the machine itself lives in (any RFC1918/DHCP range), marks the real default gateway as the router hub, and aggregates sniffed packets into the *same* flow features the model was trained on. The topology is refreshed every 30 s by default (`LASSI_DISCOVERY_INTERVAL`), not on every engine tick, so it does not flood the LAN with ARP. Detections follow the same pipeline as the demo; manual blocks call the configured provider.
 
