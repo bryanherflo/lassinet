@@ -727,6 +727,10 @@ def _snapshot() -> dict:
     snap["firewall_ready"] = ready
     snap["firewall_note"] = note
     snap["auto_block"] = AUTO_BLOCK
+    # Feature flags: the static dashboard can be newer than the running Python
+    # process (e.g. after a git pull). The client only offers actions the
+    # server it is talking to actually implements.
+    snap["features"] = ["dismiss_alerts"]
     return snap
 
 

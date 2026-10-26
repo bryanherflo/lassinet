@@ -505,6 +505,7 @@ def test_state_and_health_say_whether_blocks_are_real(client: TestClient) -> Non
     assert state["firewall_ready"] is False
     assert "mock" in state["firewall_note"]
     assert isinstance(state["auto_block"], bool)
+    assert "dismiss_alerts" in state["features"]
     health = client.get("/health").json()
     assert health["firewall"] == "mock" and health["firewall_ready"] is False
 

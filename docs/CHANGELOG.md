@@ -2,6 +2,15 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.9.6] — 2026-10-26
+
+### Fixed
+- **The dismiss button is gated by a server capability.** The static dashboard can be newer
+  than the running Python process (a pull updates `app.js` immediately, the process keeps
+  running until restarted), and offering an action whose endpoint does not exist is worse
+  than hiding it. Each snapshot now advertises `features: ["dismiss_alerts"]`, and the
+  card only renders the button when that flag is present.
+
 ## [0.9.5] — 2026-10-26
 
 ### Added

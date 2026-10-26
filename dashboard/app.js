@@ -244,6 +244,7 @@ var ROLE_ORDER = { server: 0, workstation: 1, iot: 2, printer: 3, attacker: 4, u
 var layoutKey = "";
 var kindFilter = null;   // "camera", "unknown", ... or null (show everything)
 var firewallProvider = "mock", firewallReady = false, firewallNote = "";
+var serverFeatures = new Set();   // capabilities advertised by /api/state
 var lastData = null;     // last snapshot, so a legend click re-renders immediately
 
 function computeTreeLayout(data) {
@@ -1022,8 +1023,10 @@ function fmtAlert(a) {
     else if (blocked) action = '<span class="blocked-tag">\u26D4 Blocked</span>';
     else action = '<button class="act" data-ip="' + esc(a.src) + '" title="Drop traffic from ' + esc(a.src) + ' at the firewall (reversible)">Block source ' + esc(a.src) + '</button>';
   }
-  var dismiss = '<button type="button" class="alert-dismiss" data-dismiss="' + esc(dismissKey(a)) +
-    '" title="Dismiss from the feed \u2014 the audit log keeps it" aria-label="Dismiss alert">\u00d7</button>';
+  var dismiss = serverFeatures.has("dismiss_alerts")
+    ? '<button type="button" class="alert-dismiss" data-dismiss="' + esc(dismissKey(a)) +
+      '" title="Dismiss from the feed \u2014 the audit log keeps it" aria-label="Dismiss alert">\u00d7</button>'
+    : '';
   div.className = "alert " + sev;
   div.innerHTML = '<div class="top"><b>' + icon + " " + esc(attackLabel(a.attack)) + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span>' + repeats + dismiss + '</div>' +
     '<div class="meta">' + esc(a.time) + " \u00B7 " + esc(a.src) + " \u2192 " + esc(a.dst) +
@@ -1321,7 +1324,7 @@ function setConnStatus(state) {
   el.textContent = state === "live" ? "live" : state === "polling" ? "polling" : "connecting\u2026";
   el.title = state === "live" ? "Live \u2014 WebSocket stream connected" : state === "polling" ? "WebSocket unavailable \u2014 refreshing over /api/state" : "Connecting to the live stream\u2026";
 }
-function apply(data) { lastData = data; renderTopology(data); renderFeeds(data); renderLog(data); renderStats(data); updateSelectionBar(); updateLegend(data); }
+function apply(data) { lastData = data; serverFeatures = new Set((data && data.features) || []); renderTopology(data); renderFeeds(data); renderLog(data); renderStats(data); updateSelectionBar(); updateLegend(data); }
 // The legend lists the icon set once, built from the same glyph map the map
 // uses (so the SVG is never duplicated in the HTML).
 function buildLegendIcons() {
