@@ -650,6 +650,17 @@ class State:
         audit({"event": "rename", "ip": canonical, "name": name, "actor": actor})
         return True
 
+    def host_name(self, ip: str) -> str:
+        """Current display name for an IP, falling back to the IP itself."""
+        canonical = canonical_ip(ip)
+        if canonical is None:
+            return str(ip or "")
+        with self._lock:
+            host = self.hosts.get(canonical)
+            if host and host.get("hostname"):
+                return str(host["hostname"])
+        return canonical
+
     def touch_edge(self, a: str, b: str) -> None:
         if a == b:  # self-flows are noise, never an edge
             return

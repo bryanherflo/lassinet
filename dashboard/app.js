@@ -747,6 +747,260 @@ helpOverlay.addEventListener("keydown", function(ev) {
   else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
 });
 
+// Flow history dialog: SQLite-backed metadata. Selecting a row shows the two
+// endpoints and the detector verdict; it never exposes packet payloads.
+var flowsOverlay = document.getElementById("flows-overlay");
+var flowsList = document.getElementById("flows-list");
+var flowDetail = document.getElementById("flow-detail");
+var flowsMeta = document.getElementById("flows-meta");
+var flowsFilter = document.getElementById("flows-filter");
+var flowsReturnFocus = null;
+var flowsTimer = null;
+var flowsFilterTimer = null;
+var flowsCache = [];
+var flowsSelectedId = null;
+var flowsKind = "";
+
+function flowEl(tag, cls, text) {
+  var el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+function flowBytes(value) {
+  var n = Number(value) || 0;
+  if (n < 1024) return Math.round(n) + " B";
+  if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB";
+  return (n / 1073741824).toFixed(2) + " GB";
+}
+function flowDuration(value) {
+  var n = Number(value) || 0;
+  return n < 1 ? n.toFixed(2) + " s" : n.toFixed(1) + " s";
+}
+function flowClock(ts, full) {
+  var d = new Date((Number(ts) || 0) * 1000);
+  if (!isFinite(d.getTime())) return "—";
+  return full ? d.toLocaleString() : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+function flowAttackName(attack) {
+  var names = {
+    benign: "benign", port_scan: "Port scan", brute_force: "Brute force",
+    ddos: "DDoS", data_exfiltration: "Data exfiltration", auto_block: "Auto-block"
+  };
+  return names[attack] || attack || "unknown";
+}
+function flowVerdictClass(flow) {
+  if (!flow.attack || flow.attack === "benign") return "benign";
+  return flow.severity === "medium" ? "medium" : "attack";
+}
+function flowLabel(flow, side) {
+  var name = flow[side + "_name"];
+  var ip = flow[side];
+  return name && name !== ip ? name : (ip || "—");
+}
+function flowRow(flow) {
+  var row = flowEl("button", "flow-row");
+  row.type = "button";
+  row.dataset.id = String(flow.id);
+  row.setAttribute("aria-pressed", "false");
+  row.title = flow.src + " → " + flow.dst + " · " + flowAttackName(flow.attack);
+  var route = flowEl("div", "flow-route");
+  route.appendChild(flowEl("span", "flow-end", flowLabel(flow, "src")));
+  route.appendChild(flowEl("span", "flow-arrow", "→"));
+  route.appendChild(flowEl("span", "flow-end", flowLabel(flow, "dst")));
+  row.appendChild(route);
+  var sub = flowEl("div", "flow-sub");
+  sub.appendChild(flowEl("span", "", flowClock(flow.ts)));
+  sub.appendChild(flowEl("span", "", (Number(flow.pkts) || 0) + " pkts"));
+  sub.appendChild(flowEl("span", "", flowBytes(flow.bytes)));
+  var verdict = flowEl("span", "flow-verdict " + flowVerdictClass(flow), flowAttackName(flow.attack));
+  sub.appendChild(verdict);
+  row.appendChild(sub);
+  row.addEventListener("click", function() { selectFlow(Number(flow.id)); });
+  return row;
+}
+function renderFlowList(flows, total, enabled) {
+  flowsCache = flows || [];
+  if (!flowsList) return;
+  var scrollTop = flowsList.scrollTop;
+  flowsList.replaceChildren();
+  if (enabled === false) {
+    flowsList.appendChild(flowEl("p", "flows-empty", "Flow history is disabled (LASSI_FLOW_HISTORY=0)."));
+    if (flowsMeta) flowsMeta.textContent = "disabled";
+    return;
+  }
+  if (!flows.length) {
+    flowsList.appendChild(flowEl("p", "flows-empty", "No matching flows. New flows appear after the 10-second aggregation window."));
+    if (flowsMeta) flowsMeta.textContent = "0 flows";
+    return;
+  }
+  flows.forEach(function(flow) { flowsList.appendChild(flowRow(flow)); });
+  flowsList.scrollTop = scrollTop;
+  if (flowsMeta) {
+    var shown = flows.length;
+    flowsMeta.textContent = total + " flow" + (total === 1 ? "" : "s") +
+      (shown < total ? " · latest " + shown : "");
+  }
+}
+function flowEndpoint(role, name, ip) {
+  var box = flowEl("div", "flow-endpoint");
+  box.appendChild(flowEl("span", "flow-role", role));
+  box.appendChild(flowEl("b", "", name || ip || "—"));
+  if (name && ip && name !== ip) box.appendChild(flowEl("code", "", ip));
+  else box.appendChild(flowEl("code", "", "IP only"));
+  box.appendChild(flowEl("small", "flow-device-meta", flowDeviceMeta(ip)));
+  return box;
+}
+function flowDeviceMeta(ip) {
+  var nodes = (lastData && lastData.nodes) || [];
+  for (var i = 0; i < nodes.length; i++) {
+    if (nodes[i].ip !== ip) continue;
+    var role = nodes[i].role || "";
+    var kind = nodes[i].kind || "";
+    var bits = [];
+    if (role && role !== "workstation") bits.push(role);
+    if (kind && kind !== "unknown" && kind !== role) bits.push(kind);
+    if (!bits.length) bits.push(role === "workstation" ? "workstation (type unknown)" : (role || "unknown"));
+    if (nodes[i].blocked) bits.push("blocked");
+    return bits.length ? bits.join(" · ") : "current device";
+  }
+  return "not on current map";
+}
+function renderFlowDetail(flow) {
+  if (!flowDetail || !flow) return;
+  flowDetail.replaceChildren();
+  var head = flowEl("h4", "", "Flow #" + flow.id + " · " + flowClock(flow.ts, true));
+  flowDetail.appendChild(head);
+
+  var endpoints = flowEl("div", "flow-endpoints");
+  endpoints.appendChild(flowEndpoint("Source", flow.src_name, flow.src));
+  endpoints.appendChild(flowEl("div", "flow-big-arrow", "→"));
+  endpoints.appendChild(flowEndpoint("Destination", flow.dst_name, flow.dst));
+  flowDetail.appendChild(endpoints);
+
+  var stats = flowEl("div", "flow-stats");
+  [
+    ["Packets", Number(flow.pkts) || 0],
+    ["Bytes", flowBytes(flow.bytes)],
+    ["Duration", flowDuration(flow.duration)],
+    ["Dest. ports", Number(flow.dst_port_count) || 0],
+    ["SYN ratio", ((Number(flow.syn_ratio) || 0) * 100).toFixed(1) + "%"],
+    ["Packet rate", (Number(flow.pkt_rate) || 0).toFixed(2) + "/s"],
+  ].forEach(function(item) {
+    var stat = flowEl("div", "flow-stat");
+    stat.appendChild(flowEl("span", "", item[0]));
+    stat.appendChild(flowEl("b", "", item[1]));
+    stats.appendChild(stat);
+  });
+  flowDetail.appendChild(stats);
+
+  var verdict = flowEl("div", "flow-verdict-box");
+  verdict.appendChild(flowEl("span", "flow-verdict " + flowVerdictClass(flow), flowAttackName(flow.attack)));
+  var conf = Number(flow.confidence) || 0;
+  verdict.appendChild(flowEl("p", "", "Severity: " + (flow.severity || "low") +
+    " · Engine: " + (flow.engine || "rules") + " · Confidence: " + Math.round(conf * 100) + "%"));
+  if (flow.mode) verdict.appendChild(flowEl("p", "", "Recorded in: " + flow.mode));
+  flowDetail.appendChild(verdict);
+}
+function markSelectedFlow(id) {
+  if (!flowsList) return;
+  var rows = flowsList.querySelectorAll(".flow-row");
+  for (var i = 0; i < rows.length; i++) {
+    var on = Number(rows[i].dataset.id) === Number(id);
+    rows[i].classList.toggle("selected", on);
+    rows[i].setAttribute("aria-pressed", on ? "true" : "false");
+  }
+}
+function selectFlow(id) {
+  flowsSelectedId = id;
+  markSelectedFlow(id);
+  var flow = flowsCache.find(function(item) { return Number(item.id) === Number(id); });
+  if (flow) { renderFlowDetail(flow); return; }
+  fetch("/api/flows/" + encodeURIComponent(id)).then(function(res) {
+    if (res.status === 401) { closeFlows(false); showAuth(); return null; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }).then(function(data) {
+    if (data && data.flow) renderFlowDetail(data.flow);
+  }).catch(function() { toast("Could not load that flow", "error"); });
+}
+async function fetchFlows() {
+  if (!flowsOverlay || flowsOverlay.hidden) return;
+  var q = flowsFilter ? flowsFilter.value.trim() : "";
+  var url = "/api/flows?limit=200" + (q ? "&q=" + encodeURIComponent(q) : "") +
+    (flowsKind ? "&kind=" + encodeURIComponent(flowsKind) : "");
+  try {
+    var res = await fetch(url);
+    if (res.status === 401) { closeFlows(false); showAuth(); return; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var data = await res.json();
+    renderFlowList(data.flows || [], data.total || 0, data.enabled !== false);
+    if (flowsSelectedId !== null) markSelectedFlow(flowsSelectedId);
+    if (flowsMeta && data.enabled === false) flowsMeta.textContent = "disabled";
+  } catch (e) {
+    if (flowsMeta) flowsMeta.textContent = "unavailable";
+  }
+}
+function openFlows() {
+  if (!flowsOverlay || !flowsOverlay.hidden) return;
+  flowsReturnFocus = document.activeElement;
+  flowsOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  if (flowsFilter) flowsFilter.value = "";
+  flowsKind = "";
+  var kindButtons = flowsOverlay.querySelectorAll(".flows-chip");
+  for (var i = 0; i < kindButtons.length; i++) kindButtons[i].classList.toggle("active", !kindButtons[i].dataset.flowKind);
+  if (flowsMeta) flowsMeta.textContent = "loading…";
+  if (flowDetail) flowDetail.replaceChildren(flowEl("p", "section-note", "Select a flow to see which devices are communicating and what the detector decided."));
+  flowsSelectedId = null;
+  fetchFlows();
+  if (flowsTimer) clearInterval(flowsTimer);
+  flowsTimer = setInterval(fetchFlows, 5000);
+  var close = document.getElementById("flows-close");
+  if (close) close.focus();
+}
+function closeFlows(restoreFocus) {
+  if (!flowsOverlay || flowsOverlay.hidden) return;
+  flowsOverlay.hidden = true;
+  if (flowsTimer) { clearInterval(flowsTimer); flowsTimer = null; }
+  if (flowsFilterTimer) { clearTimeout(flowsFilterTimer); flowsFilterTimer = null; }
+  document.body.classList.remove("modal-open");
+  if (restoreFocus !== false && flowsReturnFocus && flowsReturnFocus.focus) flowsReturnFocus.focus();
+  flowsReturnFocus = null;
+}
+document.getElementById("btn-flows").onclick = openFlows;
+document.getElementById("flows-close").onclick = function() { closeFlows(true); };
+if (flowsOverlay) {
+  flowsOverlay.addEventListener("click", function(ev) { if (ev.target === flowsOverlay) closeFlows(true); });
+  flowsOverlay.addEventListener("keydown", function(ev) {
+    if (ev.key === "Escape") { ev.preventDefault(); closeFlows(true); return; }
+    if (ev.key !== "Tab") return;
+    var focusable = flowsOverlay.querySelectorAll("button, [href], input, [tabindex]:not([tabindex='-1'])");
+    if (!focusable.length) return;
+    var first = focusable[0], last = focusable[focusable.length - 1];
+    if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+  });
+}
+if (flowsFilter) {
+  flowsFilter.addEventListener("input", function() {
+    if (flowsFilterTimer) clearTimeout(flowsFilterTimer);
+    flowsFilterTimer = setTimeout(fetchFlows, 250);
+  });
+}
+document.getElementById("flows-refresh").onclick = fetchFlows;
+var flowKindButtons = flowsOverlay ? flowsOverlay.querySelectorAll(".flows-chip") : [];
+for (var fki = 0; fki < flowKindButtons.length; fki++) {
+  flowKindButtons[fki].addEventListener("click", function() {
+    flowsKind = this.dataset.flowKind || "";
+    for (var j = 0; j < flowKindButtons.length; j++) {
+      flowKindButtons[j].classList.toggle("active", flowKindButtons[j] === this);
+    }
+    fetchFlows();
+  });
+}
+
 function toast(msg, kind) {
   var wrap = document.getElementById("toast-container");
   if (!wrap) return;
@@ -889,12 +1143,17 @@ window.addEventListener("keydown", function(ev) {
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
   var authOverlay = document.getElementById("auth-overlay");
   if (authOverlay && !authOverlay.hidden) return;
+  if (flowsOverlay && !flowsOverlay.hidden) {
+    if (ev.key === "Escape") { ev.preventDefault(); closeFlows(true); }
+    return;
+  }
   if (helpOverlay && !helpOverlay.hidden) {
     if (ev.key === "Escape") { ev.preventDefault(); closeHelp(); }
     return;
   }
   var key = ev.key.toLowerCase();
   if (ev.key === "?" || key === "h") { ev.preventDefault(); openHelp(); }
+  else if (key === "f") { ev.preventDefault(); openFlows(); }
   else if (key === "b" && selectedNodeIp) {
     if (authRole === "viewer") toast("Read-only token: this action needs the operator token", "error");
     else if (!isBlockableNode(selectedNodeIp)) toast("Infrastructure nodes cannot be blocked", "error");
@@ -1417,6 +1676,7 @@ function showAuth(message) {
   if (!overlay) return;
   authBlocked = true;
   stopPolling();
+  if (flowsOverlay && !flowsOverlay.hidden) closeFlows(false);
   if (helpOverlay && !helpOverlay.hidden) closeHelp();
   overlay.hidden = false;
   document.body.classList.add("modal-open");

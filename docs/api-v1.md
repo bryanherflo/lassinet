@@ -22,6 +22,8 @@ All v1 responses carry `X-LassiNet-API: 1`.
 | `GET /api/v1/state` | Full snapshot (nodes, alerts, rules, stats, mode) |
 | `GET /api/v1/alerts` | Paginated feed; filters below |
 | `GET /api/v1/devices` | Paginated nodes; `role`, `kind`, `q` |
+| `GET /api/v1/flows` | Paginated flow-history metadata; filters below |
+| `GET /api/v1/flows/{id}` | One flow record (404 when expired/unknown) |
 | `GET /api/v1/rules` | Active firewall blocks |
 | `GET /api/v1/sensors` | Alert counts/last seen per remote sensor |
 | `GET /api/v1/logs` | Newest log lines; `event` exact filter |
@@ -29,6 +31,42 @@ All v1 responses carry `X-LassiNet-API: 1`.
 | `GET /api/v1/audit/verify` | Hash-chain verification result |
 
 Pagination parameters: `limit` (max 200) and `offset`.
+
+### Flow filters
+
+`GET /api/v1/flows` reads the local flow-history SQLite store. Only completed
+flow metadata is returned; packet payloads are never stored.
+
+| Parameter | Meaning |
+|---|---|
+| `limit` / `offset` | Page size (max 500) / offset |
+| `src` / `dst` | Exact source or destination IP |
+| `attack` | Exact verdict (`benign`, `port_scan`, `brute_force`, …) |
+| `kind` | `benign` or `attack` |
+| `q` | Substring over IPs, names and verdict |
+
+```json
+{
+  "ok": true,
+  "flows": [
+    {
+      "id": 42, "ts": 1793107050.69,
+      "src": "192.168.0.10", "dst": "203.0.113.5",
+      "src_name": "laptop", "dst_name": "203.0.113.5",
+      "pkts": 20, "bytes": 3200, "duration": 10.2,
+      "dst_port_count": 2, "syn_ratio": 0.15,
+      "mean_pkt_size": 160.0, "pkt_rate": 1.96,
+      "attack": "benign", "severity": "low", "confidence": 0.92,
+      "engine": "ml", "mode": "live (passive)"
+    }
+  ],
+  "total": 1, "limit": 100, "offset": 0, "enabled": true
+}
+```
+
+The dashboard uses `/api/flows` (same contract). Retention is controlled by
+`LASSI_FLOW_RETENTION_HOURS` (72 h), `LASSI_FLOW_MAX_ROWS` (1,000,000) and
+`LASSI_FLOW_DB` (`data/flows.db`).
 
 ### Alerts filters
 

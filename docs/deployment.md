@@ -111,6 +111,9 @@ sees HTTPS via `X-Forwarded-Proto`; without it they may not be marked Secure
   retain by count/age.
 - `data/triage.db`: SQLite; back up the DB + WAL consistently (stop or
   snapshot).
+- `data/flows.db`: SQLite flow history (metadata only, no payloads); default
+  retention 72 h / 1,000,000 rows. Back up the DB + WAL consistently or stop
+  the process; it can grow with traffic.
 - `data/dismissed_alerts.json`, `trusted_devices.json`, `device_names.json`,
   `block_expiry.json`, `audit_checkpoint.json`.
 - `python -m lassi.backup create` produces a verified zip; copy it off-box.

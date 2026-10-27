@@ -327,6 +327,11 @@ the infrastructure:
   logs, `/metrics` and the WebSocket are always network-only. The mobile
   layout wraps the header, stacks the feeds and respects safe-area insets.
   Full install prompt/service worker requires HTTPS; see `docs/android.md`.
+* **Flow history**: completed 10-second flows are stored as metadata in local
+  SQLite (`data/flows.db`); the `Flows` dialog shows endpoints, device
+  role/type when currently on the map, counters and verdict. Search plus
+  All/Benign/Attacks filters; no payloads. Retention defaults to 72 h and
+  1,000,000 rows (`LASSI_FLOW_*`).
 * **Freshness**: a LAN device not heard from for `LASSI_DEVICE_TTL` (30 min by
   default) leaves the map, so the device count and the topology keep
   describing the network in front of you instead of growing a graveyard of
@@ -342,6 +347,8 @@ the infrastructure:
 |---|---|
 | `GET /health` | Liveness: mode, model loaded, firewall provider, flows, capture state and error |
 | `GET /api/state` | Full snapshot: nodes, edges, alerts, rules, traffic, statistics, trusted/protected lists |
+| `GET /api/flows` | Paginated flow-history metadata (`src`, `dst`, `attack`, `kind`, `q`) |
+| `GET /api/flows/{id}` | One stored flow record; 404 after retention |
 | `GET /api/logs?limit=N` | Tail of the local JSONL event log (bounded to the last megabyte) |
 | `GET /api/logs/export` | Download the complete JSONL event log with a timestamped filename (`application/x-ndjson`); rotated archives are concatenated in order |
 | `GET /api/logs/verify` | Verify the JSONL hash chain (`ok`, `verified`, `checked`, `legacy`, `error`) |
@@ -402,7 +409,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **256 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **260 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows

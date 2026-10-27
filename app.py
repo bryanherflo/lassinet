@@ -41,6 +41,7 @@ from pydantic import BaseModel
 from lassi import __version__
 from lassi.devices import classify
 from lassi.firewall import Firewall
+from lassi.flows import FlowStore, flow_record
 from lassi.ml import Detector
 from lassi.scope import allowlist_from_env, check_live_scope
 from lassi.state import (State, add_alert_listener, audit,
@@ -172,6 +173,7 @@ state = State()
 state.mode = "demo (simulated)" if MODE == "demo" else "live (scapy)"
 sim = Simulator()
 fw = Firewall()
+flow_store = FlowStore()
 _firewall_lock = threading.Lock()      # serialize provider + state block changes
 _engine_lock = threading.Lock()        # guard against duplicate engine threads
 
@@ -315,6 +317,7 @@ def process_flows(flows: list[dict]) -> None:
     if not flows:
         return
     verified = detector.predict(flows)
+    history: list[dict] = []
     for flow, verdict in zip(flows, verified):
         # The detector only needs the features, but state/firewall use the IPs
         # as keys. Canonicalize here so IPv6 spellings cannot create duplicate
@@ -333,6 +336,21 @@ def process_flows(flows: list[dict]) -> None:
         # is not a live flow any more, and it must not generate alert spam.
         if state.is_blocked(src):
             continue
+        # Persist the completed flow metadata for the dashboard history. This
+        # is deliberately fire-and-forget: a full/locked SQLite file must never
+        # stop capture or the firewall path.
+        history.append(flow_record(
+            flow,
+            src=src,
+            dst=dst,
+            src_name=state.host_name(src),
+            dst_name=state.host_name(dst),
+            attack=attack,
+            severity=severity,
+            confidence=confidence if isinstance(confidence, (int, float)) else 0.0,
+            engine=str(verdict.get("engine", "rules")),
+            mode=state.mode,
+        ))
         state.add_flow(is_attack=attack != "benign",
                        src=src, dst=dst,
                        bytes=flow.get("bytes") or 0)
@@ -378,6 +396,11 @@ def process_flows(flows: list[dict]) -> None:
                             audit({"event": "block_failed", "ip": src,
                                    "reason": attack, "provider": fw.provider,
                                    "actor": "auto"})
+    if history:
+        try:
+            flow_store.add_many(history)
+        except Exception:
+            log.exception("could not persist flow history; capture continues")
 
 
 def demo_loop() -> None:
@@ -1298,6 +1321,7 @@ def _snapshot(role: str = "operator") -> dict:
     # process (e.g. after a git pull). The client only offers actions the
     # server it is talking to actually implements.
     snap["features"] = ["dismiss_alerts", "alert_triage"]
+    snap["flow_history"] = bool(flow_store.enabled)
     snap["role"] = role
     snap["auth_required"] = _auth_enabled()
     return snap
@@ -1347,6 +1371,45 @@ def auth_logout() -> JSONResponse:
 @app.get("/api/state")
 def get_state(request: Request) -> JSONResponse:
     return JSONResponse(_snapshot(getattr(request.state, "role", "operator")))
+
+
+@app.get("/api/flows")
+def get_flows(limit: int = 100, offset: int = 0, src: str = "",
+              dst: str = "", attack: str = "", kind: str = "",
+              q: str = "") -> dict:
+    """Newest completed flow records, metadata only (no packet payloads)."""
+    result = flow_store.query(limit=limit, offset=offset, src=src, dst=dst,
+                              attack=attack, kind=kind, q=q)
+    return {
+        "ok": True,
+        "flows": result["items"],
+        "total": result["total"],
+        "limit": result["limit"],
+        "offset": result["offset"],
+        "enabled": bool(flow_store.enabled),
+    }
+
+
+@app.get("/api/flows/{flow_id}")
+def get_flow(flow_id: int) -> JSONResponse:
+    row = flow_store.get(flow_id)
+    if row is None:
+        return JSONResponse({"ok": False, "error": "flow not found"},
+                            status_code=404)
+    return JSONResponse({"ok": True, "flow": row})
+
+
+@app.get("/api/v1/flows")
+def api_v1_flows(limit: int = 100, offset: int = 0, src: str = "",
+                 dst: str = "", attack: str = "", kind: str = "",
+                 q: str = "") -> dict:
+    return get_flows(limit=limit, offset=offset, src=src, dst=dst,
+                     attack=attack, kind=kind, q=q)
+
+
+@app.get("/api/v1/flows/{flow_id}")
+def api_v1_flow(flow_id: int) -> JSONResponse:
+    return get_flow(flow_id)
 
 
 _LOG_TAIL_BYTES = 1_000_000

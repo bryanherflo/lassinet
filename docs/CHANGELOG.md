@@ -2,6 +2,19 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.18.0] - 2026-10-27
+
+### Added
+- **Flow history:** completed flows are stored as metadata in SQLite (`data/flows.db`), with 72 h age retention and a 1,000,000-row cap (configurable). The `Flows` modal (`F`) shows source/destination devices, packets, bytes, duration, destination-port count, SYN ratio, packet rate and detector verdict. Search and All/Benign/Attacks filters are included; packet payloads are never stored.
+- **API:** `/api/flows` (dashboard) and `/api/v1/flows` (stable) with pagination and `src`, `dst`, `attack`, `kind`, `q` filters; `/api/flows/{id}` for one record.
+- Click source/destination context: role/type from the current map and a clear "not on current map" label for external addresses.
+
+### Changed
+- UI cache is v=3.57; mobile flow modal scrolls correctly and the header stats tooltip explains that a flow aggregates a 10-second window.
+
+### Tests/Docs
+- 260 tests; flow-store/API coverage; README, guide, API v1 and release notes updated.
+
 ## [0.17.0] - 2026-10-27
 
 ### Added

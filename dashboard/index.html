@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0d1117">
 <meta name="color-scheme" content="dark">
-<link rel="manifest" href="manifest.webmanifest?v=3.52">
+<link rel="manifest" href="manifest.webmanifest?v=3.57">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -17,8 +17,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.52">
-<script src="vendor/vis-network.min.js?v=3.52"></script>
+<link rel="stylesheet" href="style.css?v=3.57">
+<script src="vendor/vis-network.min.js?v=3.57"></script>
 </head>
 <body>
 <header>
@@ -28,12 +28,13 @@
     <span id="model-badge" class="badge secondary" title="Intrusion-detection model"></span>
     <span id="fw-badge" class="badge fw" title="Firewall provider: real enforcement or simulation"></span>
     <button type="button" id="btn-install" class="badge install" hidden title="Install LassiNet on this device">Install app</button>
+    <button type="button" id="btn-flows" class="badge flows" title="Flow history (F): last 72 h of aggregated metadata">Flows</button>
   </div>
 </header>
 
 <section class="stats">
   <div class="stat" title="Devices currently visible on the map"><div class="value" id="s-devices">0</div><div class="label">🖥️ devices</div></div>
-  <div class="stat" title="Flows sampled per second (blocked sources are dropped)"><div class="value" id="s-flows">0</div><div class="label">⚡ flows/s</div></div>
+  <div class="stat" title="Completed flows per second. Each flow aggregates packets between two endpoints in a 10-second window; blocked sources are dropped."><div class="value" id="s-flows">0</div><div class="label">⚡ flows/s</div></div>
   <div class="stat danger" title="Attacks detected since LassiNet started"><div class="value" id="s-alerts">0</div><div class="label">🚨 attacks</div></div>
   <div class="stat warn" title="IPs with an active firewall block (devices and external sources)"><div class="value" id="s-blocked">0</div><div class="label">⛔ blocked now</div></div>
 </section>
@@ -131,6 +132,39 @@
   </div>
 </div>
 
+<div id="flows-overlay" class="modal-overlay" hidden>
+  <div class="modal flows-modal" role="dialog" aria-modal="true" aria-labelledby="flows-title">
+    <div class="modal-head">
+      <div>
+        <h3 id="flows-title">Flow history</h3>
+        <span class="flows-subtitle">Recent aggregated conversations (10 s windows) · metadata only</span>
+      </div>
+      <button type="button" id="flows-close" class="modal-close" aria-label="Close flow history" title="Close (Esc)">×</button>
+    </div>
+    <div class="modal-body flows-body">
+      <div class="flows-toolbar">
+        <input id="flows-filter" class="flows-filter" type="search" placeholder="Filter by IP, device or verdict" autocomplete="off" />
+        <div class="flows-kinds" role="group" aria-label="Filter by verdict">
+          <button type="button" class="flows-chip active" data-flow-kind="">All</button>
+          <button type="button" class="flows-chip" data-flow-kind="benign">Benign</button>
+          <button type="button" class="flows-chip" data-flow-kind="attack">Attacks</button>
+        </div>
+        <button type="button" id="flows-refresh" class="flows-refresh">Refresh</button>
+        <span id="flows-meta" class="flows-meta"></span>
+      </div>
+      <div class="flows-layout">
+        <div id="flows-list" class="flows-list" aria-live="polite">
+          <p class="flows-empty">No flow history yet. Flows appear after the first 10-second aggregation window.</p>
+        </div>
+        <div id="flow-detail" class="flow-detail">
+          <p class="section-note">Select a flow to see which devices are communicating and what the detector decided.</p>
+        </div>
+      </div>
+      <p class="flows-note">Metadata only: endpoints, counters, timing and verdict. Packet payloads are never stored.</p>
+    </div>
+  </div>
+</div>
+
 <div id="help-overlay" class="modal-overlay" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="help-title">
     <div class="modal-head">
@@ -178,13 +212,14 @@
         <span><kbd>B</kbd> block</span><span><kbd>R</kbd> refit</span><span><kbd>M</kbd> map</span>
         <span><kbd>L</kbd> legend</span><span><kbd>D</kbd> dots</span><span><kbd>/</kbd> find</span><span><kbd>H</kbd> help</span><span><kbd>Esc</kbd> close</span>
       </div>
-      <p class="help-note">In demo mode LassiNet simulates traffic and attacks on a fictional network — nothing is captured from your real network. In live mode the same map shows real devices and flows; passive and dry-run modes are shown in the header.</p>
+      <p class="help-note">In demo mode LassiNet simulates traffic and attacks on a fictional network - nothing is captured from your real network. In live mode the same map shows real devices and flows; passive and dry-run modes are shown in the header.</p>
+      <p class="help-note">Press <kbd>F</kbd> for <b>Flow history</b>: select a completed flow to see source, destination and detector verdict. Only metadata is stored; packet payloads are never persisted.</p>
     </div>
   </div>
 </div>
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="app.js?v=3.52"></script>
+<script src="app.js?v=3.57"></script>
 </body>
 </html>
