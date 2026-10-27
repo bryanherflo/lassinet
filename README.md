@@ -40,6 +40,7 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 | 🤖 **Auto-response** | Optional auto-block of high/critical sources. Configurable via `LASSI_AUTO_BLOCK`. |
 | 📜 **System log + audit trail** | Colour-coded event stream in UI **and** local JSONL log (`logs/events.jsonl`, tail via `GET /api/logs?limit=N`). The Firewall panel shows active blocks only; the log keeps the full BLOCK/ALLOW history. |
 | ⚡ **Zero config** | `python run.py` → open `http://localhost:8000`. It creates `.venv`, installs the dependencies once and starts the app. Demo mode needs no privileges. Map library bundled locally — no CDN, no build step, works offline. |
+| 📱 **Android PWA** | Install the dashboard from Chrome on Android; the sensor stays on the PC. The full install prompt and offline shell need HTTPS (Tailscale/Cloudflare Tunnel); plain LAN HTTP gives a home-screen shortcut. See [docs/android.md](docs/android.md). |
 | 🎯 **Intuitive UX** | Click a device for the **action bar** (Block/Unblock, Actions…), right-click for the **trust menu**, double-click to rename, and press `?`/`H` for the built-in Help. Confirmed attackers escalate on the map; `B` blocks, `R` refits, `M` minimizes, `L` toggles the legend, `D` hides the traffic dots, `Esc` closes. Responsive layout, live-stream indicator, reduced-motion support. |
 
 ## 🔐 Hardening & operations
@@ -73,13 +74,14 @@ Never send tokens, `.env`, real captures or customer data. See
 - [API v1](docs/api-v1.md)
 - [Remote sensors](docs/remote-sensors.md)
 - [OIDC / trusted proxy](docs/oidc.md)
+- [Android (PWA)](docs/android.md)
 - [Threat model](docs/threat-model.md)
 - [Deployment (systemd, TLS, OIDC)](docs/deployment.md)
 - [Runbook](docs/runbook.md)
 - [Benchmarks and honest limits](docs/benchmarks.md)
 - [Case study template](docs/case-study-template.md)
 - [Roadmap (free/open source)](docs/ROADMAP.md)
-- [Release notes](RELEASE_NOTES_0.16.1.md)
+- [Release notes](RELEASE_NOTES_0.17.0.md)
 - [Support](SUPPORT.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
@@ -90,7 +92,7 @@ LassiNet is built for people who want to see and act on **their own LAN**, not f
 
 - **Students and juniors** in systems, networking or security (ASIR, CFGS, master's, self-taught) who want the full path from discovery to detection to a real block.
 - **Homelabbers and home-network owners** who want visibility of their devices and a safe way to practise OPNsense, nftables or Windows Firewall.
-- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 252 tests plus CI make it easy to use in class.
+- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 256 tests plus CI make it easy to use in class.
 - **Recruiters and interviewers** reviewing a portfolio project that covers Python, FastAPI, scapy, ML, firewalls, tests, CI and documentation.
 
 ## 🚫 Who it is not for
@@ -112,8 +114,12 @@ cd lassinet
 python run.py
 ```
 
-On Windows you can double-click **`start.bat`**; on Linux/macOS, `bash start.sh`.
+**One-click install:** double-click **`install.bat`** on Windows, or run `bash install.sh` on Linux/macOS. It creates `.env` with random operator/viewer tokens, a Windows desktop shortcut, and opens the dashboard when `/healthz` answers. Keep the printed tokens; the file is gitignored.
+
+On Windows you can also double-click **`start.bat`**; on Linux/macOS, `bash start.sh`.
 `run.py` creates `.venv`, installs `requirements.txt` once (and only again when the file changes) and starts the app. The first run downloads the dependencies and trains the demo model (1–3 minutes); later runs start immediately. Open **http://127.0.0.1:8000**.
+
+**Android:** LassiNet is an installable PWA. The sensor stays on the PC/Raspberry Pi and Chrome on the phone is the client. See [docs/android.md](docs/android.md) for same-Wi-Fi, Tailscale/Cloudflare Tunnel and the HTTPS requirement for the full install prompt.
 
 Demo mode is safe: simulated network, no privileges, no ARP sweep. For the real thing:
 
@@ -138,7 +144,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (252 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (256 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt

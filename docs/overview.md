@@ -321,6 +321,12 @@ the infrastructure:
   trust menu, double-click renames it.
 * **Persistence**: device names (`data/device_names.json`) and trusted
   devices (`data/trusted_devices.json`) survive restarts.
+* **Android PWA / mobile**: the same dashboard is installable from Chrome on
+  Android (manifest, maskable icons, service worker, Install app button). The
+  service worker caches **only** the static shell; alerts, API responses,
+  logs, `/metrics` and the WebSocket are always network-only. The mobile
+  layout wraps the header, stacks the feeds and respects safe-area insets.
+  Full install prompt/service worker requires HTTPS; see `docs/android.md`.
 * **Freshness**: a LAN device not heard from for `LASSI_DEVICE_TTL` (30 min by
   default) leaves the map, so the device count and the topology keep
   describing the network in front of you instead of growing a graveyard of
@@ -396,7 +402,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **252 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **256 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows
@@ -438,8 +444,10 @@ See [ci.md](ci.md) for what the pipeline proves and what it still misses.
   not protect the other devices of the LAN.
 * scapy in Python processes every packet in Python: it is a lab sensor, not
   a gigabit IDS.
-* The dashboard has **no authentication**. Keep it on `127.0.0.1`, or put
-  it behind a reverse proxy/VPN.
+* The dashboard has **optional token authentication/RBAC** (`LASSI_TOKEN_OPERATOR` /
+  `LASSI_TOKEN_VIEWER`); without tokens it is open. Keep it on `127.0.0.1`, or
+  set tokens and put it behind TLS/reverse proxy/VPN. OIDC is delegated to a
+  trusted proxy; there is no in-app SSO or enterprise IdP story.
 * The live model must be validated on your own traffic before you trust its
   verdicts; the published metrics come from the CICIDS2017 subset.
 * **Device identification is best-effort**: a device that answers no PTR, no

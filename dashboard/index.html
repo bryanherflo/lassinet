@@ -3,14 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0d1117">
+<meta name="color-scheme" content="dark">
+<link rel="manifest" href="manifest.webmanifest?v=3.52">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="LassiNet">
 <meta name="description" content="LassiNet — real-time network visibility, ML-based intrusion detection and firewall control in one lightweight Python app.">
 <meta property="og:title" content="LassiNet — network security dashboard">
 <meta property="og:description" content="Real-time network map, ML intrusion detection and one-click firewall blocking. Single Python app, no Docker, no build step.">
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.51">
-<script src="vendor/vis-network.min.js?v=3.51"></script>
+<link rel="stylesheet" href="style.css?v=3.52">
+<script src="vendor/vis-network.min.js?v=3.52"></script>
 </head>
 <body>
 <header>
@@ -19,6 +27,7 @@
     <span id="mode-badge" class="badge" title="Demo mode: simulated traffic, no real packets">…</span>
     <span id="model-badge" class="badge secondary" title="Intrusion-detection model"></span>
     <span id="fw-badge" class="badge fw" title="Firewall provider: real enforcement or simulation"></span>
+    <button type="button" id="btn-install" class="badge install" hidden title="Install LassiNet on this device">Install app</button>
   </div>
 </header>
 
@@ -176,6 +185,6 @@
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="app.js?v=3.51"></script>
+<script src="app.js?v=3.52"></script>
 </body>
 </html>

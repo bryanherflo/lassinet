@@ -9,6 +9,28 @@ para escanear redes de terceros.
 
 ---
 
+## 0. Instalación de un clic
+
+**Windows**
+
+```powershell
+git clone https://github.com/bryanherflo/lassinet.git
+cd lassinet
+.\install.bat
+```
+
+**Linux / macOS**
+
+```bash
+git clone https://github.com/bryanherflo/lassinet.git
+cd lassinet
+bash install.sh
+```
+
+El instalador crea `.env` con tokens aleatorios de operator/viewer, lanza la app y abre el navegador cuando `/healthz` responde. En Windows también crea un acceso directo. **Guarda los tokens** que imprime; `.env` está en `.gitignore`. Si ya existe `.env`, no lo sobrescribe. Para Android, el servidor sigue en el PC/Raspberry Pi y el móvil es el cliente; ver la sección 12.
+
+---
+
 ## 1. Arranque en 1 minuto (demo, sin red real)
 
 ```powershell
@@ -252,13 +274,37 @@ git pull
 
 ---
 
-## 12. Para profundizar
+## 12. Android (PWA)
+
+LassiNet no es un APK ni está en Play Store: es una **PWA**. El sensor sigue en el PC/Raspberry Pi; el móvil solo muestra el panel.
+
+### Misma Wi-Fi (solo laboratorio)
+
+1. En el PC: `$env:LASSI_HOST="0.0.0.0"` (o usa Tailscale), configura tokens y arranca `python run.py`.
+2. Permite el puerto 8000 **solo** en tu LAN.
+3. En Chrome Android abre `http://IP-DEL-PC:8000` e inicia sesión con el token.
+4. Menú de Chrome → **Añadir a pantalla de inicio**. En HTTP simple será un acceso directo, sin prompt PWA, service worker ni shell offline; los navegadores exigen HTTPS para eso.
+
+### PWA completa (HTTPS, recomendado)
+
+- **Tailscale** en PC y móvil + Tailscale Serve: URL HTTPS privada sin abrir el puerto a Internet.
+- **Cloudflare Tunnel** para una URL HTTPS temporal; es pública, así que usa tokens fuertes y no la dejes abierta.
+- Caddy/Nginx con TLS local también funciona, pero Android debe confiar en la CA.
+- Con HTTPS, Chrome muestra **Install app** y el botón del header. El service worker cachea **solo** el shell estático: nunca API, alertas, logs, `/metrics` ni el WebSocket.
+- El móvil no captura tráfico; no hay notificaciones push nativas ni app de Play Store. Una TWA/APK sería un proyecto aparte.
+
+Detalles y comandos: [docs/android.md](docs/android.md).
+
+---
+
+## 13. Para profundizar
 
 - [Arquitectura](docs/architecture.md)
 - [API v1](docs/api-v1.md)
 - [Sensores remotos](docs/remote-sensors.md)
 - [OIDC / proxy](docs/oidc.md)
 - [Despliegue](docs/deployment.md)
+- [Android (PWA)](docs/android.md)
 - [Runbook](docs/runbook.md)
 - [Threat model](docs/threat-model.md)
 - [Límites reales](docs/benchmarks.md)

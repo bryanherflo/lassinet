@@ -1709,6 +1709,34 @@ if (pickerInput && pickerList) {
     if (ev.key === "Enter") { ev.preventDefault(); submitAuth(); }
   });
 
+  var installBtn = document.getElementById("btn-install");
+  var deferredInstall = null;
+  window.addEventListener("beforeinstallprompt", function(ev) {
+    ev.preventDefault();
+    deferredInstall = ev;
+    if (installBtn) installBtn.hidden = false;
+  });
+  if (installBtn) {
+    installBtn.addEventListener("click", async function() {
+      if (!deferredInstall) return;
+      deferredInstall.prompt();
+      try { await deferredInstall.userChoice; } catch (e) { /* dismissed */ }
+      deferredInstall = null;
+      installBtn.hidden = true;
+    });
+  }
+  window.addEventListener("appinstalled", function() {
+    if (installBtn) installBtn.hidden = true;
+  });
+  if ("serviceWorker" in navigator && (location.protocol === "https:" ||
+      location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
+    window.addEventListener("load", function() {
+      navigator.serviceWorker.register("sw.js").catch(function(e) {
+        console.warn("service worker registration failed", e);
+      });
+    });
+  }
+
   refresh().catch(function() {});
   buildLegendIcons();
   document.getElementById("btn-toggle-map").onclick = toggleMapMinimize;

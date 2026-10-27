@@ -2,6 +2,18 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.17.0] - 2026-10-27
+
+### Added
+- **Android PWA:** manifest, maskable icons, service worker and an Install app button. The service worker caches only the static shell; API responses, alerts, logs, `/metrics` and the WebSocket are never cached. See `docs/android.md` (PWA, not a Play Store APK).
+- **One-click install:** `install.bat`/`install.ps1` and `install.sh` create a local `.env` with random operator/viewer tokens, create a Windows desktop shortcut and open the dashboard when `/healthz` answers.
+- Mobile layout: wrapped header badges, safe-area insets, smaller controls and a usable feed on a 390 px phone.
+
+### Changed
+- UI cache is v=3.52.
+
+### Tests/Docs
+- 256 tests; docs/android.md and release notes for 0.17.0.
 ## [0.16.2] — 2026-10-27
 
 ### Changed

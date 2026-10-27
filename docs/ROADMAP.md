@@ -11,8 +11,9 @@ There is no paid tier, license key, cloud account or telemetry in this roadmap.
    rotation, clearer compatibility docs.
 3. **Reports and export** — daily/weekly summary, CSV of alerts/devices, a
    printable incident/response note.
-4. **Install/release ergonomics** — signed tags, ZIP release, systemd unit
-   already included; optional PyPI/pipx packaging.
+4. **Install/release ergonomics** — one-click installers and the Android PWA
+   are now included; remaining work is signed tags, a ZIP release, optional
+   PyPI/pipx packaging and an optional TWA/APK if there is demand.
 5. **Accessibility and onboarding** — first-run checklist, clearer empty
    states, Spanish/English UI strings where useful.
 6. **Quality** — more pcap/UI tests, coverage report, SBOM, signed artifacts.

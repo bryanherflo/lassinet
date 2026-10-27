@@ -38,8 +38,10 @@ rules need elevation; monitor-only mode does not. Prefer a dedicated account,
 ## Reverse proxy + TLS + OIDC
 
 Keep `LASSI_HOST=127.0.0.1`. Terminate TLS at Caddy, Nginx, Traefik or a VPN.
-If you need SSO, put Authelia/oauth2-proxy in front; LassiNet’s operator/viewer
-tokens still apply behind it unless you consciously relax them.
+If you need SSO, put Authelia/oauth2-proxy in front; LassiNet's operator/viewer
+tokens still apply behind it unless you consciously relax them. For Android,
+the same HTTPS endpoint enables the PWA install prompt and service worker;
+see [android.md](android.md).
 
 Caddy (automatic TLS, local DNS name):
 

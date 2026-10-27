@@ -82,6 +82,8 @@ header::after {
 .badge.ok { background: #3fb95026; color: #3fb950; border-color: #3fb95055; }
 .section-note.warn-note { color: #e3b341; }
 .badge.secondary { background: var(--green-dim); color: var(--green); border-color: #23863655; }
+.badge.install { cursor: pointer; font-family: inherit; background: var(--green-dim); color: var(--green); border: 1px solid #23863666; }
+.badge.install:hover { background: #23863655; border-color: #23863688; }
 .badge.secondary:hover { background: #23863655; border-color: #23863688; }
 
 /* ---- stats ---- */
@@ -348,7 +350,7 @@ main {
 
 /* ---- sidebar ---- */
 aside {
-  display: flex; flex-direction: column; gap: var(--space-lg); min-height: 0;
+  display: flex; flex-direction: column; gap: var(--space-lg); min-height: 0; min-width: 0;
   overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable;
   background: var(--panel); border: 1px solid var(--border);
   border-radius: var(--radius-xl); padding: var(--space-lg);
@@ -714,4 +716,26 @@ button.act:focus-visible, .toolbar-btn:focus-visible { outline-offset: 3px; }
   main { grid-template-columns: 1fr; padding: 0; }
   #map-container { border: none; box-shadow: none; background: white; }
   #map { background: white; }
+}
+
+@supports (padding: max(0px)) {
+  header {
+    padding-top: max(var(--space-md), env(safe-area-inset-top));
+    padding-left: max(var(--space-lg), env(safe-area-inset-left));
+    padding-right: max(var(--space-lg), env(safe-area-inset-right));
+  }
+}
+@media (max-width: 600px) {
+  header { padding-left: max(var(--space-md), env(safe-area-inset-left)); padding-right: max(var(--space-md), env(safe-area-inset-right)); }
+  .brand { font-size: 16px; }
+  .badges { width: 100%; max-width: 100%; min-width: 0; gap: 4px; }
+  .badge { max-width: 100%; font-size: 9px; padding: 4px 7px; }
+  .alert { min-width: 0; }
+  .stats { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat .value { font-size: 22px; }
+  #map-container { height: 48vh; min-height: 280px; }
+  aside { padding: var(--space-md); }
+  .alert .meta, .rule .meta { overflow-wrap: anywhere; }
+  .triage-actions button { flex: 1 1 auto; }
+  #selection-bar { left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); }
 }
