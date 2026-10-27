@@ -7,11 +7,13 @@ scores every flow with a machine-learning model, raises alerts, and lets you blo
 host in the firewall **with one click — or automatically** for critical alerts.
 Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 
-<!-- LassiNet dashboard demo (uncomment when docs/demo.gif exists):
-![LassiNet dashboard demo](docs/demo.gif)
--->
+**Free and open source (MIT), self-hosted. No account, cloud, license key or telemetry.**
+
+![LassiNet dashboard in demo mode](docs/screenshots/dashboard-demo.png)
+*Demo mode on a synthetic network — no real devices, no packets captured.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![Free & open source](https://img.shields.io/badge/free%20%26%20open%20source-MIT-brightgreen)](LICENSE)
 [![CI](https://github.com/bryanherflo/lassinet/actions/workflows/ci.yml/badge.svg)](https://github.com/bryanherflo/lassinet/actions/workflows/ci.yml)
 [![mode](https://img.shields.io/badge/mode-demo%20%2F%20live-8b5cf6)](#)
 
@@ -57,6 +59,14 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 
 ## 📚 Design, deployment and operations
 
+## Support & license
+
+LassiNet is **free, MIT-licensed and self-hosted**. Support is community and
+**best effort** via GitHub Issues/Discussions; there is **no SLA, paid support
+or warranty** beyond the MIT license. No telemetry, no account, no cloud.
+Never send tokens, `.env`, real captures or customer data. See
+[SUPPORT.md](SUPPORT.md) and [SECURITY.md](SECURITY.md).
+
 - [Architecture](docs/architecture.md)
 - [API v1](docs/api-v1.md)
 - [Remote sensors](docs/remote-sensors.md)
@@ -65,6 +75,10 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 - [Deployment (systemd, TLS, OIDC)](docs/deployment.md)
 - [Runbook](docs/runbook.md)
 - [Benchmarks and honest limits](docs/benchmarks.md)
+- [Case study template](docs/case-study-template.md)
+- [Roadmap (free/open source)](docs/ROADMAP.md)
+- [Release notes](RELEASE_NOTES_0.16.1.md)
+- [Support](SUPPORT.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 
