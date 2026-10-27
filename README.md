@@ -9,6 +9,8 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 
 **Free and open source (MIT), self-hosted. No account, cloud, license key or telemetry.**
 
+**Status: beta / pre-release.** Validated by tests and demo; not yet by a real 24–48 h pilot or an independent security review. Not production-certified.
+
 ![LassiNet dashboard in demo mode](docs/screenshots/dashboard-demo.png)
 *Demo mode on a synthetic network — no real devices, no packets captured.*
 

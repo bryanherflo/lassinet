@@ -1,5 +1,9 @@
 # LassiNet 0.16.1 — free and open source
 
+> **Status: pre-release / beta.** Tests and demo are green, but this is not yet
+> validated by a real 24–48 h pilot or an independent security review. Do not
+treat it as production-certified.
+
 LassiNet is a **free, MIT-licensed, self-hosted** network visibility and
 response console for small LANs. No account, cloud, license key or telemetry.
 
