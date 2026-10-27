@@ -2,6 +2,17 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.20.0] - 2026-10-27
+
+### Added
+- Durable timeline events: alert and block markers are stored in SQLite (`flow_events`), backfilled once from the audit log, and pruned with the flow retention.
+- Top talkers show directional source (out) and destination (in) bytes/flows while keeping the combined ranking.
+
+### Changed
+- Clear history no longer runs `VACUUM`; rows/events disappear immediately and the UI reports the remaining SQLite file size.
+- Old flows without protocol/port samples show `not recorded` instead of a bare dash.
+- UI cache is v=3.63; 266 tests.
+
 ## [0.19.1] - 2026-10-27
 
 ### Fixed

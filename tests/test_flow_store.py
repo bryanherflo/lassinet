@@ -112,6 +112,55 @@ def test_flow_store_can_be_disabled(tmp_path, monkeypatch) -> None:
         store.close()
 
 
+def test_flow_store_timeline_events_and_clear(tmp_path) -> None:
+    store = FlowStore(tmp_path / "flows.db", retention_hours=72, max_rows=100)
+    now = time.time()
+    try:
+        assert store.add_events([
+            {"ts": now - 30, "kind": "alert", "src": "192.168.0.1",
+             "dst": "203.0.113.5", "attack": "port_scan", "severity": "high"},
+            {"ts": now - 20, "kind": "block", "ip": "203.0.113.5",
+             "reason": "test"},
+            {"ts": now - 10, "kind": "unblock", "ip": "203.0.113.5"},
+        ]) == 2
+        events = store.timeline_events(since=now - 60)
+        assert [event["kind"] for event in events] == ["alert", "block"]
+        assert store.clear_events() == 2
+        assert store.timeline_events(since=now - 60) == []
+        store.meta_set("events_backfilled_at", "1")
+        assert store.meta_get("events_backfilled_at") == "1"
+    finally:
+        store.close()
+
+
+def test_timeline_backfill_from_audit_log(tmp_path, monkeypatch) -> None:
+    import json
+    import lassi.state as state_module
+
+    store = FlowStore(tmp_path / "flows.db")
+    log = tmp_path / "events.jsonl"
+    lines = [
+        {"ts": "2026-10-27T12:00:00+00:00", "event": "alert",
+         "src": "192.168.0.10", "dst": "203.0.113.5", "attack": "port_scan",
+         "severity": "high", "count": 1, "mode": "demo"},
+        {"ts": "2026-10-27T12:00:01+00:00", "event": "block",
+         "ip": "203.0.113.5", "reason": "test", "actor": "operator"},
+    ]
+    log.write_text("\n".join(json.dumps(line) for line in lines) + "\n",
+                   encoding="utf-8")
+    monkeypatch.setattr(state_module, "EVENTS_LOG_PATH", log)
+    monkeypatch.setattr(lassi_app, "flow_store", store)
+    try:
+        lassi_app._backfill_timeline_events()
+        events = store.timeline_events()
+        assert [event["kind"] for event in events] == ["alert", "block"]
+        assert store.meta_get("events_backfilled_at")
+        lassi_app._backfill_timeline_events()
+        assert store.timeline_events() == events, "backfill must run once"
+    finally:
+        store.close()
+
+
 def test_flow_api_shape_and_v1_alias(client: TestClient) -> None:
     response = client.get("/api/flows", params={"limit": 5})
     assert response.status_code == 200
@@ -146,6 +195,8 @@ def test_flow_store_analytics_export_and_clear(tmp_path) -> None:
         assert top["items"][0]["ip"] == "192.168.0.10"
         assert top["items"][0]["bytes"] == 10500
         assert top["items"][0]["flows"] == 3
+        assert top["items"][0]["bytes_out"] == 10000
+        assert top["items"][0]["bytes_in"] == 500
 
         timeline = store.timeline(minutes=5, until=now)
         assert len(timeline["buckets"]) == 5

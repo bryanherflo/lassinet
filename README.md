@@ -83,7 +83,7 @@ Never send tokens, `.env`, real captures or customer data. See
 - [Benchmarks and honest limits](docs/benchmarks.md)
 - [Case study template](docs/case-study-template.md)
 - [Roadmap (free/open source)](docs/ROADMAP.md)
-- [Release notes](RELEASE_NOTES_0.19.1.md)
+- [Release notes](RELEASE_NOTES_0.20.0.md)
 - [Support](SUPPORT.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
@@ -94,7 +94,7 @@ LassiNet is built for people who want to see and act on **their own LAN**, not f
 
 - **Students and juniors** in systems, networking or security (ASIR, CFGS, master's, self-taught) who want the full path from discovery to detection to a real block.
 - **Homelabbers and home-network owners** who want visibility of their devices and a safe way to practise OPNsense, nftables or Windows Firewall.
-- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 264 tests plus CI make it easy to use in class.
+- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 266 tests plus CI make it easy to use in class.
 - **Recruiters and interviewers** reviewing a portfolio project that covers Python, FastAPI, scapy, ML, firewalls, tests, CI and documentation.
 
 ## 🚫 Who it is not for
@@ -146,7 +146,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (264 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (266 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt

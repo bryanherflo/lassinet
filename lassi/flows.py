@@ -126,6 +126,27 @@ class FlowStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flows_src ON flows(src)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flows_dst ON flows(dst)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flows_attack ON flows(attack)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS flow_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL NOT NULL,
+                    kind TEXT NOT NULL,
+                    src TEXT NOT NULL DEFAULT '',
+                    dst TEXT NOT NULL DEFAULT '',
+                    ip TEXT NOT NULL DEFAULT '',
+                    attack TEXT NOT NULL DEFAULT '',
+                    severity TEXT NOT NULL DEFAULT '',
+                    reason TEXT NOT NULL DEFAULT '',
+                    count INTEGER NOT NULL DEFAULT 1,
+                    mode TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_flow_events_ts ON flow_events(ts DESC)")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS flow_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
             # Existing 0.18 databases predate the protocol/port columns.
             existing = {row[1] for row in conn.execute("PRAGMA table_info(flows)")}
             for column, ddl in (
@@ -251,6 +272,7 @@ class FlowStore:
                         "DELETE FROM flows WHERE ts < ?", (cutoff,)
                     )
                     deleted += cursor.rowcount if cursor.rowcount > 0 else 0
+                    self._conn.execute("DELETE FROM flow_events WHERE ts < ?", (cutoff,))
                 if self.max_rows > 0:
                     cursor = self._conn.execute(
                         """
@@ -270,6 +292,123 @@ class FlowStore:
             log.warning("could not prune flow history", exc_info=True)
             return deleted
         return deleted
+
+    # ---- timeline events -----------------------------------------------
+    def add_events(self, records: Iterable[dict[str, Any]]) -> int:
+        """Persist alert/block markers for the timeline."""
+        if not self.enabled or self._conn is None:
+            return 0
+        rows = []
+        now = time.time()
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            kind = str(record.get("kind") or "").strip().lower()
+            if kind not in ("alert", "block"):
+                continue
+            rows.append((
+                self._number(record.get("ts"), now),
+                kind,
+                str(record.get("src") or "")[:160],
+                str(record.get("dst") or "")[:160],
+                str(record.get("ip") or "")[:160],
+                str(record.get("attack") or "")[:80],
+                str(record.get("severity") or "")[:20],
+                str(record.get("reason") or "")[:200],
+                self._integer(record.get("count")) or 1,
+                str(record.get("mode") or "")[:60],
+            ))
+        if not rows:
+            return 0
+        try:
+            with self._lock:
+                self._conn.executemany(
+                    """
+                    INSERT INTO flow_events
+                        (ts, kind, src, dst, ip, attack, severity, reason, count, mode)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+                self._conn.commit()
+        except sqlite3.Error:
+            log.warning("could not persist flow timeline events", exc_info=True)
+            try:
+                self._conn.rollback()
+            except sqlite3.Error:
+                pass
+            return 0
+        return len(rows)
+
+    def timeline_events(self, *, since: float = 0.0,
+                        until: float = 0.0, limit: int = 2000) -> list[dict[str, Any]]:
+        if not self.enabled or self._conn is None:
+            return []
+        limit = min(max(int(limit), 1), 5000)
+        where = []
+        params: list[Any] = []
+        if since > 0:
+            where.append("ts >= ?")
+            params.append(float(since))
+        if until > 0:
+            where.append("ts <= ?")
+            params.append(float(until))
+        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT * FROM flow_events" + clause +
+                    " ORDER BY ts DESC, id DESC LIMIT ?", [*params, limit]
+                ).fetchall()
+        except sqlite3.Error:
+            log.warning("could not read flow timeline events", exc_info=True)
+            return []
+        return [dict(row) for row in reversed(rows)]
+
+    def clear_events(self, *, mark_cleared: bool = False) -> int:
+        if not self.enabled or self._conn is None:
+            return 0
+        try:
+            with self._lock:
+                cursor = self._conn.execute("DELETE FROM flow_events")
+                deleted = cursor.rowcount if cursor.rowcount > 0 else 0
+                if mark_cleared:
+                    self._conn.execute(
+                        "INSERT INTO flow_meta (key, value) VALUES ('events_cleared_at', ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (str(time.time()),),
+                    )
+                self._conn.commit()
+        except sqlite3.Error:
+            log.warning("could not clear flow timeline events", exc_info=True)
+            return 0
+        return deleted
+
+    def meta_get(self, key: str) -> str:
+        if not self.enabled or self._conn is None:
+            return ""
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT value FROM flow_meta WHERE key = ?", (str(key),)
+                ).fetchone()
+        except sqlite3.Error:
+            return ""
+        return str(row["value"]) if row else ""
+
+    def meta_set(self, key: str, value: str) -> None:
+        if not self.enabled or self._conn is None:
+            return
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "INSERT INTO flow_meta (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (str(key), str(value)),
+                )
+                self._conn.commit()
+        except sqlite3.Error:
+            log.warning("could not update flow metadata", exc_info=True)
 
     # ---- reads ---------------------------------------------------------
     def _filter(
@@ -413,16 +552,22 @@ class FlowStore:
                 rows = self._conn.execute(
                     """
                     SELECT ip, MAX(name) AS name,
+                           SUM(CASE WHEN direction = 'out' THEN bytes ELSE 0 END) AS bytes_out,
+                           SUM(CASE WHEN direction = 'out' THEN 1 ELSE 0 END) AS flows_out,
+                           SUM(CASE WHEN direction = 'in' THEN bytes ELSE 0 END) AS bytes_in,
+                           SUM(CASE WHEN direction = 'in' THEN 1 ELSE 0 END) AS flows_in,
                            SUM(bytes) AS bytes, COUNT(*) AS flows
                     FROM (
                         SELECT src AS ip,
-                               COALESCE(NULLIF(src_name, ''), src) AS name, bytes
+                               COALESCE(NULLIF(src_name, ''), src) AS name,
+                               bytes, 'out' AS direction
                         FROM flows
                         WHERE ts >= ? AND ts <= ?
                           AND src NOT IN ('0.0.0.0', '255.255.255.255')
                         UNION ALL
                         SELECT dst AS ip,
-                               COALESCE(NULLIF(dst_name, ''), dst) AS name, bytes
+                               COALESCE(NULLIF(dst_name, ''), dst) AS name,
+                               bytes, 'in' AS direction
                         FROM flows
                         WHERE ts >= ? AND ts <= ?
                           AND dst NOT IN ('0.0.0.0', '255.255.255.255')
@@ -517,18 +662,25 @@ class FlowStore:
         return result
 
     def clear(self) -> int:
-        """Delete every stored flow row; used by the operator UI/API."""
+        """Delete every stored flow row and timeline event.
+
+        Deliberately does not VACUUM: that can block for a long time on a
+        multi-hundred-MB DB. The UI reports the file size; rows are gone
+        immediately.
+        """
         if not self.enabled or self._conn is None:
             return 0
         try:
             with self._lock:
                 cursor = self._conn.execute("DELETE FROM flows")
                 deleted = cursor.rowcount if cursor.rowcount > 0 else 0
+                self._conn.execute("DELETE FROM flow_events")
+                self._conn.execute(
+                    "INSERT INTO flow_meta (key, value) VALUES ('events_cleared_at', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (str(time.time()),),
+                )
                 self._conn.commit()
-                try:
-                    self._conn.execute("VACUUM")
-                except sqlite3.Error:
-                    pass
         except sqlite3.Error:
             log.warning("could not clear flow history", exc_info=True)
             return 0

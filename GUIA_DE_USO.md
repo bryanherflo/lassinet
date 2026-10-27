@@ -306,10 +306,10 @@ Pulsa **Flows** en la cabecera o la tecla `F`. El panel tiene tres vistas:
 - **Flows**: buscar por IP, nombre o veredicto; filtrar con **All / Benign / Attacks**; seleccionar un flow para ver origen, destino, rol/tipo de cada dispositivo, protocolos, puertos, paquetes, bytes, duración, SYN, packet rate y veredicto.
   - El botón **Flows** de la barra de un dispositivo abre el historial filtrado por esa IP.
   - El botón **Flows** de una alerta abre el mismo origen/destino en una ventana de **±5 minutos**.
-- **Top talkers**: ranking de dispositivos por bytes y flows en **15 min / 1 h / 24 h**. Al pulsar un dispositivo vuelves a sus flows.
-- **Timeline**: flows por minuto con marcas de alertas y bloqueos para **1 h / 6 h / 24 h**.
+- **Top talkers**: ranking de dispositivos por bytes y flows en **15 min / 1 h / 24 h**. Muestra **↑ out** (como origen) y **↓ in** (como destino), además del total combinado. Al pulsar un dispositivo vuelves a sus flows.
+- **Timeline**: flows por minuto con marcas de alertas y bloqueos para **1 h / 6 h / 24 h**. Los eventos se guardan en SQLite (`flow_events`) y se rellenan desde el log de auditoría una vez; ya no dependen de las 200 alertas / 50 reglas en memoria.
 
-En el pie tienes el uso del historial —filas, tamaño de la base, retención y tope—, **Export CSV** con los filtros actuales y **Clear history** (solo operator; pide confirmación y queda auditado).
+En el pie tienes el uso del historial —filas, tamaño de la base, retención y tope—, **Export CSV** con los filtros actuales y **Clear history** (solo operator; pide confirmación y queda auditado). Clear borra filas y eventos sin `VACUUM`, así que es rápido, aunque el archivo SQLite puede no encogerse de inmediato. Los flows anteriores a la captura de puertos muestran `not recorded`; no se pueden reconstruir.
 
 Los dispositivos que ya no están en el mapa salen como `not on current map`. Retención por defecto: **72 h** y **1.000.000 filas**; se puede ajustar con `LASSI_FLOW_RETENTION_HOURS`, `LASSI_FLOW_MAX_ROWS`, `LASSI_FLOW_DB` o desactivar con `LASSI_FLOW_HISTORY=0`. El historial contiene IPs y nombres: trátalo como dato sensible y no lo subas al repositorio.
 

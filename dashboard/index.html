@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0d1117">
 <meta name="color-scheme" content="dark">
-<link rel="manifest" href="manifest.webmanifest?v=3.62">
+<link rel="manifest" href="manifest.webmanifest?v=3.63">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -17,8 +17,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.62">
-<script src="vendor/vis-network.min.js?v=3.62"></script>
+<link rel="stylesheet" href="style.css?v=3.63">
+<script src="vendor/vis-network.min.js?v=3.63"></script>
 </head>
 <body>
 <header>
@@ -199,7 +199,7 @@
       <div class="flows-footer">
         <span id="flows-stats" class="flows-stats"></span>
         <button type="button" id="flows-export" class="flows-refresh">Export CSV</button>
-        <button type="button" id="flows-clear" class="flows-refresh danger">Clear history</button>
+        <button type="button" id="flows-clear" class="flows-refresh danger" title="Delete all stored flow rows and timeline events; the SQLite file may not shrink immediately">Clear history</button>
       </div>
       <p class="flows-note">Metadata only: endpoints, counters, timing and verdict. Packet payloads are never stored.</p>
     </div>
@@ -261,7 +261,7 @@
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="sw-reset.js?v=3.62"></script>
-<script src="app.js?v=3.62"></script>
+<script src="sw-reset.js?v=3.63"></script>
+<script src="app.js?v=3.63"></script>
 </body>
 </html>

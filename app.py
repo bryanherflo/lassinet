@@ -48,8 +48,8 @@ from lassi.ml import Detector
 from lassi.scope import allowlist_from_env, check_live_scope
 from lassi.state import (State, add_alert_listener, audit,
                          clear_alert_listeners, create_audit_checkpoint,
-                         is_external, prune_logs, read_audit_checkpoint,
-                         verify_audit_checkpoint)
+                         is_external, log_export_files, prune_logs,
+                         read_audit_checkpoint, verify_audit_checkpoint)
 from lassi.simulator import Simulator
 
 try:                                  # optional: .env support for local runs
@@ -315,6 +315,100 @@ def _use_demo_model() -> None:
 # --------------------------------------------------------------------------
 # Engine (background thread; works identically for demo & live sources)
 # --------------------------------------------------------------------------
+def _timeline_alert_record(alert: dict, collapsed: bool = False) -> None:
+    try:
+        flow_store.add_events([{
+            "ts": alert.get("at") or time.time(),
+            "kind": "alert",
+            "src": alert.get("src", ""),
+            "dst": alert.get("dst", ""),
+            "attack": alert.get("attack", ""),
+            "severity": alert.get("severity", ""),
+            "count": alert.get("count", 1),
+            "mode": alert.get("mode", state.mode),
+        }])
+    except Exception:
+        log.exception("could not record alert timeline event")
+
+
+def _timeline_block_record(ip: str, reason: str, actor: str) -> None:
+    try:
+        flow_store.add_events([{
+            "ts": time.time(),
+            "kind": "block",
+            "ip": ip,
+            "reason": reason,
+            "mode": state.mode,
+        }])
+    except Exception:
+        log.exception("could not record block timeline event")
+
+
+def _backfill_timeline_events() -> None:
+    """One-time migration of alert/block audit events into the flow DB.
+
+    The in-memory history is deliberately short (200 alerts / 50 rules). The
+    audit log is the durable source; copy its alert and block events into
+    SQLite once so the 24 h timeline can be complete. A later Clear history
+    writes `events_cleared_at`, which also stops this backfill from resurrecting
+    events the operator explicitly deleted.
+    """
+    if not flow_store.enabled:
+        return
+    if flow_store.meta_get("events_backfilled_at") or flow_store.meta_get("events_cleared_at"):
+        return
+    retention = flow_store.retention_hours
+    cutoff = time.time() - retention * 3600 if retention > 0 else 0.0
+    events: list[dict] = []
+    for path in log_export_files():
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    if event.get("event") not in ("alert", "block"):
+                        continue
+                    try:
+                        at = datetime.fromisoformat(str(event.get("ts") or "")).timestamp()
+                    except (TypeError, ValueError):
+                        continue
+                    if cutoff and at < cutoff:
+                        continue
+                    if event.get("event") == "alert":
+                        events.append({
+                            "ts": at, "kind": "alert",
+                            "src": event.get("src", ""),
+                            "dst": event.get("dst", ""),
+                            "attack": event.get("attack", ""),
+                            "severity": event.get("severity", ""),
+                            "count": event.get("count", 1),
+                            "mode": event.get("mode", state.mode),
+                        })
+                    else:
+                        events.append({
+                            "ts": at, "kind": "block",
+                            "ip": event.get("ip", ""),
+                            "reason": event.get("reason", ""),
+                            "mode": state.mode,
+                        })
+                    if len(events) >= 50_000:
+                        break
+        except OSError:
+            continue
+        if len(events) >= 50_000:
+            break
+    flow_store.clear_events()
+    flow_store.add_events(events)
+    flow_store.meta_set("events_backfilled_at", str(time.time()))
+    log.info("backfilled %d timeline event(s) from the audit log", len(events))
+
+
 def process_flows(flows: list[dict]) -> None:
     if not flows:
         return
@@ -388,6 +482,7 @@ def process_flows(flows: list[dict]) -> None:
                         if fw.block(src, reason=reason):
                             if state.block_host(src, reason=reason, actor="auto",
                                                 ttl_s=AUTO_BLOCK_TTL):
+                                _timeline_block_record(src, reason, "auto")
                                 state.add_alert({**alert, "attack": "auto_block",
                                                  "severity": "info"})
                             elif state.is_protected(src):
@@ -796,8 +891,10 @@ async def lifespan(app: FastAPI):
     restored = state.restore_recent_alerts()
     if restored:
         log.info("restored %d recent alert(s) from the event log", restored)
+    _backfill_timeline_events()
     from lassi.webhooks import WebhookNotifier
     clear_alert_listeners()
+    add_alert_listener(_timeline_alert_record)
     _notifier = WebhookNotifier.from_env()
     if _notifier is not None:
         if _notifier.enabled:
@@ -1461,20 +1558,37 @@ def flow_timeline(minutes: int = 60) -> dict:
     data = flow_store.timeline(minutes=minutes)
     since = float(data.get("since") or 0)
     alerts = []
-    for alert in state.alerts:
-        at = float(alert.get("at") or 0)
-        if at >= since:
-            alerts.append({
-                "at": at, "attack": alert.get("attack"),
-                "src": alert.get("src"), "dst": alert.get("dst"),
-                "severity": alert.get("severity"), "count": alert.get("count", 1),
-            })
     blocks = []
-    for rule in state.rules:
-        at = float(rule.get("at") or 0)
-        if at >= since and rule.get("action") == "BLOCK":
-            blocks.append({"at": at, "ip": rule.get("ip"),
-                           "reason": rule.get("reason")})
+    if flow_store.enabled:
+        for event in flow_store.timeline_events(since=since,
+                                                until=float(data.get("until") or 0)):
+            if event.get("kind") == "alert":
+                alerts.append({
+                    "at": event.get("ts"), "attack": event.get("attack"),
+                    "src": event.get("src"), "dst": event.get("dst"),
+                    "severity": event.get("severity"),
+                    "count": event.get("count", 1),
+                })
+            elif event.get("kind") == "block":
+                blocks.append({
+                    "at": event.get("ts"), "ip": event.get("ip"),
+                    "reason": event.get("reason"),
+                })
+    else:
+        # History disabled: keep the old best-effort markers from memory.
+        for alert in state.alerts:
+            at = float(alert.get("at") or 0)
+            if at >= since:
+                alerts.append({
+                    "at": at, "attack": alert.get("attack"),
+                    "src": alert.get("src"), "dst": alert.get("dst"),
+                    "severity": alert.get("severity"), "count": alert.get("count", 1),
+                })
+        for rule in state.rules:
+            at = float(rule.get("at") or 0)
+            if at >= since and rule.get("action") == "BLOCK":
+                blocks.append({"at": at, "ip": rule.get("ip"),
+                               "reason": rule.get("reason")})
     return {"ok": True, **data, "alerts": alerts, "blocks": blocks}
 
 
@@ -1960,6 +2074,8 @@ def block(req: BlockRequest, request: Request) -> dict:
             return {"ok": False, "changed": False, "blocked": state.is_blocked(ip),
                     "error": f"Firewall provider '{fw.provider}' could not apply the block; nothing changed"}
         changed = state.block_host(ip, reason, actor=actor, ttl_s=ttl_s)
+        if changed:
+            _timeline_block_record(ip, reason, actor)
         if not changed and state.is_protected(ip):
             fw.unblock(ip)                  # roll back a rule for infrastructure
         return {"ok": True, "changed": changed, "blocked": state.is_blocked(ip),

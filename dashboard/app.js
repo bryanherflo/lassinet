@@ -819,7 +819,7 @@ function flowLabel(flow, side) {
   return name && name !== ip ? name : (ip || "—");
 }
 function flowPorts(value) {
-  return value ? String(value) : "—";
+  return value ? String(value) : "not recorded";
 }
 function flowRow(flow) {
   var row = flowEl("button", "flow-row");
@@ -1071,8 +1071,12 @@ function renderTop(items, windowSeconds) {
     fill.style.width = Math.max(2, ((Number(item.bytes) || 0) / maxBytes) * 100) + "%";
     bar.appendChild(fill);
     row.appendChild(bar);
-    var stats = flowEl("span", "top-stats", flowBytes(item.bytes));
-    stats.appendChild(flowEl("span", "", (Number(item.flows) || 0) + " flows"));
+    var stats = flowEl("span", "top-stats",
+      "\u2191 " + flowBytes(item.bytes_out) + "  \u2193 " + flowBytes(item.bytes_in));
+    stats.appendChild(flowEl("span", "", (Number(item.flows_out) || 0) +
+      " out · " + (Number(item.flows_in) || 0) + " in"));
+    row.title = (item.name || item.ip) + " · " + flowBytes(item.bytes) +
+      " total · " + (Number(item.flows) || 0) + " flows";
     row.appendChild(stats);
     row.addEventListener("click", function() { showFlowsForDevice(item.ip); });
     flowsTopList.appendChild(row);

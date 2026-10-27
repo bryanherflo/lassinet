@@ -77,15 +77,19 @@ The dashboard uses `/api/flows` (same contract). Retention is controlled by
 
 ### Top talkers, timeline and usage
 
-- `GET /api/v1/flows/top?window=900|3600|86400&limit=10`.
+- `GET /api/v1/flows/top?window=900|3600|86400&limit=10` ranks by combined
+  bytes. Each item includes `bytes_out`/`flows_out` (device as source) and
+  `bytes_in`/`flows_in` (device as destination), plus `bytes`/`flows` totals.
 - `GET /api/v1/flows/timeline?minutes=60` returns minute buckets plus
-  `alerts`/`blocks` markers from the current in-memory history.
+  `alerts`/`blocks` markers from the durable `flow_events` table. The table is
+  backfilled once from the audit log and pruned with the flow retention.
 - `GET /api/v1/flows/stats` returns `rows`, `oldest`, `newest`, `db_bytes`,
   `retention_hours`, `max_rows` and `enabled`.
 - `GET /api/v1/flows/export.csv` accepts the same filters and returns a CSV
   attachment capped at 100,000 rows.
-- `POST /api/v1/flows/clear` deletes all flow history. Operator only; it is
-  destructive and writes a `flows_cleared` audit event.
+- `POST /api/v1/flows/clear` deletes all flow history and timeline events.
+  Operator only; it is destructive, writes a `flows_cleared` audit event, and
+  deliberately does not run `VACUUM` so it returns quickly.
 
 ### Alerts filters
 

@@ -4,7 +4,7 @@
 
 ```bash
 python run.py                 # creates .venv, installs deps, starts demo
-python -m pytest -q           # 264 tests + 2 skipped in this tree
+python -m pytest -q           # 266 tests + 2 skipped in this tree
 ```
 
 Python 3.12+ is supported; CI runs Ubuntu and Windows. No Docker or frontend
