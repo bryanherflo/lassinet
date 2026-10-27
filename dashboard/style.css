@@ -725,6 +725,7 @@ body.read-only [data-alert-flows] { display: inline-block !important; }
 .flows-stats { flex: 1 1 220px; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .flows-refresh.danger { color: var(--red); border-color: #f8514955; }
 .flows-refresh.danger:hover { color: #fff; background: var(--red-dim); border-color: var(--red); }
+.flows-footer [hidden] { display: none !important; }
 .flows-toolbar[hidden], .flows-layout[hidden], .flows-top[hidden],
 .flows-timeline[hidden] { display: none !important; }
 

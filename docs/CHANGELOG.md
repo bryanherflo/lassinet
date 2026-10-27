@@ -2,6 +2,15 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.19.1] - 2026-10-27
+
+### Fixed
+- Test suite now points the global flow store at a throwaway SQLite DB before importing app, so pytest cannot write synthetic demo flows into the operator history.
+- Timeline alert markers keep the newest alerts instead of accidentally slicing the oldest tail of the newest-first deque.
+- The PWA cache reset no longer reloads a fresh browser that has no worker/cache; export CSV is hidden on Top talkers/Timeline tabs.
+- Flow DB is created with owner-only permissions on POSIX.
+- UI cache is v=3.62; 264 tests.
+
 ## [0.19.0] - 2026-10-27
 
 ### Added

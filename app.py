@@ -1475,7 +1475,7 @@ def flow_timeline(minutes: int = 60) -> dict:
         if at >= since and rule.get("action") == "BLOCK":
             blocks.append({"at": at, "ip": rule.get("ip"),
                            "reason": rule.get("reason")})
-    return {"ok": True, **data, "alerts": alerts[-100:], "blocks": blocks[-100:]}
+    return {"ok": True, **data, "alerts": alerts, "blocks": blocks}
 
 
 @app.get("/api/flows/stats")

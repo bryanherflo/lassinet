@@ -1021,6 +1021,7 @@ function setFlowsView(view) {
   if (flowsTop) flowsTop.hidden = flowsView !== "top";
   if (flowsTimeline) flowsTimeline.hidden = flowsView !== "timeline";
   if (flowsScope) flowsScope.hidden = flowsView !== "flows" || !flowsContext;
+  if (flowsExport) flowsExport.hidden = flowsView !== "flows";
   if (flowsView === "top") fetchTop();
   else if (flowsView === "timeline") fetchTimeline();
   else fetchFlows();
@@ -1187,7 +1188,9 @@ function clearFlowHistory() {
     if (flowDetail) flowDetail.replaceChildren(flowEl("p", "section-note", "Select a flow to see which devices are communicating and what the detector decided."));
     renderFlowList([], 0, true);
     refreshFlowStats();
-    fetchFlows();
+    if (flowsView === "top") fetchTop();
+    else if (flowsView === "timeline") fetchTimeline();
+    else fetchFlows();
   }).catch(function() { toast("Could not clear flow history", "error"); });
 }
 function openFlows(opts) {

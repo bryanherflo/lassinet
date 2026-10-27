@@ -16,8 +16,18 @@ never probe the machine's real LAN.
 
 import os
 import sys
+import tempfile
+from pathlib import Path
 
 import pytest
+
+# app.py constructs the flow history store at import time. Point it at a
+# throwaway SQLite file before any test module imports app, or a plain
+# `pytest` run writes synthetic demo flows into the operator's real DB.
+os.environ.setdefault(
+    "LASSI_FLOW_DB",
+    str(Path(tempfile.mkdtemp(prefix="lassinet-test-flows-")) / "flows.db"),
+)
 
 
 @pytest.fixture(scope="session", autouse=True)

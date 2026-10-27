@@ -136,6 +136,10 @@ class FlowStore:
                 if column not in existing:
                     conn.execute(f"ALTER TABLE flows ADD COLUMN {column} {ddl}")
             conn.commit()
+            try:
+                os.chmod(self.path, 0o600)   # flow metadata is sensitive
+            except OSError:
+                pass
             self._conn = conn
             self.prune(force=True)
         except (OSError, sqlite3.Error):

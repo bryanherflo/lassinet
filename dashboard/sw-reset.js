@@ -8,7 +8,7 @@
  * reloads once. The marker makes it a no-op after the first successful load.
  */
 (function () {
-  var VERSION = "3.61";
+  var VERSION = "3.62";
   var MARK = "lassi.cache-reset." + VERSION;
   var RELOADED = "lassi.cache-reload." + VERSION;
   try {
@@ -41,5 +41,9 @@
       }));
     }
   } catch (e) { /* ignore */ }
-  Promise.all(tasks).then(reloadOnce, reloadOnce);
+  Promise.all(tasks).then(function (results) {
+    // Fresh browser, no worker and no caches: nothing to clear, no reload.
+    if (!tasks.length) return;
+    reloadOnce();
+  }, reloadOnce);
 })();

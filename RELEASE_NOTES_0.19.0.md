@@ -32,7 +32,7 @@ response console for small LANs.
 - Old flow rows simply have empty protocol/port samples.
 - Alert/block pins on the timeline come from the current in-memory history;
   flow buckets come from SQLite and cover the selected window.
-- UI cache is **`v=3.61`**. Existing PWA caches are cleared once by
+- UI cache is **`v=3.62`**. Existing PWA caches are cleared once by
   `sw-reset.js`.
 
 ## Tests
