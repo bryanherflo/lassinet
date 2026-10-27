@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent
 VENV = ROOT / ".venv"
 REQUIREMENTS = ROOT / "requirements.txt"
 MARKER = VENV / ".lassinet-requirements"
-MIN_PYTHON = (3, 10)
+MIN_PYTHON = (3, 12)
 TESTED_PYTHON = (3, 12)
 FIREWALLS = ("mock", "windows", "nftables", "opnsense", "pfsense")
 

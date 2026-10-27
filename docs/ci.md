@@ -24,8 +24,8 @@ There is **one** automation in this repository: the GitHub Actions workflow
 
 | Step | Command | Why it exists |
 |---|---|---|
-| `actions/checkout@v4` | – | gets the commit |
-| `actions/setup-python@v5` | Python **3.12**, `cache: pip` | pinned interpreter, pip cache keyed on `requirements*.txt` |
+| `actions/checkout@v7` | – | gets the commit |
+| `actions/setup-python@v7` | Python **3.12**, `cache: pip` | pinned interpreter, pip cache keyed on `requirements*.txt` |
 | Install dependencies | `pip install -r requirements.txt -r requirements-dev.txt` | runtime + `pytest`/`httpx` |
 | Train model (smoke) | `python ml-training/train_model.py` | proves the training script runs end to end and produces `models/demo_model.pkl` + `models/demo_metrics.json` from scratch (the same path the demo mode uses at startup) |
 | Run tests | `python -m pytest tests/ -q` | the full suite: unit tests, API smoke tests (FastAPI `TestClient`) and static dashboard-asset checks |
@@ -134,8 +134,8 @@ exactly what happened with the nftables chain name in 0.4.21.
    windows:
      runs-on: windows-latest
      steps:
-       - uses: actions/checkout@v4
-       - uses: actions/setup-python@v5
+       - uses: actions/checkout@v7
+       - uses: actions/setup-python@v7
          with: { python-version: "3.12", cache: pip }
        - run: pip install -r requirements.txt -r requirements-dev.txt
        - run: python -m pytest tests/ -q

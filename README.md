@@ -15,7 +15,7 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 [![CI](https://github.com/bryanherflo/lassinet/actions/workflows/ci.yml/badge.svg)](https://github.com/bryanherflo/lassinet/actions/workflows/ci.yml)
 [![mode](https://img.shields.io/badge/mode-demo%20%2F%20live-8b5cf6)](#)
 
-[![Python](https://img.shields.io/badge/Python-3.11%2B-blue)](#)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-blue)](#)
 [![FastAPI](https://img.shields.io/badge/FastAPI-✓-009485)](#)
 [![scikit-learn](https://img.shields.io/badge/ML-scikit--learn-f89939)](#)
 
@@ -86,7 +86,7 @@ LassiNet is built for people who want to see and act on **their own LAN**, not f
 
 ## 🚀 Quickstart
 
-> Python 3.10–3.12 recommended (CI runs 3.12); on newer versions some dependencies may not have wheels yet.
+> Python 3.12+ (CI runs 3.12; newer may work but only 3.12 is the tested target). Dependencies are pinned to the versions exercised by CI.
 
 **The simple way.** Clone and run:
 

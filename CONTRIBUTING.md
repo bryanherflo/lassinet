@@ -7,7 +7,7 @@ python run.py                 # creates .venv, installs deps, starts demo
 python -m pytest -q           # 252 tests + 2 skipped in this tree
 ```
 
-Python 3.10+ is supported; CI runs Ubuntu and Windows. No Docker or frontend
+Python 3.12+ is supported; CI runs Ubuntu and Windows. No Docker or frontend
 build step is required.
 
 ## Ground rules

@@ -2,6 +2,17 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.16.1] — 2026-10-27
+
+### Dependencies
+- Pin exact tested versions: FastAPI 0.151.0, uvicorn 0.54.0, Pydantic
+  2.14.1, numpy 2.5.4, scikit-learn 1.9.1, joblib 1.6.0, python-dotenv
+  1.2.4; dev pytest 9.1.1 / httpx 0.28.1.
+- numpy 2.5 requires Python 3.12+, so the minimum is now 3.12 (CI target).
+- GitHub Actions checkout/setup-python updated to v7.
+- Dependabot groups minor/patch pip and Actions updates instead of opening
+  many separate PRs.
+
 ## [0.16.0] — 2026-10-26
 
 ### Added
