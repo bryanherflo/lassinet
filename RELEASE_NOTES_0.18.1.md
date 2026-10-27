@@ -15,6 +15,8 @@ This is a bug-fix release for the 0.18 flow-history UI.
   tree, but the viewport is not yanked around.
 - **Traffic particles at the map edge** are skipped when their coordinates are
   outside the canvas.
+- **Audit-log archive order** now uses the numeric rotation suffix, so many
+  rotations in one second replay correctly (`-10` after `-9`).
 - UI cache is **`v=3.58`**.
 
 ## Notes

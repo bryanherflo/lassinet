@@ -6,6 +6,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -99,17 +100,34 @@ def _load_last_hash() -> str:
 def log_export_files() -> list[Path]:
     """Every file that belongs to the record, oldest first (archives + active)."""
     try:
-        # Sort by mtime: two rotations in the same second get names ending in
-        # "-2"/"-3", which do not sort chronologically by name.
         files = sorted(
             _log_archive_dir().glob(f"{EVENTS_LOG_PATH.stem}-*{EVENTS_LOG_PATH.suffix}"),
-            key=lambda path: (path.stat().st_mtime, path.name),
+            key=_archive_order,
         )
     except OSError:
         files = []
     if EVENTS_LOG_PATH.exists():
         files.append(EVENTS_LOG_PATH)
     return files
+
+
+_ARCHIVE_RE = re.compile(r"^(?P<stamp>\d{8}-\d{6})(?:-(?P<seq>\d+))?$")
+
+
+def _archive_order(path: Path) -> tuple[str, int]:
+    """Chronological order for `stem-YYYYMMDD-HHMMSS[-N].jsonl`.
+
+    Sorting by mtime is not enough on filesystems with coarse timestamps: a
+    busy sensor can rotate more than nine times in one second, and plain name
+    sorting then puts `-10` before `-2`, breaking the hash-chain replay. Use
+    the timestamp plus the numeric collision suffix instead.
+    """
+    prefix = EVENTS_LOG_PATH.stem + "-"
+    name = path.stem[len(prefix):] if path.stem.startswith(prefix) else path.stem
+    match = _ARCHIVE_RE.match(name)
+    if match:
+        return (match.group("stamp"), int(match.group("seq") or "1"))
+    return (name, 1)
 
 
 def _rotate_log_locked() -> None:
@@ -151,7 +169,7 @@ def _prune_logs_locked() -> None:
             return
         archives = sorted(
             archive.glob(f"{EVENTS_LOG_PATH.stem}-*{EVENTS_LOG_PATH.suffix}"),
-            key=lambda path: (path.stat().st_mtime, path.name),
+            key=_archive_order,
         )
         if LOG_RETENTION_DAYS > 0:
             cutoff = time.time() - LOG_RETENTION_DAYS * 86400

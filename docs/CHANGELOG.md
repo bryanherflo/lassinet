@@ -6,8 +6,9 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
 ### Fixed
 - Map viewport no longer re-fits on every topology reflow; fit once on first load, then only on demand (R/Fit).
-- PWA service worker is network-first for the static shell; a one-time sw-reset.js clears old workers/caches so a new Flows button cannot be paired with an old pp.js.
+- PWA service worker is network-first for the static shell; a one-time sw-reset.js clears old workers/caches so a new Flows button cannot be paired with an old app.js.
 - Traffic particles outside the map canvas are skipped.
+- Audit-log archive replay now orders the numeric rotation suffix (-2, -10, ...) correctly, so more than nine rotations in one second still verify.
 - UI cache is v=3.58; 260 tests.
 
 ## [0.18.0] - 2026-10-27
@@ -328,7 +329,8 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
   speakers, Raspberry Pi as SBC and Hikvision/Dahua as cameras; those devices now stay
   ?/Unknown unless the **name**, an **open port** or an **mDNS/SSDP** answer proves it.
   The vendor is still shown as context in the tooltip and the picker
-  (endor: D-Link) but never decides the type: D-Link builds routers, cameras and
+  (
+endor: D-Link) but never decides the type: D-Link builds routers, cameras and
   switches, so an OUI cannot choose among them honestly.
 
 ## [0.8.0] — 2026-10-25
@@ -370,9 +372,12 @@ All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 ## [0.7.2] — 2026-10-25
 
 ### Fixed
-- **The other Tuya OUI was still unknown**: the operator has devices on both c:3c:d7
+- **The other Tuya OUI was still unknown**: the operator has devices on both 
+c:3c:d7
   and 4c:a9:19 (both Tuya Smart), so one stayed ?. The verified Tuya prefixes
-  (c:3c:d7, 4c:a9:19, 8:80:55, 8:dd:bc, c:67:1f, 50:8a:06, 50:8b:b9,
+  (
+c:3c:d7, 4c:a9:19, 8:80:55, 8:dd:bc, 
+c:67:1f, 50:8a:06, 50:8b:b9,
   68:57:2d, 70:89:76) now classify as IoT.
 
 ## [0.7.1] — 2026-10-25
