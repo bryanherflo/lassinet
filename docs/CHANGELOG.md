@@ -2,6 +2,21 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.19.0] - 2026-10-27
+
+### Added
+- **Top talkers:** combined source+destination ranking by bytes and flows for 15 min, 1 h and 24 h, with current device role/type context.
+- **Per-device flows:** a Flows button in the map selection bar opens the history filtered to that IP.
+- **Alert → flows:** a Flows button on each alert card opens the same source/destination in a ±5 min window.
+- **CSV export:** `/api/flows/export.csv` exports up to 100,000 filtered rows (formula-safe cells).
+- **Real protocols/ports:** live capture records protocols plus sampled source/destination ports per flow; the detail panel shows them.
+- **Timeline:** flow buckets with alert and block markers (1 h / 6 h / 24 h).
+- **History usage:** rows, DB size, retention/cap and an operator-only clear button.
+
+### Changed
+- Alert and block records carry epoch `at` for time correlation; restored alerts keep it.
+- UI cache is v=3.61; 264 tests.
+
 ## [0.18.1] - 2026-10-27
 
 ### Fixed

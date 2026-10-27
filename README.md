@@ -41,7 +41,8 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 | 📜 **System log + audit trail** | Colour-coded event stream in UI **and** local JSONL log (`logs/events.jsonl`, tail via `GET /api/logs?limit=N`). The Firewall panel shows active blocks only; the log keeps the full BLOCK/ALLOW history. |
 | ⚡ **Zero config** | `python run.py` → open `http://localhost:8000`. It creates `.venv`, installs the dependencies once and starts the app. Demo mode needs no privileges. Map library bundled locally — no CDN, no build step, works offline. |
 | 📱 **Android PWA** | Install the dashboard from Chrome on Android; the sensor stays on the PC. The full install prompt and offline shell need HTTPS (Tailscale/Cloudflare Tunnel); plain LAN HTTP gives a home-screen shortcut. See [docs/android.md](docs/android.md). |
-| 🧾 **Flow history** | Completed flows are stored as metadata in local SQLite (`data/flows.db`). Open **Flows** (`F`) to search the recent history and select a flow to see source/destination devices, packets, bytes, duration, ports, SYN ratio and the detector verdict. Payloads are never stored. |
+| 📊 **Flow analytics** | Top talkers by bytes/flows (15 min / 1 h / 24 h), CSV export of the current filters, per-flow protocols and ports, alert→flows ±5 min, a flows/alerts/blocks timeline, and history usage with a guarded clear button. |
+| 🧾 **Flow history** | Completed flows are stored as metadata in local SQLite (`data/flows.db`). Open **Flows** (`F`) to search, filter, export CSV and select a flow to see source/destination devices, protocols, source/destination ports, packets, bytes, duration, SYN and verdict. Use the **Flows** button on a device or alert; payloads are never stored. |
 | 🎯 **Intuitive UX** | Click a device for the **action bar** (Block/Unblock, Actions…), right-click for the **trust menu**, double-click to rename, and press `?`/`H` for the built-in Help. Confirmed attackers escalate on the map; `B` blocks, `R` refits, `M` minimizes, `L` toggles the legend, `D` hides the traffic dots, `Esc` closes. Responsive layout, live-stream indicator, reduced-motion support. |
 
 ## 🔐 Hardening & operations
@@ -82,7 +83,7 @@ Never send tokens, `.env`, real captures or customer data. See
 - [Benchmarks and honest limits](docs/benchmarks.md)
 - [Case study template](docs/case-study-template.md)
 - [Roadmap (free/open source)](docs/ROADMAP.md)
-- [Release notes](RELEASE_NOTES_0.18.1.md)
+- [Release notes](RELEASE_NOTES_0.19.0.md)
 - [Support](SUPPORT.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
@@ -93,7 +94,7 @@ LassiNet is built for people who want to see and act on **their own LAN**, not f
 
 - **Students and juniors** in systems, networking or security (ASIR, CFGS, master's, self-taught) who want the full path from discovery to detection to a real block.
 - **Homelabbers and home-network owners** who want visibility of their devices and a safe way to practise OPNsense, nftables or Windows Firewall.
-- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 260 tests plus CI make it easy to use in class.
+- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 264 tests plus CI make it easy to use in class.
 - **Recruiters and interviewers** reviewing a portfolio project that covers Python, FastAPI, scapy, ML, firewalls, tests, CI and documentation.
 
 ## 🚫 Who it is not for
@@ -145,7 +146,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (260 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (264 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt

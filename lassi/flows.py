@@ -49,6 +49,16 @@ def _enabled() -> bool:
     return raw not in ("0", "false", "no", "off")
 
 
+def _ports_text(value: Any) -> str:
+    """Serialize a protocol/port sample without allowing unbounded DB text."""
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple, set, frozenset)):
+        items = sorted({str(item) for item in value}, key=lambda item: (len(item), item))
+        return ",".join(items)[:512]
+    return str(value).strip()[:512]
+
+
 class FlowStore:
     """Thread-safe SQLite store for completed flow records."""
 
@@ -98,6 +108,9 @@ class FlowStore:
                     bytes INTEGER NOT NULL DEFAULT 0,
                     duration REAL NOT NULL DEFAULT 0,
                     dst_port_count INTEGER NOT NULL DEFAULT 0,
+                    protocols TEXT NOT NULL DEFAULT '',
+                    src_ports TEXT NOT NULL DEFAULT '',
+                    dst_ports TEXT NOT NULL DEFAULT '',
                     syn_ratio REAL NOT NULL DEFAULT 0,
                     mean_pkt_size REAL NOT NULL DEFAULT 0,
                     pkt_rate REAL NOT NULL DEFAULT 0,
@@ -113,6 +126,15 @@ class FlowStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flows_src ON flows(src)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flows_dst ON flows(dst)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flows_attack ON flows(attack)")
+            # Existing 0.18 databases predate the protocol/port columns.
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(flows)")}
+            for column, ddl in (
+                ("protocols", "TEXT NOT NULL DEFAULT ''"),
+                ("src_ports", "TEXT NOT NULL DEFAULT ''"),
+                ("dst_ports", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE flows ADD COLUMN {column} {ddl}")
             conn.commit()
             self._conn = conn
             self.prune(force=True)
@@ -167,6 +189,9 @@ class FlowStore:
                 self._integer(record.get("bytes")),
                 self._number(record.get("duration")),
                 self._integer(record.get("dst_port_count")),
+                _ports_text(record.get("protocols")),
+                _ports_text(record.get("src_ports")),
+                _ports_text(record.get("dst_ports")),
                 self._number(record.get("syn_ratio")),
                 self._number(record.get("mean_pkt_size")),
                 self._number(record.get("pkt_rate")),
@@ -184,9 +209,10 @@ class FlowStore:
                     """
                     INSERT INTO flows
                         (ts, src, dst, src_name, dst_name, pkts, bytes, duration,
-                         dst_port_count, syn_ratio, mean_pkt_size, pkt_rate, attack,
-                         severity, confidence, engine, mode)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         dst_port_count, protocols, src_ports, dst_ports, syn_ratio,
+                         mean_pkt_size, pkt_rate, attack, severity, confidence,
+                         engine, mode)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     rows,
                 )
@@ -242,6 +268,51 @@ class FlowStore:
         return deleted
 
     # ---- reads ---------------------------------------------------------
+    def _filter(
+        self,
+        *,
+        src: str = "",
+        dst: str = "",
+        attack: str = "",
+        kind: str = "",
+        q: str = "",
+        device: str = "",
+        since: float = 0.0,
+        until: float = 0.0,
+    ) -> tuple[str, list[Any]]:
+        where: list[str] = []
+        params: list[Any] = []
+        if src.strip():
+            where.append("src = ?")
+            params.append(src.strip())
+        if dst.strip():
+            where.append("dst = ?")
+            params.append(dst.strip())
+        if device.strip():
+            where.append("(src = ? OR dst = ?)")
+            params.extend([device.strip(), device.strip()])
+        if attack.strip():
+            where.append("attack = ?")
+            params.append(attack.strip())
+        if kind.strip().lower() == "attack":
+            where.append("attack != 'benign'")
+        elif kind.strip().lower() == "benign":
+            where.append("attack = 'benign'")
+        if since > 0:
+            where.append("ts >= ?")
+            params.append(float(since))
+        if until > 0:
+            where.append("ts <= ?")
+            params.append(float(until))
+        if q.strip():
+            needle = f"%{q.strip()}%"
+            where.append(
+                "(src LIKE ? OR dst LIKE ? OR src_name LIKE ? OR dst_name LIKE ? "
+                "OR attack LIKE ?)"
+            )
+            params.extend([needle] * 5)
+        return ((" WHERE " + " AND ".join(where)) if where else ""), params
+
     def query(
         self,
         *,
@@ -252,34 +323,16 @@ class FlowStore:
         attack: str = "",
         kind: str = "",
         q: str = "",
+        device: str = "",
+        since: float = 0.0,
+        until: float = 0.0,
     ) -> dict[str, Any]:
         if not self.enabled or self._conn is None:
             return {"items": [], "total": 0, "limit": limit, "offset": offset}
         limit = min(max(int(limit), 1), 500)
         offset = max(int(offset), 0)
-        where: list[str] = []
-        params: list[Any] = []
-        if src.strip():
-            where.append("src = ?")
-            params.append(src.strip())
-        if dst.strip():
-            where.append("dst = ?")
-            params.append(dst.strip())
-        if attack.strip():
-            where.append("attack = ?")
-            params.append(attack.strip())
-        if kind.strip().lower() == "attack":
-            where.append("attack != 'benign'")
-        elif kind.strip().lower() == "benign":
-            where.append("attack = 'benign'")
-        if q.strip():
-            needle = f"%{q.strip()}%"
-            where.append(
-                "(src LIKE ? OR dst LIKE ? OR src_name LIKE ? OR dst_name LIKE ? "
-                "OR attack LIKE ?)"
-            )
-            params.extend([needle] * 5)
-        clause = (" WHERE " + " AND ".join(where)) if where else ""
+        clause, params = self._filter(src=src, dst=dst, attack=attack, kind=kind,
+                                      q=q, device=device, since=since, until=until)
         try:
             with self._lock:
                 total = self._conn.execute(
@@ -311,6 +364,171 @@ class FlowStore:
         except (sqlite3.Error, TypeError, ValueError):
             return None
         return dict(row) if row is not None else None
+
+    def export_rows(
+        self,
+        *,
+        limit: int = 100_000,
+        src: str = "",
+        dst: str = "",
+        attack: str = "",
+        kind: str = "",
+        q: str = "",
+        device: str = "",
+        since: float = 0.0,
+        until: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        """Read a bounded row set for CSV export (same filters as query())."""
+        if not self.enabled or self._conn is None:
+            return []
+        limit = min(max(int(limit), 1), 100_000)
+        clause, params = self._filter(src=src, dst=dst, attack=attack, kind=kind,
+                                      q=q, device=device, since=since, until=until)
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT * FROM flows" + clause +
+                    " ORDER BY ts DESC, id DESC LIMIT ?", [*params, limit]
+                ).fetchall()
+        except sqlite3.Error:
+            log.warning("could not export flow history", exc_info=True)
+            return []
+        return [dict(row) for row in rows]
+
+    def top_talkers(self, *, window_seconds: int = 3600,
+                    limit: int = 10, until: float | None = None) -> dict[str, Any]:
+        """Rank devices by combined source+destination bytes/flows."""
+        if not self.enabled or self._conn is None:
+            return {"items": [], "since": 0, "until": 0, "window_seconds": window_seconds}
+        window_seconds = min(max(int(window_seconds), 60), 7 * 86400)
+        until = time.time() if until is None else float(until)
+        since = until - window_seconds
+        limit = min(max(int(limit), 1), 50)
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    """
+                    SELECT ip, MAX(name) AS name,
+                           SUM(bytes) AS bytes, COUNT(*) AS flows
+                    FROM (
+                        SELECT src AS ip,
+                               COALESCE(NULLIF(src_name, ''), src) AS name, bytes
+                        FROM flows
+                        WHERE ts >= ? AND ts <= ?
+                          AND src NOT IN ('0.0.0.0', '255.255.255.255')
+                        UNION ALL
+                        SELECT dst AS ip,
+                               COALESCE(NULLIF(dst_name, ''), dst) AS name, bytes
+                        FROM flows
+                        WHERE ts >= ? AND ts <= ?
+                          AND dst NOT IN ('0.0.0.0', '255.255.255.255')
+                    )
+                    GROUP BY ip
+                    ORDER BY bytes DESC, flows DESC
+                    LIMIT ?
+                    """,
+                    (since, until, since, until, limit),
+                ).fetchall()
+        except sqlite3.Error:
+            log.warning("could not compute top talkers", exc_info=True)
+            return {"items": [], "since": since, "until": until,
+                    "window_seconds": window_seconds}
+        return {
+            "items": [dict(row) for row in rows],
+            "since": since,
+            "until": until,
+            "window_seconds": window_seconds,
+        }
+
+    def timeline(self, *, minutes: int = 60,
+                 until: float | None = None) -> dict[str, Any]:
+        """Minute buckets of flow count/bytes for the activity chart."""
+        if not self.enabled or self._conn is None:
+            return {"buckets": [], "since": 0, "until": 0, "minutes": minutes}
+        minutes = min(max(int(minutes), 5), 1440)
+        until = time.time() if until is None else float(until)
+        end_bucket = int(until // 60) * 60
+        start_bucket = end_bucket - (minutes - 1) * 60
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    """
+                    SELECT CAST(ts / 60 AS INTEGER) * 60 AS bucket,
+                           COUNT(*) AS flows, SUM(bytes) AS bytes
+                    FROM flows
+                    WHERE ts >= ? AND ts <= ?
+                    GROUP BY bucket
+                    """,
+                    (start_bucket, until),
+                ).fetchall()
+        except sqlite3.Error:
+            log.warning("could not compute flow timeline", exc_info=True)
+            return {"buckets": [], "since": start_bucket, "until": until,
+                    "minutes": minutes}
+        found = {int(row["bucket"]): row for row in rows}
+        buckets = []
+        for bucket in range(start_bucket, end_bucket + 60, 60):
+            row = found.get(bucket)
+            flows = int(row["flows"]) if row else 0
+            buckets.append({
+                "bucket": bucket,
+                "flows": flows,
+                "bytes": int(row["bytes"] or 0) if row else 0,
+                "flows_per_sec": round(flows / 60.0, 2),
+            })
+        return {"buckets": buckets, "since": start_bucket, "until": until,
+                "minutes": minutes}
+
+    def stats(self) -> dict[str, Any]:
+        """Rows, age and on-disk size for the history footer."""
+        result = {
+            "enabled": bool(self.enabled),
+            "rows": 0,
+            "oldest": None,
+            "newest": None,
+            "db_bytes": 0,
+            "retention_hours": self.retention_hours,
+            "max_rows": self.max_rows,
+        }
+        if not self.enabled or self._conn is None:
+            return result
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT COUNT(*) AS rows, MIN(ts) AS oldest, MAX(ts) AS newest "
+                    "FROM flows"
+                ).fetchone()
+            result.update({
+                "rows": int(row["rows"] or 0),
+                "oldest": row["oldest"],
+                "newest": row["newest"],
+            })
+        except sqlite3.Error:
+            log.warning("could not read flow history stats", exc_info=True)
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                result["db_bytes"] += Path(str(self.path) + suffix).stat().st_size
+            except OSError:
+                pass
+        return result
+
+    def clear(self) -> int:
+        """Delete every stored flow row; used by the operator UI/API."""
+        if not self.enabled or self._conn is None:
+            return 0
+        try:
+            with self._lock:
+                cursor = self._conn.execute("DELETE FROM flows")
+                deleted = cursor.rowcount if cursor.rowcount > 0 else 0
+                self._conn.commit()
+                try:
+                    self._conn.execute("VACUUM")
+                except sqlite3.Error:
+                    pass
+        except sqlite3.Error:
+            log.warning("could not clear flow history", exc_info=True)
+            return 0
+        return deleted
 
     def count(self) -> int:
         if not self.enabled or self._conn is None:
@@ -357,6 +575,9 @@ def flow_record(
         "bytes": flow.get("bytes", 0),
         "duration": flow.get("duration", 0),
         "dst_port_count": flow.get("dst_port_count", 0),
+        "protocols": flow.get("protocols", ""),
+        "src_ports": flow.get("src_ports", ""),
+        "dst_ports": flow.get("dst_ports", ""),
         "syn_ratio": flow.get("syn_ratio", 0),
         "mean_pkt_size": flow.get("mean_pkt_size", 0),
         "pkt_rate": flow.get("pkt_rate", 0),

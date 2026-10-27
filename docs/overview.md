@@ -330,8 +330,10 @@ the infrastructure:
 * **Flow history**: completed 10-second flows are stored as metadata in local
   SQLite (`data/flows.db`); the `Flows` dialog shows endpoints, device
   role/type when currently on the map, counters and verdict. Search plus
-  All/Benign/Attacks filters; no payloads. Retention defaults to 72 h and
-  1,000,000 rows (`LASSI_FLOW_*`).
+  All/Benign/Attacks filters; no payloads. **Top talkers** (15 min/1 h/24 h),
+  CSV export, protocols/ports, alert→flows (±5 min), a flows/alerts/blocks
+  timeline and history usage/clear are in the same dialog. Retention defaults
+  to 72 h and 1,000,000 rows (`LASSI_FLOW_*`).
 * **Freshness**: a LAN device not heard from for `LASSI_DEVICE_TTL` (30 min by
   default) leaves the map, so the device count and the topology keep
   describing the network in front of you instead of growing a graveyard of
@@ -347,8 +349,13 @@ the infrastructure:
 |---|---|
 | `GET /health` | Liveness: mode, model loaded, firewall provider, flows, capture state and error |
 | `GET /api/state` | Full snapshot: nodes, edges, alerts, rules, traffic, statistics, trusted/protected lists |
-| `GET /api/flows` | Paginated flow-history metadata (`src`, `dst`, `attack`, `kind`, `q`) |
+| `GET /api/flows` | Paginated flow-history metadata (`src`, `dst`, `device`, `attack`, `kind`, `q`, `since`, `until`) |
 | `GET /api/flows/{id}` | One stored flow record; 404 after retention |
+| `GET /api/flows/top` | Top devices by bytes/flows (`window`) |
+| `GET /api/flows/timeline` | Flow buckets plus alert/block markers |
+| `GET /api/flows/stats` | Rows, DB size, retention and cap |
+| `GET /api/flows/export.csv` | Filtered CSV export |
+| `POST /api/flows/clear` | Delete flow history (operator only) |
 | `GET /api/logs?limit=N` | Tail of the local JSONL event log (bounded to the last megabyte) |
 | `GET /api/logs/export` | Download the complete JSONL event log with a timestamped filename (`application/x-ndjson`); rotated archives are concatenated in order |
 | `GET /api/logs/verify` | Verify the JSONL hash chain (`ok`, `verified`, `checked`, `legacy`, `error`) |
@@ -409,7 +416,7 @@ port-scan detection comes from the rule engine (`syn_ratio > 0.9` and
 
 ## 9. Tests and CI
 
-* **260 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
+* **264 tests**: unit tests, API smoke tests (FastAPI `TestClient`) and
   static dashboard-asset checks (JS syntax with Node, cache-buster
   consistency, no-CDN rule, HTML/JS id wiring).
 * Two tests need an **elevated shell** (they touch the real Windows

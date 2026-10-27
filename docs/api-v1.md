@@ -23,6 +23,10 @@ All v1 responses carry `X-LassiNet-API: 1`.
 | `GET /api/v1/alerts` | Paginated feed; filters below |
 | `GET /api/v1/devices` | Paginated nodes; `role`, `kind`, `q` |
 | `GET /api/v1/flows` | Paginated flow-history metadata; filters below |
+| `GET /api/v1/flows/top` | Top devices by bytes/flows; `window` seconds |
+| `GET /api/v1/flows/timeline` | Flow buckets plus alert/block markers; `minutes` |
+| `GET /api/v1/flows/stats` | Rows, DB size, retention and cap |
+| `GET /api/v1/flows/export.csv` | Filtered CSV export (up to 100,000 rows) |
 | `GET /api/v1/flows/{id}` | One flow record (404 when expired/unknown) |
 | `GET /api/v1/rules` | Active firewall blocks |
 | `GET /api/v1/sensors` | Alert counts/last seen per remote sensor |
@@ -43,6 +47,8 @@ flow metadata is returned; packet payloads are never stored.
 | `src` / `dst` | Exact source or destination IP |
 | `attack` | Exact verdict (`benign`, `port_scan`, `brute_force`, …) |
 | `kind` | `benign` or `attack` |
+| `device` | Either source or destination IP |
+| `since` / `until` | Epoch-second window (both optional) |
 | `q` | Substring over IPs, names and verdict |
 
 ```json
@@ -55,6 +61,7 @@ flow metadata is returned; packet payloads are never stored.
       "src_name": "laptop", "dst_name": "203.0.113.5",
       "pkts": 20, "bytes": 3200, "duration": 10.2,
       "dst_port_count": 2, "syn_ratio": 0.15,
+      "protocols": "TCP", "src_ports": "54321", "dst_ports": "443,8443",
       "mean_pkt_size": 160.0, "pkt_rate": 1.96,
       "attack": "benign", "severity": "low", "confidence": 0.92,
       "engine": "ml", "mode": "live (passive)"
@@ -67,6 +74,18 @@ flow metadata is returned; packet payloads are never stored.
 The dashboard uses `/api/flows` (same contract). Retention is controlled by
 `LASSI_FLOW_RETENTION_HOURS` (72 h), `LASSI_FLOW_MAX_ROWS` (1,000,000) and
 `LASSI_FLOW_DB` (`data/flows.db`).
+
+### Top talkers, timeline and usage
+
+- `GET /api/v1/flows/top?window=900|3600|86400&limit=10`.
+- `GET /api/v1/flows/timeline?minutes=60` returns minute buckets plus
+  `alerts`/`blocks` markers from the current in-memory history.
+- `GET /api/v1/flows/stats` returns `rows`, `oldest`, `newest`, `db_bytes`,
+  `retention_hours`, `max_rows` and `enabled`.
+- `GET /api/v1/flows/export.csv` accepts the same filters and returns a CSV
+  attachment capped at 100,000 rows.
+- `POST /api/v1/flows/clear` deletes all flow history. Operator only; it is
+  destructive and writes a `flows_cleared` audit event.
 
 ### Alerts filters
 

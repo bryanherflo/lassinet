@@ -679,6 +679,21 @@ class State:
                 return str(host["hostname"])
         return canonical
 
+    def host_meta(self, ip: str) -> dict[str, Any]:
+        """Current display name/role/type for an IP, without a full snapshot."""
+        canonical = canonical_ip(ip)
+        if canonical is None:
+            return {"name": str(ip or ""), "role": "", "kind": ""}
+        with self._lock:
+            host = self.hosts.get(canonical)
+            if not host:
+                return {"name": canonical, "role": "", "kind": ""}
+            return {
+                "name": str(host.get("hostname") or canonical),
+                "role": str(host.get("role") or ""),
+                "kind": str(host.get("kind") or ""),
+            }
+
     def touch_edge(self, a: str, b: str) -> None:
         if a == b:  # self-flows are noise, never an edge
             return
@@ -740,6 +755,7 @@ class State:
         complete record.
         """
         alert["time"] = alert.get("time") or time.strftime("%H:%M:%S")
+        alert["at"] = float(alert.get("at") or time.time())
         alert["count"] = int(alert.get("count") or 1)
         alert.setdefault("mode", self.mode)    # demo history must never look live
         key = _alert_key(alert)
@@ -752,6 +768,7 @@ class State:
                     and now - self._last_alert_at <= ALERT_DEDUPE_WINDOW):
                 newest["count"] = int(newest.get("count") or 1) + 1
                 newest["time"] = alert["time"]
+                newest["at"] = alert["at"]
                 collapsed = True
             else:
                 self.alerts.appendleft(alert)
@@ -847,6 +864,7 @@ class State:
                      if k not in ("event", "ts", "collapsed", "prev", "hash")}
             alert["count"] = int(alert.get("count") or 1)
             alert.setdefault("time", str(event.get("ts") or "")[11:19])
+            alert.setdefault("at", event_at)
             last_ts = str(event.get("ts") or last_ts)
             if event.get("collapsed") and cards and _alert_key(cards[0]) == _alert_key(alert):
                 cards[0]["count"] = alert["count"]
@@ -1000,6 +1018,7 @@ class State:
             self.stats["blocks_total"] += 1
             self.rules.append({"ip": canonical, "action": "BLOCK", "reason": reason,
                                "time": time.strftime("%H:%M:%S"),
+                               "at": time.time(),
                                "expires_at": expires_at or None})
         audit({"event": "block", "ip": canonical, "reason": reason, "actor": actor,
                "ttl_s": ttl, "expires_at": expires_at or None})
@@ -1020,7 +1039,8 @@ class State:
             if host is not None:
                 host["blocked"] = False
             self.rules.append({"ip": canonical, "action": "ALLOW", "reason": reason,
-                               "time": time.strftime("%H:%M:%S")})
+                               "time": time.strftime("%H:%M:%S"),
+                               "at": time.time()})
         audit({"event": "unblock", "ip": canonical, "reason": reason, "actor": actor})
         return True
 

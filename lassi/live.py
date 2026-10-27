@@ -301,24 +301,40 @@ class LiveCapture:
         # One malformed packet must not kill the whole sniffing thread: scapy
         # propagates exceptions from `prn` out of sniff().
         try:
-            from scapy.layers.inet import IP, TCP
+            from scapy.layers.inet import ICMP, IP, TCP, UDP
             if IP not in pkt:
                 return
             ip = pkt[IP]
+            proto = "IP"
+            sport = dport = None
             if TCP in pkt:
-                probe = pkt[TCP]
-                if _is_own_probe(ip.src, int(probe.dport), int(probe.flags),
+                t = pkt[TCP]
+                sport, dport = int(t.sport), int(t.dport)
+                proto = "TCP"
+                if _is_own_probe(ip.src, dport, int(t.flags),
                                  getattr(self, "own_ips", None)):
                     return
+            elif UDP in pkt:
+                u = pkt[UDP]
+                sport, dport = int(u.sport), int(u.dport)
+                proto = "UDP"
+            elif ICMP in pkt:
+                proto = "ICMP"
             key = (ip.src, ip.dst)
             f = self.flows.setdefault(key, {
                 "src": ip.src, "dst": ip.dst, "pkts": 0, "bytes": 0,
                 "syn_ratio": 0.0, "syns": 0, "syn_bits": 0, "flag_bits": 0,
                 "ack_or_synacks": 0,
                 "dst_port_count": 0, "_ports": set(), "start": time.time(),
+                "protocols": set(), "src_ports": set(), "dst_ports": set(),
             })
             f["pkts"] += 1
             f["bytes"] += len(ip)
+            f["protocols"].add(proto)
+            if sport is not None:
+                f["src_ports"].add(sport)
+            if dport is not None:
+                f["dst_ports"].add(dport)
             if TCP in pkt:
                 t = pkt[TCP]
                 f["_ports"].add(int(t.dport))
@@ -380,6 +396,9 @@ class LiveCapture:
                 # CICIDS convention: SYN flag count over the flow's flag bits.
                 "syn_ratio_cicids": round(f.get("syn_bits", 0) / max(f.get("flag_bits", 0), 1), 4),
                 "dst_port_count": f["dst_port_count"],
+                "protocols": ",".join(sorted(f.get("protocols") or [])) or "IP",
+                "src_ports": ",".join(str(p) for p in sorted(f.get("src_ports") or [])[:32]),
+                "dst_ports": ",".join(str(p) for p in sorted(f.get("dst_ports") or [])[:32]),
                 "mean_pkt_size": round(f["bytes"] / total, 1),
                 "pkt_rate": round(f["pkts"] / elapsed, 2),
                 "label": None,

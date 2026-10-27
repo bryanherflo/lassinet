@@ -14,8 +14,10 @@ Modes (env vars):
 """
 
 import asyncio
+import csv
 import hashlib
 import hmac
+import io
 import ipaddress
 import json
 import logging
@@ -31,10 +33,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1376,10 +1378,12 @@ def get_state(request: Request) -> JSONResponse:
 @app.get("/api/flows")
 def get_flows(limit: int = 100, offset: int = 0, src: str = "",
               dst: str = "", attack: str = "", kind: str = "",
-              q: str = "") -> dict:
+              q: str = "", device: str = "", since: float = 0.0,
+              until: float = 0.0) -> dict:
     """Newest completed flow records, metadata only (no packet payloads)."""
     result = flow_store.query(limit=limit, offset=offset, src=src, dst=dst,
-                              attack=attack, kind=kind, q=q)
+                              attack=attack, kind=kind, q=q, device=device,
+                              since=since, until=until)
     return {
         "ok": True,
         "flows": result["items"],
@@ -1388,6 +1392,106 @@ def get_flows(limit: int = 100, offset: int = 0, src: str = "",
         "offset": result["offset"],
         "enabled": bool(flow_store.enabled),
     }
+
+
+def _flow_csv_cell(value: Any) -> Any:
+    """Keep a CSV safe to open in spreadsheet programs."""
+    if not isinstance(value, str):
+        return value
+    return "'" + value if value[:1] in ("=", "+", "-", "@") else value
+
+
+@app.get("/api/flows/export.csv", response_model=None)
+def export_flows_csv(limit: int = 100_000, src: str = "", dst: str = "",
+                     attack: str = "", kind: str = "", q: str = "",
+                     device: str = "", since: float = 0.0,
+                     until: float = 0.0) -> Response:
+    rows = flow_store.export_rows(limit=limit, src=src, dst=dst, attack=attack,
+                                  kind=kind, q=q, device=device, since=since,
+                                  until=until)
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow([
+        "id", "timestamp_utc", "src", "dst", "src_name", "dst_name",
+        "protocols", "src_ports", "dst_ports", "packets", "bytes",
+        "duration_s", "dst_port_count", "syn_ratio", "mean_pkt_size",
+        "pkt_rate", "attack", "severity", "confidence", "engine", "mode",
+    ])
+    for row in rows:
+        try:
+            stamp = datetime.fromtimestamp(float(row.get("ts") or 0),
+                                           timezone.utc).isoformat(timespec="seconds")
+        except (TypeError, ValueError, OSError):
+            stamp = ""
+        writer.writerow([
+            row.get("id"), stamp, _flow_csv_cell(row.get("src")),
+            _flow_csv_cell(row.get("dst")), _flow_csv_cell(row.get("src_name")),
+            _flow_csv_cell(row.get("dst_name")), _flow_csv_cell(row.get("protocols")),
+            _flow_csv_cell(row.get("src_ports")), _flow_csv_cell(row.get("dst_ports")),
+            row.get("pkts"), row.get("bytes"), row.get("duration"),
+            row.get("dst_port_count"), row.get("syn_ratio"),
+            row.get("mean_pkt_size"), row.get("pkt_rate"),
+            _flow_csv_cell(row.get("attack")), _flow_csv_cell(row.get("severity")),
+            row.get("confidence"), _flow_csv_cell(row.get("engine")),
+            _flow_csv_cell(row.get("mode")),
+        ])
+    return Response(
+        content=out.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="lassinet-flows.csv"'},
+    )
+
+
+@app.get("/api/flows/top")
+def top_talkers(window: int = 3600, limit: int = 10,
+                until: float = 0.0) -> dict:
+    data = flow_store.top_talkers(window_seconds=window, limit=limit,
+                                  until=until or None)
+    for item in data["items"]:
+        meta = state.host_meta(str(item.get("ip") or ""))
+        if meta["name"] and meta["name"] != item.get("ip"):
+            item["name"] = meta["name"]
+        item["role"] = meta["role"]
+        item["kind"] = meta["kind"]
+    return {"ok": True, **data}
+
+
+@app.get("/api/flows/timeline")
+def flow_timeline(minutes: int = 60) -> dict:
+    data = flow_store.timeline(minutes=minutes)
+    since = float(data.get("since") or 0)
+    alerts = []
+    for alert in state.alerts:
+        at = float(alert.get("at") or 0)
+        if at >= since:
+            alerts.append({
+                "at": at, "attack": alert.get("attack"),
+                "src": alert.get("src"), "dst": alert.get("dst"),
+                "severity": alert.get("severity"), "count": alert.get("count", 1),
+            })
+    blocks = []
+    for rule in state.rules:
+        at = float(rule.get("at") or 0)
+        if at >= since and rule.get("action") == "BLOCK":
+            blocks.append({"at": at, "ip": rule.get("ip"),
+                           "reason": rule.get("reason")})
+    return {"ok": True, **data, "alerts": alerts[-100:], "blocks": blocks[-100:]}
+
+
+@app.get("/api/flows/stats")
+def flow_stats() -> dict:
+    return {"ok": True, **flow_store.stats()}
+
+
+@app.post("/api/flows/clear", response_model=None)
+def clear_flows(request: Request) -> dict | JSONResponse:
+    if getattr(request.state, "role", "operator") != "operator":
+        return JSONResponse({"ok": False, "error": "operator token required"},
+                            status_code=403)
+    deleted = flow_store.clear()
+    audit({"event": "flows_cleared", "deleted": deleted,
+           "actor": _actor(request)})
+    return {"ok": True, "deleted": deleted}
 
 
 @app.get("/api/flows/{flow_id}")
@@ -1402,9 +1506,42 @@ def get_flow(flow_id: int) -> JSONResponse:
 @app.get("/api/v1/flows")
 def api_v1_flows(limit: int = 100, offset: int = 0, src: str = "",
                  dst: str = "", attack: str = "", kind: str = "",
-                 q: str = "") -> dict:
+                 q: str = "", device: str = "", since: float = 0.0,
+                 until: float = 0.0) -> dict:
     return get_flows(limit=limit, offset=offset, src=src, dst=dst,
-                     attack=attack, kind=kind, q=q)
+                     attack=attack, kind=kind, q=q, device=device,
+                     since=since, until=until)
+
+
+@app.get("/api/v1/flows/export.csv", response_model=None)
+def api_v1_export_flows(limit: int = 100_000, src: str = "", dst: str = "",
+                        attack: str = "", kind: str = "", q: str = "",
+                        device: str = "", since: float = 0.0,
+                        until: float = 0.0) -> Response:
+    return export_flows_csv(limit=limit, src=src, dst=dst, attack=attack,
+                            kind=kind, q=q, device=device, since=since,
+                            until=until)
+
+
+@app.get("/api/v1/flows/top")
+def api_v1_top_talkers(window: int = 3600, limit: int = 10,
+                       until: float = 0.0) -> dict:
+    return top_talkers(window=window, limit=limit, until=until)
+
+
+@app.get("/api/v1/flows/timeline")
+def api_v1_flow_timeline(minutes: int = 60) -> dict:
+    return flow_timeline(minutes=minutes)
+
+
+@app.get("/api/v1/flows/stats")
+def api_v1_flow_stats() -> dict:
+    return flow_stats()
+
+
+@app.post("/api/v1/flows/clear", response_model=None)
+def api_v1_clear_flows(request: Request) -> dict | JSONResponse:
+    return clear_flows(request)
 
 
 @app.get("/api/v1/flows/{flow_id}")

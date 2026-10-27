@@ -301,11 +301,15 @@ Detalles y comandos: [docs/android.md](docs/android.md).
 
 LassiNet guarda un **historial de flows** en SQLite: `data/flows.db`. Un flow es una conversación agregada entre una IP origen y una IP destino durante una ventana de 10 s; se guardan contadores y veredicto, **nunca el contenido de los paquetes**.
 
-Pulsa **Flows** en la cabecera o la tecla `F`. En el panel puedes:
+Pulsa **Flows** en la cabecera o la tecla `F`. El panel tiene tres vistas:
 
-- buscar por IP, nombre o veredicto;
-- filtrar con **All / Benign / Attacks**;
-- seleccionar un flow para ver origen, destino, rol/tipo de cada dispositivo, paquetes, bytes, duración, puertos destino distintos, ratio SYN, packet rate y el veredicto del detector.
+- **Flows**: buscar por IP, nombre o veredicto; filtrar con **All / Benign / Attacks**; seleccionar un flow para ver origen, destino, rol/tipo de cada dispositivo, protocolos, puertos, paquetes, bytes, duración, SYN, packet rate y veredicto.
+  - El botón **Flows** de la barra de un dispositivo abre el historial filtrado por esa IP.
+  - El botón **Flows** de una alerta abre el mismo origen/destino en una ventana de **±5 minutos**.
+- **Top talkers**: ranking de dispositivos por bytes y flows en **15 min / 1 h / 24 h**. Al pulsar un dispositivo vuelves a sus flows.
+- **Timeline**: flows por minuto con marcas de alertas y bloqueos para **1 h / 6 h / 24 h**.
+
+En el pie tienes el uso del historial —filas, tamaño de la base, retención y tope—, **Export CSV** con los filtros actuales y **Clear history** (solo operator; pide confirmación y queda auditado).
 
 Los dispositivos que ya no están en el mapa salen como `not on current map`. Retención por defecto: **72 h** y **1.000.000 filas**; se puede ajustar con `LASSI_FLOW_RETENTION_HOURS`, `LASSI_FLOW_MAX_ROWS`, `LASSI_FLOW_DB` o desactivar con `LASSI_FLOW_HISTORY=0`. El historial contiene IPs y nombres: trátalo como dato sensible y no lo subas al repositorio.
 

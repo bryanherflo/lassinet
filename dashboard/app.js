@@ -755,12 +755,30 @@ var flowsList = document.getElementById("flows-list");
 var flowDetail = document.getElementById("flow-detail");
 var flowsMeta = document.getElementById("flows-meta");
 var flowsFilter = document.getElementById("flows-filter");
+var flowsScope = document.getElementById("flows-scope");
+var flowsToolbar = document.getElementById("flows-toolbar");
+var flowsLayout = document.getElementById("flows-layout");
+var flowsTop = document.getElementById("flows-top");
+var flowsTopList = document.getElementById("flows-top-list");
+var flowsTopMeta = document.getElementById("flows-top-meta");
+var flowsTimeline = document.getElementById("flows-timeline");
+var timelineCanvas = document.getElementById("timeline-canvas");
+var timelineMeta = document.getElementById("timeline-meta");
+var flowsStats = document.getElementById("flows-stats");
+var flowsExport = document.getElementById("flows-export");
+var flowsClear = document.getElementById("flows-clear");
+var flowsTabs = flowsOverlay ? flowsOverlay.querySelectorAll("[data-flows-view]") : [];
 var flowsReturnFocus = null;
 var flowsTimer = null;
 var flowsFilterTimer = null;
 var flowsCache = [];
 var flowsSelectedId = null;
 var flowsKind = "";
+var flowsContext = null;
+var flowsView = "flows";
+var flowsTopWindow = 900;
+var timelineMinutes = 60;
+var timelineData = null;
 
 function flowEl(tag, cls, text) {
   var el = document.createElement(tag);
@@ -800,6 +818,9 @@ function flowLabel(flow, side) {
   var ip = flow[side];
   return name && name !== ip ? name : (ip || "—");
 }
+function flowPorts(value) {
+  return value ? String(value) : "—";
+}
 function flowRow(flow) {
   var row = flowEl("button", "flow-row");
   row.type = "button";
@@ -815,6 +836,7 @@ function flowRow(flow) {
   sub.appendChild(flowEl("span", "", flowClock(flow.ts)));
   sub.appendChild(flowEl("span", "", (Number(flow.pkts) || 0) + " pkts"));
   sub.appendChild(flowEl("span", "", flowBytes(flow.bytes)));
+  if (flow.protocols) sub.appendChild(flowEl("span", "", flow.protocols));
   var verdict = flowEl("span", "flow-verdict " + flowVerdictClass(flow), flowAttackName(flow.attack));
   sub.appendChild(verdict);
   row.appendChild(sub);
@@ -885,7 +907,10 @@ function renderFlowDetail(flow) {
     ["Packets", Number(flow.pkts) || 0],
     ["Bytes", flowBytes(flow.bytes)],
     ["Duration", flowDuration(flow.duration)],
-    ["Dest. ports", Number(flow.dst_port_count) || 0],
+    ["Protocols", flowPorts(flow.protocols)],
+    ["Source ports", flowPorts(flow.src_ports)],
+    ["Destination ports", flowPorts(flow.dst_ports)],
+    ["Distinct dest. ports", Number(flow.dst_port_count) || 0],
     ["SYN ratio", ((Number(flow.syn_ratio) || 0) * 100).toFixed(1) + "%"],
     ["Packet rate", (Number(flow.pkt_rate) || 0).toFixed(2) + "/s"],
   ].forEach(function(item) {
@@ -926,13 +951,22 @@ function selectFlow(id) {
     if (data && data.flow) renderFlowDetail(data.flow);
   }).catch(function() { toast("Could not load that flow", "error"); });
 }
+function flowsParams() {
+  var params = new URLSearchParams({ limit: "200" });
+  var ctx = flowsContext || {};
+  if (flowsFilter && flowsFilter.value.trim()) params.set("q", flowsFilter.value.trim());
+  if (flowsKind) params.set("kind", flowsKind);
+  if (ctx.src) params.set("src", ctx.src);
+  if (ctx.dst) params.set("dst", ctx.dst);
+  if (ctx.device) params.set("device", ctx.device);
+  if (ctx.since) params.set("since", String(ctx.since));
+  if (ctx.until) params.set("until", String(ctx.until));
+  return params;
+}
 async function fetchFlows() {
-  if (!flowsOverlay || flowsOverlay.hidden) return;
-  var q = flowsFilter ? flowsFilter.value.trim() : "";
-  var url = "/api/flows?limit=200" + (q ? "&q=" + encodeURIComponent(q) : "") +
-    (flowsKind ? "&kind=" + encodeURIComponent(flowsKind) : "");
+  if (!flowsOverlay || flowsOverlay.hidden || flowsView !== "flows") return;
   try {
-    var res = await fetch(url);
+    var res = await fetch("/api/flows?" + flowsParams().toString());
     if (res.status === 401) { closeFlows(false); showAuth(); return; }
     if (!res.ok) throw new Error("HTTP " + res.status);
     var data = await res.json();
@@ -943,21 +977,238 @@ async function fetchFlows() {
     if (flowsMeta) flowsMeta.textContent = "unavailable";
   }
 }
-function openFlows() {
-  if (!flowsOverlay || !flowsOverlay.hidden) return;
-  flowsReturnFocus = document.activeElement;
-  flowsOverlay.hidden = false;
-  document.body.classList.add("modal-open");
-  if (flowsFilter) flowsFilter.value = "";
+function renderFlowScope() {
+  if (!flowsScope) return;
+  flowsScope.replaceChildren();
+  if (!flowsContext || !flowsContext.label) {
+    flowsScope.hidden = true;
+    return;
+  }
+  flowsScope.hidden = false;
+  flowsScope.appendChild(flowEl("span", "", "Scope: "));
+  flowsScope.appendChild(flowEl("b", "", flowsContext.label));
+  var clear = flowEl("button", "", "Clear");
+  clear.type = "button";
+  clear.addEventListener("click", function() { applyFlowsContext(null); });
+  flowsScope.appendChild(clear);
+}
+function applyFlowsContext(ctx) {
+  flowsContext = ctx || null;
+  if (flowsFilter) flowsFilter.value = (ctx && ctx.q) || "";
   flowsKind = "";
-  var kindButtons = flowsOverlay.querySelectorAll(".flows-chip");
-  for (var i = 0; i < kindButtons.length; i++) kindButtons[i].classList.toggle("active", !kindButtons[i].dataset.flowKind);
-  if (flowsMeta) flowsMeta.textContent = "loading…";
-  if (flowDetail) flowDetail.replaceChildren(flowEl("p", "section-note", "Select a flow to see which devices are communicating and what the detector decided."));
-  flowsSelectedId = null;
+  var kindButtons = flowsOverlay ? flowsOverlay.querySelectorAll("[data-flow-kind]") : [];
+  for (var i = 0; i < kindButtons.length; i++) {
+    kindButtons[i].classList.toggle("active", !kindButtons[i].dataset.flowKind);
+  }
+  renderFlowScope();
+  setFlowsView("flows");
   fetchFlows();
+}
+function showFlowsForDevice(ip) {
+  var ctx = { device: ip, label: "device " + ip };
+  if (!flowsOverlay || flowsOverlay.hidden) openFlows(ctx);
+  else applyFlowsContext(ctx);
+}
+function setFlowsView(view) {
+  flowsView = view || "flows";
+  for (var i = 0; i < flowsTabs.length; i++) {
+    var active = flowsTabs[i].dataset.flowsView === flowsView;
+    flowsTabs[i].classList.toggle("active", active);
+    flowsTabs[i].setAttribute("aria-selected", active ? "true" : "false");
+  }
+  if (flowsToolbar) flowsToolbar.hidden = flowsView !== "flows";
+  if (flowsLayout) flowsLayout.hidden = flowsView !== "flows";
+  if (flowsTop) flowsTop.hidden = flowsView !== "top";
+  if (flowsTimeline) flowsTimeline.hidden = flowsView !== "timeline";
+  if (flowsScope) flowsScope.hidden = flowsView !== "flows" || !flowsContext;
+  if (flowsView === "top") fetchTop();
+  else if (flowsView === "timeline") fetchTimeline();
+  else fetchFlows();
+}
+async function fetchTop() {
+  if (!flowsOverlay || flowsOverlay.hidden || flowsView !== "top") return;
+  try {
+    var res = await fetch("/api/flows/top?window=" + flowsTopWindow + "&limit=15");
+    if (res.status === 401) { closeFlows(false); showAuth(); return; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var data = await res.json();
+    renderTop(data.items || [], data.window_seconds || flowsTopWindow);
+  } catch (e) {
+    if (flowsTopMeta) flowsTopMeta.textContent = "unavailable";
+  }
+}
+function renderTop(items, windowSeconds) {
+  if (!flowsTopList) return;
+  flowsTopList.replaceChildren();
+  if (flowsTopMeta) {
+    var label = windowSeconds >= 86400 ? "24 h" : windowSeconds >= 3600 ? "1 h" : "15 min";
+    flowsTopMeta.textContent = (items.length ? items.length + " devices" : "no flows") + " · " + label;
+  }
+  if (!items.length) {
+    flowsTopList.appendChild(flowEl("p", "flows-top-empty", "No flow history in this window."));
+    return;
+  }
+  var maxBytes = Math.max.apply(null, items.map(function(item) { return Number(item.bytes) || 0; })) || 1;
+  items.forEach(function(item, index) {
+    var row = flowEl("button", "top-row");
+    row.type = "button";
+    row.dataset.ip = item.ip;
+    row.title = "Show flows for " + item.ip;
+    row.appendChild(flowEl("span", "top-rank", String(index + 1)));
+    var name = flowEl("span", "top-name", item.name || item.ip);
+    if (item.name && item.name !== item.ip) {
+      var code = flowEl("code", "", item.ip);
+      name.appendChild(code);
+    }
+    var roleText = [item.role, item.kind].filter(function(value, index, arr) {
+      return value && value !== "unknown" && arr.indexOf(value) === index;
+    }).join(" · ");
+    if (roleText) name.appendChild(flowEl("small", "top-role", roleText));
+    row.appendChild(name);
+    var bar = flowEl("span", "top-bar");
+    var fill = flowEl("i");
+    fill.style.width = Math.max(2, ((Number(item.bytes) || 0) / maxBytes) * 100) + "%";
+    bar.appendChild(fill);
+    row.appendChild(bar);
+    var stats = flowEl("span", "top-stats", flowBytes(item.bytes));
+    stats.appendChild(flowEl("span", "", (Number(item.flows) || 0) + " flows"));
+    row.appendChild(stats);
+    row.addEventListener("click", function() { showFlowsForDevice(item.ip); });
+    flowsTopList.appendChild(row);
+  });
+}
+async function fetchTimeline() {
+  if (!flowsOverlay || flowsOverlay.hidden || flowsView !== "timeline") return;
+  try {
+    var res = await fetch("/api/flows/timeline?minutes=" + timelineMinutes);
+    if (res.status === 401) { closeFlows(false); showAuth(); return; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var data = await res.json();
+    timelineData = data;
+    drawTimeline(data);
+  } catch (e) {
+    if (timelineMeta) timelineMeta.textContent = "unavailable";
+    drawTimeline({ buckets: [], alerts: [], blocks: [] });
+  }
+}
+function drawTimeline(data) {
+  if (!timelineCanvas) return;
+  var rect = timelineCanvas.getBoundingClientRect();
+  if (rect.width < 20 || rect.height < 20) return;
+  var dpr = window.devicePixelRatio || 1;
+  timelineCanvas.width = Math.floor(rect.width * dpr);
+  timelineCanvas.height = Math.floor(rect.height * dpr);
+  var ctx = timelineCanvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  var w = rect.width, h = rect.height;
+  ctx.clearRect(0, 0, w, h);
+  var left = 38, right = 12, top = 14, bottom = 25;
+  var plotW = Math.max(1, w - left - right), plotH = Math.max(1, h - top - bottom);
+  var buckets = (data && data.buckets) || [];
+  var alerts = (data && data.alerts) || [];
+  var blocks = (data && data.blocks) || [];
+  var until = Number(data && data.until) || (Date.now() / 1000);
+  var since = Number(data && data.since) || (until - 3600);
+  var maxFlows = Math.max(1, Math.max.apply(null, buckets.map(function(b) { return Number(b.flows) || 0; })));
+  ctx.strokeStyle = "#30363d"; ctx.fillStyle = "#6e7681";
+  ctx.font = "10px monospace"; ctx.lineWidth = 1;
+  for (var i = 0; i <= 3; i++) {
+    var y = top + (plotH * i / 3);
+    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(left + plotW, y); ctx.stroke();
+    ctx.fillText(String(Math.round(maxFlows * (3 - i) / 3)), 4, y + 3);
+  }
+  if (!buckets.length) {
+    ctx.fillText("No flow buckets in this window", left + 8, top + plotH / 2);
+    if (timelineMeta) timelineMeta.textContent = "no data";
+    return;
+  }
+  var bw = plotW / buckets.length;
+  buckets.forEach(function(bucket, index) {
+    var value = Number(bucket.flows) || 0;
+    var barH = (value / maxFlows) * plotH;
+    var x = left + index * bw + Math.max(1, bw * 0.12);
+    var bwPix = Math.max(1, bw * 0.76);
+    ctx.fillStyle = "#58a6ff88";
+    ctx.fillRect(x, top + plotH - barH, bwPix, barH);
+  });
+  function marker(at, color, label) {
+    var ratio = (Number(at) - since) / Math.max(1, until - since);
+    if (!isFinite(ratio) || ratio < 0 || ratio > 1) return;
+    var x = left + ratio * plotW;
+    ctx.strokeStyle = color; ctx.fillStyle = color;
+    ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, top + plotH); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, top + 5, 2.5, 0, Math.PI * 2); ctx.fill();
+  }
+  alerts.forEach(function(item) { marker(item.at, "#f85149"); });
+  blocks.forEach(function(item) { marker(item.at, "#d29922"); });
+  ctx.fillStyle = "#6e7681"; ctx.font = "10px monospace";
+  ctx.fillText(flowClock(since), left, h - 6);
+  ctx.fillText(flowClock(until), left + plotW - 42, h - 6);
+  if (timelineMeta) {
+    timelineMeta.textContent = buckets.reduce(function(sum, b) { return sum + (Number(b.flows) || 0); }, 0) +
+      " flows · " + alerts.length + " alerts · " + blocks.length + " blocks";
+  }
+}
+async function refreshFlowStats() {
+  if (!flowsStats) return;
+  try {
+    var res = await fetch("/api/flows/stats");
+    if (res.status === 401) return;
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var data = await res.json();
+    var retention = data.retention_hours ? data.retention_hours + " h" : "no age limit";
+    var cap = data.max_rows ? data.max_rows.toLocaleString() + " rows" : "no row cap";
+    flowsStats.textContent = (data.rows || 0).toLocaleString() + " rows · " +
+      flowBytes(data.db_bytes || 0) + " · " + retention + " / " + cap;
+    if (flowsClear) flowsClear.hidden = authRole !== "operator";
+  } catch (e) { /* keep the last value */ }
+}
+function exportFlows() {
+  var params = flowsParams();
+  params.delete("limit");
+  window.location.href = "/api/flows/export.csv?" + params.toString();
+}
+function clearFlowHistory() {
+  if (authRole !== "operator") { toast("Read-only token: this action needs the operator token", "error"); return; }
+  if (!window.confirm("Delete all stored flow history? This cannot be undone.")) return;
+  fetch("/api/flows/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: "{}"
+  }).then(function(res) {
+    if (res.status === 401) { closeFlows(false); showAuth(); return null; }
+    if (res.status === 403) { toast("Operator token required", "error"); return null; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }).then(function(data) {
+    if (!data) return;
+    toast("Flow history cleared (" + (data.deleted || 0) + " rows)", "ok");
+    flowsSelectedId = null;
+    if (flowDetail) flowDetail.replaceChildren(flowEl("p", "section-note", "Select a flow to see which devices are communicating and what the detector decided."));
+    renderFlowList([], 0, true);
+    refreshFlowStats();
+    fetchFlows();
+  }).catch(function() { toast("Could not clear flow history", "error"); });
+}
+function openFlows(opts) {
+  if (!flowsOverlay) return;
+  var wasHidden = flowsOverlay.hidden;
+  if (wasHidden) flowsReturnFocus = document.activeElement;
+  if (flowsOverlay.hidden) flowsOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  flowsContext = opts || null;
+  flowsView = "flows";
+  setFlowsView("flows");
+  applyFlowsContext(opts || null);
+  refreshFlowStats();
   if (flowsTimer) clearInterval(flowsTimer);
-  flowsTimer = setInterval(fetchFlows, 5000);
+  flowsTimer = setInterval(function() {
+    if (!flowsOverlay || flowsOverlay.hidden) return;
+    if (flowsView === "flows") fetchFlows();
+    else if (flowsView === "top") fetchTop();
+    else if (flowsView === "timeline") fetchTimeline();
+    refreshFlowStats();
+  }, 5000);
   var close = document.getElementById("flows-close");
   if (close) close.focus();
 }
@@ -969,8 +1220,10 @@ function closeFlows(restoreFocus) {
   document.body.classList.remove("modal-open");
   if (restoreFocus !== false && flowsReturnFocus && flowsReturnFocus.focus) flowsReturnFocus.focus();
   flowsReturnFocus = null;
+  flowsContext = null;
+  timelineData = null;
 }
-document.getElementById("btn-flows").onclick = openFlows;
+document.getElementById("btn-flows").onclick = function() { openFlows(); };
 document.getElementById("flows-close").onclick = function() { closeFlows(true); };
 if (flowsOverlay) {
   flowsOverlay.addEventListener("click", function(ev) { if (ev.target === flowsOverlay) closeFlows(true); });
@@ -984,14 +1237,24 @@ if (flowsOverlay) {
     else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
   });
 }
+for (var fti = 0; fti < flowsTabs.length; fti++) {
+  flowsTabs[fti].addEventListener("click", function() { setFlowsView(this.dataset.flowsView); });
+}
 if (flowsFilter) {
   flowsFilter.addEventListener("input", function() {
     if (flowsFilterTimer) clearTimeout(flowsFilterTimer);
     flowsFilterTimer = setTimeout(fetchFlows, 250);
   });
 }
-document.getElementById("flows-refresh").onclick = fetchFlows;
-var flowKindButtons = flowsOverlay ? flowsOverlay.querySelectorAll(".flows-chip") : [];
+document.getElementById("flows-refresh").onclick = function() {
+  if (flowsView === "flows") fetchFlows();
+  else if (flowsView === "top") fetchTop();
+  else fetchTimeline();
+  refreshFlowStats();
+};
+if (flowsExport) flowsExport.onclick = exportFlows;
+if (flowsClear) flowsClear.onclick = clearFlowHistory;
+var flowKindButtons = flowsOverlay ? flowsOverlay.querySelectorAll("[data-flow-kind]") : [];
 for (var fki = 0; fki < flowKindButtons.length; fki++) {
   flowKindButtons[fki].addEventListener("click", function() {
     flowsKind = this.dataset.flowKind || "";
@@ -1001,6 +1264,31 @@ for (var fki = 0; fki < flowKindButtons.length; fki++) {
     fetchFlows();
   });
 }
+var topWindowButtons = flowsOverlay ? flowsOverlay.querySelectorAll("[data-top-window]") : [];
+for (var twi = 0; twi < topWindowButtons.length; twi++) {
+  topWindowButtons[twi].addEventListener("click", function() {
+    flowsTopWindow = Number(this.dataset.topWindow) || 900;
+    for (var j = 0; j < topWindowButtons.length; j++) {
+      topWindowButtons[j].classList.toggle("active", topWindowButtons[j] === this);
+    }
+    fetchTop();
+  });
+}
+var timelineWindowButtons = flowsOverlay ? flowsOverlay.querySelectorAll("[data-timeline-minutes]") : [];
+for (var tmi = 0; tmi < timelineWindowButtons.length; tmi++) {
+  timelineWindowButtons[tmi].addEventListener("click", function() {
+    timelineMinutes = Number(this.dataset.timelineMinutes) || 60;
+    for (var j = 0; j < timelineWindowButtons.length; j++) {
+      timelineWindowButtons[j].classList.toggle("active", timelineWindowButtons[j] === this);
+    }
+    fetchTimeline();
+  });
+}
+window.addEventListener("resize", function() {
+  if (timelineData && flowsView === "timeline" && flowsOverlay && !flowsOverlay.hidden) drawTimeline(timelineData);
+});
+var selFlowsButton = document.getElementById("sel-flows");
+if (selFlowsButton) selFlowsButton.onclick = function() { if (selectedNodeIp) showFlowsForDevice(selectedNodeIp); };
 
 function toast(msg, kind) {
   var wrap = document.getElementById("toast-container");
@@ -1322,12 +1610,16 @@ function fmtAlert(a) {
       '<button type="button" class="act triage" data-triage="note" data-triage-key="' + esc(triageKey) + '">Note</button>' +
       '</div>';
   }
+  var alertAt = Number(a.at) || (Date.now() / 1000);
+  var flowAction = '<button type="button" class="act triage" data-alert-flows="1" data-src="' +
+    esc(a.src) + '" data-dst="' + esc(a.dst) + '" data-at="' + esc(alertAt) +
+    '" title="Show flows between these endpoints around this alert">Flows</button>';
   div.className = "alert " + sev;
   div.innerHTML = '<div class="top"><b>' + icon + " " + esc(attackLabel(a.attack)) + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span>' + repeats + dismiss + '</div>' +
     '<div class="meta">' + esc(a.time) + " \u00B7 " + esc(a.src) + " \u2192 " + esc(a.dst) +
     ' \u00B7 engine: <span class="engine-tag ' + engineClass + '">' + engineName + '</span> \u00B7 conf: ' + esc(a.confidence) +
     (a.sensor ? ' \u00B7 <span class="sensor-tag">sensor ' + esc(a.sensor) + '</span>' : '') + '</div>' +
-    action + triageMeta + triageActions;
+    action + flowAction + triageMeta + triageActions;
   return div;
 }
 function fmtRule(r) {
@@ -1445,6 +1737,16 @@ document.getElementById("alerts").addEventListener("click", onAction); document.
 function onAction(ev) {
   var dismiss = ev.target.closest("[data-dismiss]");
   if (dismiss) { dismissAlert(dismiss.dataset.dismiss); return; }
+  var alertFlows = ev.target.closest("[data-alert-flows]");
+  if (alertFlows) {
+    var at = Number(alertFlows.dataset.at) || (Date.now() / 1000);
+    openFlows({
+      src: alertFlows.dataset.src, dst: alertFlows.dataset.dst,
+      since: at - 300, until: at + 300,
+      label: "Alert " + alertFlows.dataset.src + " \u2192 " + alertFlows.dataset.dst + " \u00B1 5 min",
+    });
+    return;
+  }
   var triage = ev.target.closest("[data-triage]");
   if (triage) {
     triageAction(triage.dataset.triage, triage.dataset.triageKey);
