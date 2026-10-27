@@ -140,9 +140,11 @@ def test_timeline_backfill_from_audit_log(tmp_path, monkeypatch) -> None:
     store = FlowStore(tmp_path / "flows.db")
     log = tmp_path / "events.jsonl"
     lines = [
+        {"ts": "2026-10-27T11:59:59+00:00", "event": "startup",
+         "mode": "demo (simulated)"},
         {"ts": "2026-10-27T12:00:00+00:00", "event": "alert",
          "src": "192.168.0.10", "dst": "203.0.113.5", "attack": "port_scan",
-         "severity": "high", "count": 1, "mode": "demo"},
+         "severity": "high", "count": 1, "mode": "demo (simulated)"},
         {"ts": "2026-10-27T12:00:01+00:00", "event": "block",
          "ip": "203.0.113.5", "reason": "test", "actor": "operator"},
     ]

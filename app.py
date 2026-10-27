@@ -360,6 +360,7 @@ def _backfill_timeline_events() -> None:
     retention = flow_store.retention_hours
     cutoff = time.time() - retention * 3600 if retention > 0 else 0.0
     events: list[dict] = []
+    run_mode = ""
     for path in log_export_files():
         try:
             with path.open("r", encoding="utf-8", errors="replace") as fh:
@@ -372,6 +373,9 @@ def _backfill_timeline_events() -> None:
                         continue
                     if not isinstance(event, dict):
                         continue
+                    if event.get("event") == "startup":
+                        run_mode = str(event.get("mode") or "")
+                        continue
                     if event.get("event") not in ("alert", "block"):
                         continue
                     try:
@@ -379,6 +383,12 @@ def _backfill_timeline_events() -> None:
                     except (TypeError, ValueError):
                         continue
                     if cutoff and at < cutoff:
+                        continue
+                    event_mode = str(event.get("mode") or run_mode or "")
+                    if state.mode.startswith("live"):
+                        if not event_mode.startswith("live"):
+                            continue
+                    elif event_mode != state.mode:
                         continue
                     if event.get("event") == "alert":
                         events.append({
@@ -388,14 +398,14 @@ def _backfill_timeline_events() -> None:
                             "attack": event.get("attack", ""),
                             "severity": event.get("severity", ""),
                             "count": event.get("count", 1),
-                            "mode": event.get("mode", state.mode),
+                            "mode": event_mode,
                         })
                     else:
                         events.append({
                             "ts": at, "kind": "block",
                             "ip": event.get("ip", ""),
                             "reason": event.get("reason", ""),
-                            "mode": state.mode,
+                            "mode": event_mode,
                         })
                     if len(events) >= 50_000:
                         break

@@ -2,6 +2,12 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.20.1] - 2026-10-27
+
+### Fixed
+- Timeline backfill is scoped to the current mode family: live includes prior live sessions, while demo/synthetic sessions are skipped. Block events inherit the mode of the preceding startup event, preventing fake demo blocks from appearing in a live 24 h timeline.
+- 266 tests; UI cache remains v=3.63.
+
 ## [0.20.0] - 2026-10-27
 
 ### Added
