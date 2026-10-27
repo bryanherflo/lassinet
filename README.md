@@ -82,7 +82,7 @@ Never send tokens, `.env`, real captures or customer data. See
 - [Benchmarks and honest limits](docs/benchmarks.md)
 - [Case study template](docs/case-study-template.md)
 - [Roadmap (free/open source)](docs/ROADMAP.md)
-- [Release notes](RELEASE_NOTES_0.18.0.md)
+- [Release notes](RELEASE_NOTES_0.18.1.md)
 - [Support](SUPPORT.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)

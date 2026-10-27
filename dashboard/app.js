@@ -242,6 +242,7 @@ function syncTrusted(data) {
 
 var ROLE_ORDER = { server: 0, workstation: 1, iot: 2, printer: 3, attacker: 4, unknown: 5, trusted: 6 };
 var layoutKey = "";
+var layoutInitialized = false;
 var kindFilter = null;   // "camera", "unknown", ... or null (show everything)
 var firewallProvider = "mock", firewallReady = false, firewallNote = "";
 var serverFeatures = new Set();   // capabilities advertised by /api/state
@@ -519,7 +520,7 @@ function spawnAmbient(now) {
 
 function nodeDOMPos(ip) { var p = network.getPositions([ip])[ip]; return p ? network.canvasToDOM(p) : null; }
 
-function drawGlowDot(x, y, r, col, a, glow) { if (r <= 0 || a <= 0) return; fctx.globalAlpha = a; fctx.beginPath(); fctx.arc(x, y, r, 0, Math.PI * 2); fctx.fillStyle = col; if (glow > 0) { fctx.shadowColor = col; fctx.shadowBlur = glow; } fctx.fill(); fctx.shadowBlur = 0; fctx.globalAlpha = 1; }
+function drawGlowDot(x, y, r, col, a, glow) { if (r <= 0 || a <= 0) return; if (x < -r || y < -r || x > fx.width + r || y > fx.height + r) return; fctx.globalAlpha = a; fctx.beginPath(); fctx.arc(x, y, r, 0, Math.PI * 2); fctx.fillStyle = col; if (glow > 0) { fctx.shadowColor = col; fctx.shadowBlur = glow; } fctx.fill(); fctx.shadowBlur = 0; fctx.globalAlpha = 1; }
 
 function drawRider(p, now) {
   if (!p.segments || !p.segments.length) return;
@@ -1242,7 +1243,15 @@ function renderTopology(data) {
     }
     seen.add(h.ip);
   } for (var ni = 0; ni < nodes.get().length; ni++) if (!seen.has(nodes.get()[ni].id)) nodes.remove(nodes.get()[ni].id);
-  if (layoutChanged) { layoutKey = key; for (var id in pos) if (nodes.get(id)) network.moveNode(id, pos[id].x, pos[id].y); fitMapView(true); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 560); }
+  if (layoutChanged) {
+    layoutKey = key;
+    for (var id in pos) if (nodes.get(id)) network.moveNode(id, pos[id].x, pos[id].y);
+    // Fit once, when the first snapshot arrives. Later snapshots add devices
+    // and reflow the tree; fitting on every reflow yanked the viewport around
+    // while the operator was looking at a node. R still fits on demand.
+    if (!layoutInitialized) { layoutInitialized = true; fitMapView(false); }
+    if (selectedNodeIp) setTimeout(ensureSelectionVisible, 560);
+  }
   var seenEdges = new Set();
   for (var ei = 0; ei < data.edges.length; ei++) {
     var e = data.edges[ei];

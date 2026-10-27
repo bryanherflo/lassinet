@@ -2,6 +2,14 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.18.1] - 2026-10-27
+
+### Fixed
+- Map viewport no longer re-fits on every topology reflow; fit once on first load, then only on demand (R/Fit).
+- PWA service worker is network-first for the static shell; a one-time sw-reset.js clears old workers/caches so a new Flows button cannot be paired with an old pp.js.
+- Traffic particles outside the map canvas are skipped.
+- UI cache is v=3.58; 260 tests.
+
 ## [0.18.0] - 2026-10-27
 
 ### Added

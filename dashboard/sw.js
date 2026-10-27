@@ -2,12 +2,13 @@
  * Only static assets are cached. API/state, logs, metrics and the WebSocket are
  * always network-only: stale security data must never look live/offline.
  */
-const CACHE = "lassinet-shell-3.57";
+const CACHE = "lassinet-shell-3.58";
 const ASSETS = [
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
+  "./sw-reset.js",
   "./vendor/vis-network.min.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
@@ -19,6 +20,7 @@ const STATIC_PATHS = new Set([
   "/index.html",
   "/style.css",
   "/app.js",
+  "/sw-reset.js",
   "/vendor/vis-network.min.js",
   "/manifest.webmanifest",
   "/icons/icon-192.png",
@@ -60,14 +62,14 @@ self.addEventListener("fetch", (event) => {
   if (!STATIC_PATHS.has(url.pathname)) return;
 
   event.respondWith(
-    caches.match(request, { ignoreSearch: true }).then((cached) => {
-      return cached || fetch(request).then((response) => {
-        if (response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE).then((cache) => cache.put(request, copy));
-        }
-        return response;
-      });
-    })
+    fetch(request).then((response) => {
+      // Network-first for the static shell: a cached app.js after an update is
+      // exactly how a new button can exist without its click handler.
+      if (response.ok) {
+        const copy = response.clone();
+        caches.open(CACHE).then((cache) => cache.put(request, copy));
+      }
+      return response;
+    }).catch(() => caches.match(request, { ignoreSearch: true }))
   );
 });

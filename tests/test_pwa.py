@@ -25,11 +25,13 @@ def test_manifest_and_icons_are_installable() -> None:
 
 def test_service_worker_never_caches_api_or_websocket() -> None:
     sw = (ROOT / "dashboard" / "sw.js").read_text(encoding="utf-8")
-    assert "lassinet-shell-3.57" in sw
+    assert "lassinet-shell-3.58" in sw
     assert "STATIC_PATHS" in sw
     assert 'url.pathname.startsWith("/api/")' in sw
     assert 'url.pathname === "/ws"' in sw
     assert 'url.pathname === "/metrics"' in sw
+    assert "fetch(request).then" in sw, "static assets must be network-first"
+    assert "sw-reset.js" in sw
 
 
 def test_index_registers_pwa_and_install_button() -> None:
@@ -37,6 +39,7 @@ def test_index_registers_pwa_and_install_button() -> None:
     app = (ROOT / "dashboard" / "app.js").read_text(encoding="utf-8")
     assert "manifest.webmanifest" in index
     assert 'id="btn-install"' in index
+    assert "sw-reset.js" in index
     assert "beforeinstallprompt" in app
     assert "serviceWorker.register" in app
 

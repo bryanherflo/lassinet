@@ -1,3 +1,3 @@
 """LassiNet — Network visibility + ML intrusion detection + firewall control."""
 
-__version__ = "0.18.0"
+__version__ = "0.18.1"
