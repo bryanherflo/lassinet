@@ -75,5 +75,5 @@ formal compliance, auto-block, real firewall enforcement, etc.
 
 - Redacted `/api/v1/health`, `/readyz`, `/metrics` excerpts.
 - Redacted alert/log sample.
-- `python -m lassi.doctor --json` summary (no secrets).
+- `python -m lassi.vet --json` summary (no secrets).
 - Checkpoint/backup verification result (no key).

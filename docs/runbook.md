@@ -6,8 +6,8 @@ Operate LassiNet as a monitor first. Every command assumes the project root
 ## Before a real pilot
 
 ```bash
-python -m lassi.doctor
-python -m lassi.doctor --json --report pilot.md
+python -m lassi.vet
+python -m lassi.vet --json --report pilot.md
 ```
 
 Run this **before** live mode. It checks the local IP against
@@ -24,7 +24,7 @@ stop; a warning is a conscious decision.
   bounded and a broken endpoint increments `lassinet_webhook_failed_total`.
 - The URL is a secret; HTTPS is enforced unless `LASSI_WEBHOOK_ALLOW_HTTP=1`
   for a localhost lab. The alert payload contains internal IPs/signatures.
-- Verify reachability with a real test alert; the doctor validates the URL
+- Verify reachability with a real test alert; LassiVet validates the URL
   syntax but deliberately does not send one.
 
 ## API v1 and remote sensors

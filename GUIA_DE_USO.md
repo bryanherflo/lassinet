@@ -33,11 +33,11 @@ python -m venv .venv
 
 ---
 
-## 2. Antes de usar live: doctor
+## 2. Antes de usar live: LassiVet
 
 ```powershell
-python -m lassi.doctor
-python -m lassi.doctor --json --report pilot.md
+python -m lassi.vet
+python -m lassi.vet --json --report pilot.md
 ```
 
 Revisa, **sin capturar ni escanear**:
@@ -99,7 +99,7 @@ Abre **http://127.0.0.1:8000**.
 - El token se cambia por una cookie de sesión; no se guarda en el navegador.
 - Si actualizas la UI, pulsa **Ctrl+F5**.
 
-Si no ves el panel: comprueba `python -m lassi.doctor`, el puerto y `/healthz`.
+Si no ves el panel: comprueba `python -m lassi.vet`, el puerto y `/healthz`.
 
 ---
 
@@ -242,7 +242,7 @@ git pull
 
 | Síntoma | Qué mirar |
 |---|---|
-| “live mode refused” | `LASSI_LIVE_ALLOW` no contiene tu IP; ejecuta doctor |
+| “live mode refused” | `LASSI_LIVE_ALLOW` no contiene tu IP; ejecuta LassiVet |
 | `capture_error` / readyz 503 | scapy/Npcap, permisos, `LASSI_IFACE` |
 | Firewall “mock” | es esperado en demo/dry-run; no hay reglas reales |
 | No llegan webhooks | URL HTTPS, formato, severidad, `/metrics` |

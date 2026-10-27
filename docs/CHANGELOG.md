@@ -2,6 +2,13 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.16.2] — 2026-10-27
+
+### Changed
+- Rename the preflight tool to **LassiVet**: python -m lassi.vet.
+  python -m lassi.doctor remains a compatibility alias.
+- scripts/vet.py wrapper; docs/guide/runbook updated. No behavior changes.
+
 ## [0.16.1] — 2026-10-27
 
 ### Dependencies
