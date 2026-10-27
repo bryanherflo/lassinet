@@ -21,6 +21,8 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 
 ---
 
+> **¿Primera vez?** Lee la **[Guía de uso rápida en español](GUIA_DE_USO.md)**: demo, live monitor-only, panel, webhooks, sensores remotos y API v1.
+
 ## ✨ Features
 
 | | |
