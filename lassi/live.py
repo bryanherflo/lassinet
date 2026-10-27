@@ -9,6 +9,7 @@ import ipaddress
 import logging
 import os
 import time
+from collections import Counter
 from typing import Any
 
 from lassi.devices import classify
@@ -280,6 +281,29 @@ def _flag_bits(flags: int) -> int:
     return bin(flags & 0xFF).count("1")
 
 
+def _flag_label(flags: int) -> str:
+    names = [name for bit, name in (
+        (0x02, "SYN"), (0x10, "ACK"), (0x08, "PSH"), (0x01, "FIN"),
+        (0x04, "RST"), (0x20, "URG"),
+    ) if flags & bit]
+    return "+".join(names) or "none"
+
+
+def _flow_direction(src: str, dst: str) -> str:
+    try:
+        source = ipaddress.ip_address(src)
+        destination = ipaddress.ip_address(dst)
+    except ValueError:
+        return "unknown"
+    if source.is_private and not destination.is_private:
+        return "outbound"
+    if destination.is_private and not source.is_private:
+        return "inbound"
+    if source.is_private and destination.is_private:
+        return "internal"
+    return "external"
+
+
 class LiveCapture:
     """Aggregates packets into per (src,dst,service-ish) flows and emits
     feature dicts compatible with lassi.ml.extract_features()."""
@@ -327,6 +351,8 @@ class LiveCapture:
                 "ack_or_synacks": 0,
                 "dst_port_count": 0, "_ports": set(), "start": time.time(),
                 "protocols": set(), "src_ports": set(), "dst_ports": set(),
+                "port_counts": Counter(), "tcp_flag_counts": Counter(),
+                "initiator": "",
             })
             f["pkts"] += 1
             f["bytes"] += len(ip)
@@ -335,11 +361,15 @@ class LiveCapture:
                 f["src_ports"].add(sport)
             if dport is not None:
                 f["dst_ports"].add(dport)
+                f["port_counts"][dport] += 1
             if TCP in pkt:
                 t = pkt[TCP]
                 f["_ports"].add(int(t.dport))
                 f["dst_port_count"] = len(f["_ports"])
                 flags = int(t.flags)
+                f["tcp_flag_counts"][flags] += 1
+                if flags & 0x02 and not flags & 0x10:
+                    f["initiator"] = ip.src
                 f["flag_bits"] += _flag_bits(flags)
                 if flags & 0x02:
                     f["syn_bits"] += 1          # SYN (a SYN+ACK included, as CIC does)
@@ -397,8 +427,22 @@ class LiveCapture:
                 "syn_ratio_cicids": round(f.get("syn_bits", 0) / max(f.get("flag_bits", 0), 1), 4),
                 "dst_port_count": f["dst_port_count"],
                 "protocols": ",".join(sorted(f.get("protocols") or [])) or "IP",
-                "src_ports": ",".join(str(p) for p in sorted(f.get("src_ports") or [])[:32]),
-                "dst_ports": ",".join(str(p) for p in sorted(f.get("dst_ports") or [])[:32]),
+                "src_ports": ",".join(str(p) for p in sorted(f.get("src_ports") or [])[:64]),
+                "dst_ports": ",".join(str(p) for p in sorted(f.get("dst_ports") or [])[:256]),
+                "direction": _flow_direction(f["src"], f["dst"]),
+                "initiator": f.get("initiator") or f["src"],
+                "tcp_flags": ",".join(
+                    f"{_flag_label(flags)}={count}"
+                    for flags, count in (f.get("tcp_flag_counts") or {}).items()
+                ) or "—",
+                "port_histogram": ",".join(
+                    f"{port}:{count}" for port, count in (
+                        (f.get("port_counts") or {}).most_common(12)
+                        if hasattr((f.get("port_counts") or {}), "most_common")
+                        else sorted((f.get("port_counts") or {}).items(),
+                                    key=lambda item: item[1], reverse=True)[:12]
+                    )
+                ),
                 "mean_pkt_size": round(f["bytes"] / total, 1),
                 "pkt_rate": round(f["pkts"] / elapsed, 2),
                 "label": None,

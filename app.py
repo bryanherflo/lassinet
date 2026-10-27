@@ -44,7 +44,7 @@ from lassi import __version__
 from lassi.devices import classify
 from lassi.firewall import Firewall
 from lassi.flows import FlowStore, flow_record
-from lassi.ml import Detector
+from lassi.ml import Detector, SENSITIVITY
 from lassi.scope import allowlist_from_env, check_live_scope
 from lassi.state import (State, add_alert_listener, audit,
                          clear_alert_listeners, create_audit_checkpoint,
@@ -79,6 +79,10 @@ def _env_flag(name: str, default: bool = False) -> bool:
 # Empty = historical "any LAN" behaviour, with a warning at startup.
 LIVE_ALLOW_RAW = (os.getenv("LASSI_LIVE_ALLOW") or "").strip()
 LIVE_ALLOW = allowlist_from_env(LIVE_ALLOW_RAW)
+# Suppression list: alerts from these addresses are recorded nowhere except the
+# flow history; they never triage, webhook or auto-block.
+SUPPRESS_RAW = (os.getenv("LASSI_SUPPRESS") or "").strip()
+SUPPRESS = allowlist_from_env(SUPPRESS_RAW)
 # Explicit escape hatch for a lab where the operator accepts any LAN. Live
 # mode otherwise requires a scope declaration: a forgotten allowlist is a
 # refusal, not a silent sweep of whatever Wi-Fi the laptop is attached to.
@@ -233,6 +237,15 @@ def _is_loopback(ip: str) -> bool:
     except ValueError:
         return False
     return address.is_loopback or address.is_unspecified
+
+
+def _is_suppressed(ip: str) -> bool:
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(address.version == network.version and address in network
+               for network in SUPPRESS)
 
 
 def _seed_demo_router() -> None:
@@ -461,6 +474,9 @@ def process_flows(flows: list[dict]) -> None:
                        src=src, dst=dst,
                        bytes=flow.get("bytes") or 0)
         if severity in ("medium", "high", "critical"):
+            if state.is_trusted(src) or state.is_protected(src) or _is_suppressed(src):
+                # Explicit allowlists suppress detections, not flow history.
+                continue
             alert = {
                 "severity": severity,
                 "attack": attack,
@@ -469,6 +485,17 @@ def process_flows(flows: list[dict]) -> None:
                 "confidence": confidence,
                 "engine": verdict.get("engine", "rules"),
                 "ports": flow.get("dst_port_count"),
+                "evidence": {
+                    "pkts": flow.get("pkts"),
+                    "bytes": flow.get("bytes"),
+                    "duration": flow.get("duration"),
+                    "syn_ratio": flow.get("syn_ratio"),
+                    "dst_port_count": flow.get("dst_port_count"),
+                    "pkt_rate": flow.get("pkt_rate"),
+                    "protocols": flow.get("protocols"),
+                    "direction": flow.get("direction"),
+                    "port_histogram": flow.get("port_histogram"),
+                },
             }
             state.add_alert(alert)
             if AUTO_BLOCK and SEVERITY_RANK.get(severity, 0) >= 2:
@@ -550,6 +577,7 @@ def start_engine(source: Callable[[], None]) -> None:
             try:
                 _expire_blocks()
                 source()
+                _sync_inventory()
             except Exception:  # keep the engine alive no matter what
                 log.exception("engine tick failed")
             time.sleep(TICK)
@@ -573,6 +601,19 @@ _capture_error_reported = False
 _last_discovery_at = 0.0
 _discovered_hosts: list[dict] = []
 _discovered_gateway: str | None = None
+_last_inventory_at = 0.0
+
+
+def _sync_inventory() -> None:
+    global _last_inventory_at
+    now = time.time()
+    if now - _last_inventory_at < 10:
+        return
+    _last_inventory_at = now
+    try:
+        flow_store.sync_devices(state.hosts_snapshot(), at=now)
+    except Exception:
+        log.exception("could not sync device inventory")
 
 
 def _discover_cached() -> tuple[list[dict], str | None]:
@@ -1037,6 +1078,110 @@ def trust_device(req: TrustRequest, request: Request) -> dict:
     return {"ok": True, "ip": ip, "trusted": trusted}
 
 
+@app.get("/api/devices/inventory")
+def device_inventory(limit: int = 500, q: str = "") -> dict:
+    data = flow_store.inventory(limit=limit, q=q)
+    for item in data.get("items", []):
+        meta = state.host_meta(str(item.get("ip") or ""))
+        if meta["name"] and meta["name"] != item.get("ip"):
+            item["name"] = meta["name"]
+        item["role"] = item.get("role") or meta["role"]
+        item["kind"] = item.get("kind") or meta["kind"]
+        item["blocked"] = state.is_blocked(str(item.get("ip") or ""))
+        item["trusted"] = state.is_trusted(str(item.get("ip") or ""))
+    return {"ok": True, **data}
+
+
+@app.get("/api/devices/inventory/{ip}")
+def device_inventory_one(ip: str) -> dict:
+    from lassi.geo import lookup as geo_lookup
+    data = flow_store.device_history(ip)
+    item = data.get("device") or {}
+    meta = state.host_meta(ip)
+    return {
+        "ok": True,
+        "device": {**item, "name": item.get("name") or meta["name"],
+                   "role": item.get("role") or meta["role"],
+                   "kind": item.get("kind") or meta["kind"]},
+        "history": data.get("history", []),
+        "geo": geo_lookup(ip),
+        "blocked": state.is_blocked(ip),
+        "trusted": state.is_trusted(ip),
+        "protected": state.is_protected(ip),
+        "sensitivity": (os.getenv("LASSI_SENSITIVITY") or "balanced").strip().lower(),
+    }
+
+
+@app.get("/api/investigation")
+def investigation(ip: str = "", src: str = "", dst: str = "",
+                  at: float = 0.0) -> dict:
+    """One-screen context for an alert or a device."""
+    from lassi.geo import lookup as geo_lookup
+
+    when = at or time.time()
+    since = when - 300 if at else 0.0
+    until = when + 300 if at else 0.0
+    device_ip = _clean_ip(ip) if ip else None
+    source = _clean_ip(src) if src else None
+    destination = _clean_ip(dst) if dst else None
+    if source or destination:
+        flows = flow_store.query(limit=50, src=source or "", dst=destination or "",
+                                 since=since, until=until)["items"]
+    elif device_ip:
+        flows = flow_store.query(limit=50, device=device_ip)["items"]
+    else:
+        flows = []
+    history = flow_store.device_history(device_ip) if device_ip else {"device": None, "history": []}
+    meta = state.host_meta(device_ip or source or destination or "")
+    alerts = []
+    for alert in state.snapshot()["alerts"]:
+        if device_ip and device_ip not in (alert.get("src"), alert.get("dst")):
+            continue
+        if source and source != alert.get("src") and source != alert.get("dst"):
+            continue
+        if destination and destination != alert.get("src") and destination != alert.get("dst"):
+            continue
+        alerts.append(alert)
+    ports: dict[str, int] = {}
+    for flow in flows:
+        for chunk in str(flow.get("port_histogram") or "").split(","):
+            if ":" in chunk:
+                port, count = chunk.split(":", 1)
+                try:
+                    ports[port] = ports.get(port, 0) + int(count)
+                except ValueError:
+                    pass
+        if not ports and flow.get("dst_ports"):
+            for port in str(flow["dst_ports"]).split(","):
+                if port:
+                    ports[port] = ports.get(port, 0) + 1
+    top_ports = sorted(ports.items(), key=lambda item: item[1], reverse=True)[:15]
+    endpoints = [value for value in (device_ip, source, destination) if value]
+    return {
+        "ok": True,
+        "device": {
+            "ip": device_ip or source or destination or "",
+            "name": meta["name"],
+            "role": meta["role"],
+            "kind": meta["kind"],
+            "first_seen": (history.get("device") or {}).get("first_seen"),
+            "last_seen": (history.get("device") or {}).get("last_seen"),
+            "mac": (history.get("device") or {}).get("mac", ""),
+        },
+        "history": history.get("history", []),
+        "flows": flows,
+        "alerts": alerts,
+        "geo": {value: geo_lookup(value) for value in set(endpoints)},
+        "ports": [{"port": port, "count": count} for port, count in top_ports],
+        "blocked": state.is_blocked(device_ip or source or ""),
+        "trusted": state.is_trusted(device_ip or source or ""),
+        "protected": state.is_protected(device_ip or source or ""),
+        "sensitivity": (os.getenv("LASSI_SENSITIVITY") or "balanced").strip().lower(),
+        "suppress": (os.getenv("LASSI_SUPPRESS") or "").strip(),
+        "window": {"since": since, "until": until},
+    }
+
+
 @app.post("/api/devices/rename")
 def rename_device(req: RenameRequest, request: Request) -> dict:
     actor = _actor(request)
@@ -1431,6 +1576,8 @@ def _snapshot(role: str = "operator") -> dict:
     # server it is talking to actually implements.
     snap["features"] = ["dismiss_alerts", "alert_triage"]
     snap["flow_history"] = bool(flow_store.enabled)
+    snap["sensitivity"] = SENSITIVITY
+    snap["suppress"] = [str(network) for network in SUPPRESS]
     snap["role"] = role
     snap["auth_required"] = _auth_enabled()
     return snap
@@ -1520,7 +1667,8 @@ def export_flows_csv(limit: int = 100_000, src: str = "", dst: str = "",
     writer = csv.writer(out, lineterminator="\n")
     writer.writerow([
         "id", "timestamp_utc", "src", "dst", "src_name", "dst_name",
-        "protocols", "src_ports", "dst_ports", "packets", "bytes",
+        "protocols", "src_ports", "dst_ports", "direction", "initiator",
+        "tcp_flags", "port_histogram", "packets", "bytes",
         "duration_s", "dst_port_count", "syn_ratio", "mean_pkt_size",
         "pkt_rate", "attack", "severity", "confidence", "engine", "mode",
     ])
@@ -1535,6 +1683,8 @@ def export_flows_csv(limit: int = 100_000, src: str = "", dst: str = "",
             _flow_csv_cell(row.get("dst")), _flow_csv_cell(row.get("src_name")),
             _flow_csv_cell(row.get("dst_name")), _flow_csv_cell(row.get("protocols")),
             _flow_csv_cell(row.get("src_ports")), _flow_csv_cell(row.get("dst_ports")),
+            _flow_csv_cell(row.get("direction")), _flow_csv_cell(row.get("initiator")),
+            _flow_csv_cell(row.get("tcp_flags")), _flow_csv_cell(row.get("port_histogram")),
             row.get("pkts"), row.get("bytes"), row.get("duration"),
             row.get("dst_port_count"), row.get("syn_ratio"),
             row.get("mean_pkt_size"), row.get("pkt_rate"),
@@ -1607,6 +1757,16 @@ def flow_stats() -> dict:
     return {"ok": True, **flow_store.stats()}
 
 
+@app.get("/api/report")
+def report(hours: int = 24) -> dict:
+    data = flow_store.report(hours=hours)
+    data["sensitivity"] = SENSITIVITY
+    data["suppress"] = [str(network) for network in SUPPRESS]
+    data["blocked"] = len(state.blocked)
+    data["trusted"] = len(state.trusted)
+    return {"ok": True, **data}
+
+
 @app.post("/api/flows/clear", response_model=None)
 def clear_flows(request: Request) -> dict | JSONResponse:
     if getattr(request.state, "role", "operator") != "operator":
@@ -1616,6 +1776,17 @@ def clear_flows(request: Request) -> dict | JSONResponse:
     audit({"event": "flows_cleared", "deleted": deleted,
            "actor": _actor(request)})
     return {"ok": True, "deleted": deleted}
+
+
+@app.post("/api/flows/compact", response_model=None)
+def compact_flows(request: Request) -> dict | JSONResponse:
+    if getattr(request.state, "role", "operator") != "operator":
+        return JSONResponse({"ok": False, "error": "operator token required"},
+                            status_code=403)
+    started = flow_store.compact()
+    audit({"event": "flows_compacted", "started": started,
+           "actor": _actor(request)})
+    return {"ok": True, "started": started}
 
 
 @app.get("/api/flows/{flow_id}")
@@ -1663,9 +1834,19 @@ def api_v1_flow_stats() -> dict:
     return flow_stats()
 
 
+@app.get("/api/v1/report")
+def api_v1_report(hours: int = 24) -> dict:
+    return report(hours=hours)
+
+
 @app.post("/api/v1/flows/clear", response_model=None)
 def api_v1_clear_flows(request: Request) -> dict | JSONResponse:
     return clear_flows(request)
+
+
+@app.post("/api/v1/flows/compact", response_model=None)
+def api_v1_compact_flows(request: Request) -> dict | JSONResponse:
+    return compact_flows(request)
 
 
 @app.get("/api/v1/flows/{flow_id}")
@@ -1835,6 +2016,22 @@ def api_v1_alerts(limit: int = 50, offset: int = 0, severity: str = "",
     limit, offset, pagination = _page(limit, offset, len(items))
     return {"ok": True, "items": items[offset:offset + limit],
             "pagination": pagination}
+
+
+@app.get("/api/v1/devices/inventory")
+def api_v1_device_inventory(limit: int = 500, q: str = "") -> dict:
+    return device_inventory(limit=limit, q=q)
+
+
+@app.get("/api/v1/devices/inventory/{ip}")
+def api_v1_device_inventory_one(ip: str) -> dict:
+    return device_inventory_one(ip)
+
+
+@app.get("/api/v1/investigation")
+def api_v1_investigation(ip: str = "", src: str = "", dst: str = "",
+                         at: float = 0.0) -> dict:
+    return investigation(ip=ip, src=src, dst=dst, at=at)
 
 
 @app.get("/api/v1/devices")

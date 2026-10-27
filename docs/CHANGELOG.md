@@ -2,6 +2,20 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.21.0] - 2026-10-27
+
+### Added
+- **Investigation view** for alerts/devices: related flows, inventory history, top ports, optional local country/ASN data, evidence, sensitivity/suppression and triage/trust/block actions.
+- **Device inventory** persisted in SQLite: first/last seen, MAC, type, role, traffic and IP-change events.
+- **Reports tab** with 24 h/7 day summaries, top devices, events, ports, JSON/CSV export and print.
+- **Compact DB** action that runs in the background and queues flows while compacting.
+- **Richer flows**: direction, initiator, TCP flag summary and a destination-port histogram.
+- **Noise controls**: LASSI_SENSITIVITY (low/balanced/high), LASSI_SUPPRESS CIDRs, detector evidence in alerts and trusted/protected alert suppression.
+
+### Changed
+- Freeze-layout is on by default; existing map nodes keep their positions when new devices appear.
+- UI cache is v=3.66; 267 tests.
+
 ## [0.20.1] - 2026-10-27
 
 ### Fixed

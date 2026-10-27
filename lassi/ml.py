@@ -15,6 +15,7 @@ same structure, so the model works identically in both modes:
 import ipaddress
 import logging
 import math
+import os
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +66,10 @@ FEATURES = [
 # force trips them; a TLS session does not. The model still decides *which*
 # attack and how severe it is (engine `ml+rules`); when only the rules fire,
 # the alert keeps `engine="rules"`.
-CONFIDENT = 0.65
+SENSITIVITY = (os.getenv("LASSI_SENSITIVITY") or "balanced").strip().lower()
+if SENSITIVITY not in ("low", "balanced", "high"):
+    SENSITIVITY = "balanced"
+CONFIDENT = {"low": 0.80, "balanced": 0.65, "high": 0.55}[SENSITIVITY]
 
 # A model bundle declares the *profile* it was trained with, because the same
 # feature name can carry a different convention per dataset:

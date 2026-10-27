@@ -25,7 +25,7 @@ def test_manifest_and_icons_are_installable() -> None:
 
 def test_service_worker_never_caches_api_or_websocket() -> None:
     sw = (ROOT / "dashboard" / "sw.js").read_text(encoding="utf-8")
-    assert "lassinet-shell-3.63" in sw
+    assert "lassinet-shell-3.66" in sw
     assert "STATIC_PATHS" in sw
     assert 'url.pathname.startsWith("/api/")' in sw
     assert 'url.pathname === "/ws"' in sw

@@ -315,7 +315,25 @@ Los dispositivos que ya no están en el mapa salen como `not on current map`. Re
 
 ---
 
-## 14. Para profundizar
+## 14. Investigación, inventario, reportes y ruido
+
+- **Investigate** en una alerta o en una fila del inventario abre una pantalla con el dispositivo, flows relacionados, puertos, historial, geo/ASN local, evidencia del detector y acciones de trust/block.
+- **Inventory** guarda IP, nombre, MAC, tipo, rol, primera/última vez, tráfico y cambios de IP en SQLite.
+- **Report** ofrece resumen de 24 h / 7 días, top devices, alertas/bloqueos, puertos, JSON/CSV e impresión.
+- **Compact DB** ejecuta el `VACUUM` en segundo plano; mientras tanto los flows nuevos se encolan para no bloquear la captura.
+- **Freeze layout** (`K`) mantiene quietos los nodos existentes cuando aparece un dispositivo nuevo.
+- **Ruido:**
+  - `LASSI_SENSITIVITY=low|balanced|high`.
+  - `LASSI_SUPPRESS=203.0.113.0/24,...` suprime alertas, pero sigue guardando flows.
+  - Los dispositivos trusted/protected no generan alertas ni auto-bloqueo.
+  - La evidencia (`pkts`, `bytes`, SYN, puertos, dirección) se muestra en la investigación.
+- **Geo/ASN opcional offline:** `LASSI_GEOIP_CSV=data/geoip.csv` con columnas `network,country,asn,org`; no se hace ninguna consulta externa.
+
+Los flows antiguos muestran `not recorded` para los campos que no existían.
+
+---
+
+## 15. Para profundizar
 
 - [Arquitectura](docs/architecture.md)
 - [API v1](docs/api-v1.md)

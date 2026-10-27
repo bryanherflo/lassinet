@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0d1117">
 <meta name="color-scheme" content="dark">
-<link rel="manifest" href="manifest.webmanifest?v=3.63">
+<link rel="manifest" href="manifest.webmanifest?v=3.66">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -17,8 +17,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.63">
-<script src="vendor/vis-network.min.js?v=3.63"></script>
+<link rel="stylesheet" href="style.css?v=3.66">
+<script src="vendor/vis-network.min.js?v=3.66"></script>
 </head>
 <body>
 <header>
@@ -51,6 +51,9 @@
         </button>
         <button id="btn-fit-map" class="toolbar-btn" title="Fit map view (R)" aria-label="Fit map view">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4"/></svg>
+        </button>
+        <button id="btn-freeze-layout" class="toolbar-btn" title="Freeze existing node positions (K)" aria-label="Freeze layout" aria-pressed="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 4h8M12 4v7M7 11h10l-2 5H9zM9 16l-2 4M15 16l2 4"/></svg>
         </button>
         <button id="btn-toggle-fx" class="toolbar-btn" title="Hide traffic dots (D)" aria-label="Toggle traffic dots" aria-pressed="true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2.2"/><circle cx="11" cy="12" r="1.5" opacity=".65"/><circle cx="16.5" cy="12" r="1" opacity=".35"/></svg>
@@ -147,6 +150,8 @@
         <button type="button" class="flows-tab active" data-flows-view="flows" role="tab" aria-selected="true">Flows</button>
         <button type="button" class="flows-tab" data-flows-view="top" role="tab" aria-selected="false">Top talkers</button>
         <button type="button" class="flows-tab" data-flows-view="timeline" role="tab" aria-selected="false">Timeline</button>
+        <button type="button" class="flows-tab" data-flows-view="inventory" role="tab" aria-selected="false">Inventory</button>
+        <button type="button" class="flows-tab" data-flows-view="report" role="tab" aria-selected="false">Report</button>
       </div>
       <div id="flows-scope" class="flows-scope" hidden></div>
       <div id="flows-toolbar" class="flows-toolbar">
@@ -166,6 +171,28 @@
         <div id="flow-detail" class="flow-detail">
           <p class="section-note">Select a flow to see which devices are communicating and what the detector decided.</p>
         </div>
+      </div>
+      <div id="flows-report" class="flows-report" hidden>
+        <div class="flows-toolbar">
+          <span class="flows-window-label">Summary and printable case-study snapshot</span>
+          <div class="flows-kinds" role="group" aria-label="Report window">
+            <button type="button" class="flows-chip active" data-report-hours="24">24 h</button>
+            <button type="button" class="flows-chip" data-report-hours="168">7 days</button>
+          </div>
+          <button type="button" id="report-print" class="flows-refresh">Print</button>
+          <button type="button" id="report-json" class="flows-refresh">JSON</button>
+          <button type="button" id="report-alerts-csv" class="flows-refresh">Alerts CSV</button>
+          <button type="button" id="report-timeline-csv" class="flows-refresh">Timeline CSV</button>
+        </div>
+        <div id="report-body" class="report-body"></div>
+      </div>
+      <div id="flows-inventory" class="flows-inventory" hidden>
+        <div class="flows-toolbar">
+          <input id="inventory-filter" class="flows-filter" type="search" placeholder="Filter inventory by IP, name or MAC" autocomplete="off" />
+          <button type="button" id="inventory-refresh" class="flows-refresh">Refresh</button>
+          <span id="inventory-meta" class="flows-meta"></span>
+        </div>
+        <div id="inventory-list" class="inventory-list"></div>
       </div>
       <div id="flows-top" class="flows-top" hidden>
         <div class="flows-toolbar">
@@ -199,9 +226,25 @@
       <div class="flows-footer">
         <span id="flows-stats" class="flows-stats"></span>
         <button type="button" id="flows-export" class="flows-refresh">Export CSV</button>
+        <button type="button" id="flows-compact" class="flows-refresh" title="Rebuild the SQLite file in the background; writes are queued while it runs">Compact DB</button>
         <button type="button" id="flows-clear" class="flows-refresh danger" title="Delete all stored flow rows and timeline events; the SQLite file may not shrink immediately">Clear history</button>
       </div>
       <p class="flows-note">Metadata only: endpoints, counters, timing and verdict. Packet payloads are never stored.</p>
+    </div>
+  </div>
+</div>
+
+<div id="investigation-overlay" class="modal-overlay" hidden>
+  <div class="modal investigation-modal" role="dialog" aria-modal="true" aria-labelledby="investigation-title">
+    <div class="modal-head">
+      <div>
+        <h3 id="investigation-title">Investigation</h3>
+        <span class="flows-subtitle">Device, flows, geolocation, ports and evidence</span>
+      </div>
+      <button type="button" id="investigation-close" class="modal-close" aria-label="Close investigation" title="Close (Esc)">×</button>
+    </div>
+    <div id="investigation-body" class="modal-body investigation-body">
+      <p class="section-note">Loading investigation…</p>
     </div>
   </div>
 </div>
@@ -261,7 +304,7 @@
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="sw-reset.js?v=3.63"></script>
-<script src="app.js?v=3.63"></script>
+<script src="sw-reset.js?v=3.66"></script>
+<script src="app.js?v=3.66"></script>
 </body>
 </html>

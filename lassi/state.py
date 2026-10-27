@@ -694,6 +694,11 @@ class State:
                 "kind": str(host.get("kind") or ""),
             }
 
+    def hosts_snapshot(self) -> list[dict[str, Any]]:
+        """Copy current hosts for the inventory synchroniser."""
+        with self._lock:
+            return [dict(host) for host in self.hosts.values()]
+
     def touch_edge(self, a: str, b: str) -> None:
         if a == b:  # self-flows are noise, never an edge
             return

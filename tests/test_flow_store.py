@@ -34,6 +34,10 @@ def _flow(**overrides):
         "protocols": "TCP",
         "src_ports": "54321,54322",
         "dst_ports": "443,8443",
+        "direction": "outbound",
+        "initiator": "192.168.0.10",
+        "tcp_flags": "SYN+ACK=2",
+        "port_histogram": "443:2",
         "syn_ratio": 0.1,
         "mean_pkt_size": 200.0,
         "pkt_rate": 8.0,
@@ -76,6 +80,8 @@ def test_flow_store_roundtrip_and_filter(tmp_path) -> None:
         assert detail["src"] == "10.0.0.9"
         assert detail["protocols"] == "TCP"
         assert detail["dst_ports"] == "443,8443"
+        assert detail["direction"] == "outbound"
+        assert detail["port_histogram"] == "443:2"
     finally:
         store.close()
 
@@ -159,6 +165,42 @@ def test_timeline_backfill_from_audit_log(tmp_path, monkeypatch) -> None:
         assert store.meta_get("events_backfilled_at")
         lassi_app._backfill_timeline_events()
         assert store.timeline_events() == events, "backfill must run once"
+    finally:
+        store.close()
+
+
+def test_flow_store_inventory_and_report(tmp_path) -> None:
+    store = FlowStore(tmp_path / "flows.db")
+    now = time.time()
+    try:
+        store.add_many([_flow(ts=now - 10, src="192.168.0.10", dst="192.168.0.20",
+                              bytes=4000)])
+        store.sync_devices([
+            {"ip": "192.168.0.10", "hostname": "laptop", "mac": "aa:bb",
+             "kind": "laptop", "role": "workstation"},
+            {"ip": "192.168.0.20", "hostname": "nas", "mac": "cc:dd",
+             "kind": "nas", "role": "workstation"},
+        ], at=now - 5)
+        inventory = store.inventory()
+        assert inventory["total"] == 2
+        assert inventory["items"][0]["name"] in ("laptop", "nas")
+        store.sync_devices([
+            {"ip": "192.168.0.11", "hostname": "laptop", "mac": "aa:bb",
+             "kind": "laptop", "role": "workstation"},
+        ], at=now)
+        history = store.device_history("192.168.0.11")
+        assert any(event["event"] == "ip_change" for event in history["history"])
+
+        report = store.report(hours=24)
+        assert report["flows"] == 1
+        assert report["bytes"] == 4000
+        assert report["top"][0]["ip"] == "192.168.0.20" or report["top"][0]["ip"] == "192.168.0.10"
+        assert store.compact() is True
+        for _ in range(50):
+            if not store.stats()["compacting"]:
+                break
+            time.sleep(0.02)
+        assert store.stats()["compacting"] is False
     finally:
         store.close()
 
@@ -282,6 +324,17 @@ def test_flow_analytics_api_contract(client: TestClient) -> None:
     v1 = client.get("/api/v1/flows/top", params={"window": 3600})
     assert v1.status_code == 200
     assert v1.headers["X-LassiNet-API"] == "1"
+
+    inventory = client.get("/api/devices/inventory")
+    assert inventory.status_code == 200
+    assert inventory.json()["ok"] is True
+    investigation = client.get("/api/investigation", params={"ip": "192.168.0.10"})
+    assert investigation.status_code == 200
+    assert investigation.json()["ok"] is True
+    report = client.get("/api/report", params={"hours": 24})
+    assert report.status_code == 200
+    assert report.json()["ok"] is True
+    assert "flows" in report.json() and "top" in report.json()
 
 
 def test_clear_history_api_uses_store(tmp_path, monkeypatch) -> None:

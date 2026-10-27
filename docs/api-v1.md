@@ -25,8 +25,12 @@ All v1 responses carry `X-LassiNet-API: 1`.
 | `GET /api/v1/flows` | Paginated flow-history metadata; filters below |
 | `GET /api/v1/flows/top` | Top devices by bytes/flows; `window` seconds |
 | `GET /api/v1/flows/timeline` | Flow buckets plus alert/block markers; `minutes` |
-| `GET /api/v1/flows/stats` | Rows, DB size, retention and cap |
+| `GET /api/v1/flows/stats` | Rows, DB size, retention, cap and compaction state |
 | `GET /api/v1/flows/export.csv` | Filtered CSV export (up to 100,000 rows) |
+| `GET /api/v1/devices/inventory` | Persisted device inventory with traffic |
+| `GET /api/v1/devices/inventory/{ip}` | Device metadata, changes and local geo |
+| `GET /api/v1/investigation` | Alert/device investigation payload |
+| `GET /api/v1/report` | Daily/weekly summary for the printable report |
 | `GET /api/v1/flows/{id}` | One flow record (404 when expired/unknown) |
 | `GET /api/v1/rules` | Active firewall blocks |
 | `GET /api/v1/sensors` | Alert counts/last seen per remote sensor |
@@ -87,6 +91,7 @@ The dashboard uses `/api/flows` (same contract). Retention is controlled by
   `retention_hours`, `max_rows` and `enabled`.
 - `GET /api/v1/flows/export.csv` accepts the same filters and returns a CSV
   attachment capped at 100,000 rows.
+- `POST /api/v1/flows/compact` starts a background `VACUUM`; new flow writes are queued while it runs.
 - `POST /api/v1/flows/clear` deletes all flow history and timeline events.
   Operator only; it is destructive, writes a `flows_cleared` audit event, and
   deliberately does not run `VACUUM` so it returns quickly.

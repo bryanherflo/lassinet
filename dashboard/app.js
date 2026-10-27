@@ -243,6 +243,9 @@ function syncTrusted(data) {
 var ROLE_ORDER = { server: 0, workstation: 1, iot: 2, printer: 3, attacker: 4, unknown: 5, trusted: 6 };
 var layoutKey = "";
 var layoutInitialized = false;
+var positionedNodes = new Set();
+var freezeLayout = true;
+try { freezeLayout = localStorage.getItem("lassi.freezeLayout") !== "off"; } catch (e) { /* storage blocked */ }
 var kindFilter = null;   // "camera", "unknown", ... or null (show everything)
 var firewallProvider = "mock", firewallReady = false, firewallNote = "";
 var serverFeatures = new Set();   // capabilities advertised by /api/state
@@ -761,11 +764,20 @@ var flowsLayout = document.getElementById("flows-layout");
 var flowsTop = document.getElementById("flows-top");
 var flowsTopList = document.getElementById("flows-top-list");
 var flowsTopMeta = document.getElementById("flows-top-meta");
+var flowsInventory = document.getElementById("flows-inventory");
+var inventoryFilter = document.getElementById("inventory-filter");
+var inventoryList = document.getElementById("inventory-list");
+var inventoryMeta = document.getElementById("inventory-meta");
+var flowsReport = document.getElementById("flows-report");
+var reportBody = document.getElementById("report-body");
+var reportHours = 24;
+var reportData = null;
 var flowsTimeline = document.getElementById("flows-timeline");
 var timelineCanvas = document.getElementById("timeline-canvas");
 var timelineMeta = document.getElementById("timeline-meta");
 var flowsStats = document.getElementById("flows-stats");
 var flowsExport = document.getElementById("flows-export");
+var flowsCompact = document.getElementById("flows-compact");
 var flowsClear = document.getElementById("flows-clear");
 var flowsTabs = flowsOverlay ? flowsOverlay.querySelectorAll("[data-flows-view]") : [];
 var flowsReturnFocus = null;
@@ -798,7 +810,8 @@ function flowDuration(value) {
   return n < 1 ? n.toFixed(2) + " s" : n.toFixed(1) + " s";
 }
 function flowClock(ts, full) {
-  var d = new Date((Number(ts) || 0) * 1000);
+  if (ts === undefined || ts === null || Number(ts) <= 0) return "—";
+  var d = new Date(Number(ts) * 1000);
   if (!isFinite(d.getTime())) return "—";
   return full ? d.toLocaleString() : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
@@ -908,8 +921,12 @@ function renderFlowDetail(flow) {
     ["Bytes", flowBytes(flow.bytes)],
     ["Duration", flowDuration(flow.duration)],
     ["Protocols", flowPorts(flow.protocols)],
+    ["Direction", flow.direction || "not recorded"],
+    ["Initiator", flow.initiator || "not recorded"],
     ["Source ports", flowPorts(flow.src_ports)],
     ["Destination ports", flowPorts(flow.dst_ports)],
+    ["Top ports", flowPorts(flow.port_histogram)],
+    ["TCP flags", flowPorts(flow.tcp_flags)],
     ["Distinct dest. ports", Number(flow.dst_port_count) || 0],
     ["SYN ratio", ((Number(flow.syn_ratio) || 0) * 100).toFixed(1) + "%"],
     ["Packet rate", (Number(flow.pkt_rate) || 0).toFixed(2) + "/s"],
@@ -1019,11 +1036,15 @@ function setFlowsView(view) {
   if (flowsToolbar) flowsToolbar.hidden = flowsView !== "flows";
   if (flowsLayout) flowsLayout.hidden = flowsView !== "flows";
   if (flowsTop) flowsTop.hidden = flowsView !== "top";
+  if (flowsInventory) flowsInventory.hidden = flowsView !== "inventory";
+  if (flowsReport) flowsReport.hidden = flowsView !== "report";
   if (flowsTimeline) flowsTimeline.hidden = flowsView !== "timeline";
   if (flowsScope) flowsScope.hidden = flowsView !== "flows" || !flowsContext;
   if (flowsExport) flowsExport.hidden = flowsView !== "flows";
   if (flowsView === "top") fetchTop();
   else if (flowsView === "timeline") fetchTimeline();
+  else if (flowsView === "inventory") fetchInventory();
+  else if (flowsView === "report") fetchReport();
   else fetchFlows();
 }
 async function fetchTop() {
@@ -1081,6 +1102,193 @@ function renderTop(items, windowSeconds) {
     row.addEventListener("click", function() { showFlowsForDevice(item.ip); });
     flowsTopList.appendChild(row);
   });
+}
+async function fetchInventory() {
+  if (!flowsOverlay || flowsOverlay.hidden || flowsView !== "inventory") return;
+  var q = inventoryFilter ? inventoryFilter.value.trim() : "";
+  try {
+    var res = await fetch("/api/devices/inventory?limit=500" +
+      (q ? "&q=" + encodeURIComponent(q) : ""));
+    if (res.status === 401) { closeFlows(false); showAuth(); return; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    renderInventory((await res.json()).items || []);
+  } catch (e) {
+    if (inventoryMeta) inventoryMeta.textContent = "unavailable";
+  }
+}
+function renderInventory(items) {
+  if (!inventoryList) return;
+  inventoryList.replaceChildren();
+  if (inventoryMeta) inventoryMeta.textContent = items.length + " device" + (items.length === 1 ? "" : "s");
+  if (!items.length) {
+    inventoryList.appendChild(flowEl("p", "inventory-empty", "No devices recorded yet."));
+    return;
+  }
+  items.forEach(function(item) {
+    var row = flowEl("button", "inventory-row");
+    row.type = "button";
+    var name = flowEl("span", "inventory-name", item.name || item.ip);
+    if (item.name && item.name !== item.ip) name.appendChild(flowEl("code", "", item.ip));
+    row.appendChild(name);
+    var type = flowEl("span", "inventory-meta-cell");
+    type.appendChild(flowEl("b", "", item.kind || item.role || "unknown"));
+    type.appendChild(document.createTextNode([item.role, item.mac].filter(Boolean).join(" · ")));
+    row.appendChild(type);
+    var traffic = flowEl("span", "inventory-meta-cell",
+      "\u2191 " + flowBytes(item.bytes_out) + "  \u2193 " + flowBytes(item.bytes_in));
+    traffic.appendChild(flowEl("b", "", (Number(item.flows) || 0) + " flows"));
+    row.appendChild(traffic);
+    var seen = flowEl("span", "inventory-meta-cell", flowClock(item.last_seen));
+    seen.appendChild(flowEl("b", "", "last seen"));
+    row.appendChild(seen);
+    var first = flowEl("span", "inventory-meta-cell", flowClock(item.first_seen));
+    first.appendChild(flowEl("b", "", "first seen"));
+    row.appendChild(first);
+    row.title = "Open investigation for " + item.ip;
+    row.addEventListener("click", function() { openInvestigation({ ip: item.ip }); });
+    inventoryList.appendChild(row);
+  });
+}
+async function fetchReport() {
+  if (!flowsOverlay || flowsOverlay.hidden || flowsView !== "report") return;
+  try {
+    var res = await fetch("/api/report?hours=" + reportHours);
+    if (res.status === 401) { closeFlows(false); showAuth(); return; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    reportData = await res.json();
+    renderReport(reportData);
+  } catch (e) {
+    if (reportBody) reportBody.replaceChildren(flowEl("p", "section-note", "Could not build the report."));
+  }
+}
+function reportCard(label, value) {
+  var card = flowEl("div", "report-card");
+  card.appendChild(flowEl("span", "", label));
+  card.appendChild(flowEl("b", "", value));
+  return card;
+}
+function renderReport(data) {
+  if (!reportBody) return;
+  reportBody.replaceChildren();
+  var summary = flowEl("div", "report-summary");
+  summary.appendChild(reportCard("Flows", (data.flows || 0).toLocaleString()));
+  summary.appendChild(reportCard("Bytes", flowBytes(data.bytes || 0)));
+  summary.appendChild(reportCard("Packets", (data.packets || 0).toLocaleString()));
+  summary.appendChild(reportCard("Alerts / blocks", (data.alerts || []).length + " / " + (data.blocks || []).length));
+  summary.appendChild(reportCard("Sensitivity", data.sensitivity || "balanced"));
+  summary.appendChild(reportCard("Suppression", data.suppress && data.suppress.length ? data.suppress.join(", ") : "none"));
+  summary.appendChild(reportCard("Blocked now", String(data.blocked || 0)));
+  summary.appendChild(reportCard("Trusted", String(data.trusted || 0)));
+  reportBody.appendChild(summary);
+
+  var top = flowEl("div", "report-section");
+  top.appendChild(flowEl("h4", "", "Top devices"));
+  if (data.top && data.top.length) {
+    var table = flowEl("table", "report-table");
+    var head = document.createElement("tr");
+    ["Device", "Out", "In", "Flows"].forEach(function(label) {
+      var th = document.createElement("th"); th.textContent = label; head.appendChild(th);
+    });
+    table.appendChild(head);
+    data.top.forEach(function(item) {
+      var tr = document.createElement("tr");
+      [item.name || item.ip, flowBytes(item.bytes_out), flowBytes(item.bytes_in),
+       String(item.flows || 0)].forEach(function(value) {
+        var td = document.createElement("td"); td.textContent = value; tr.appendChild(td);
+      });
+      table.appendChild(tr);
+    });
+    top.appendChild(table);
+  } else {
+    top.appendChild(flowEl("p", "section-note", "No flows in this window."));
+  }
+  reportBody.appendChild(top);
+
+  var events = flowEl("div", "report-section");
+  events.appendChild(flowEl("h4", "", "Alerts and blocks"));
+  var allEvents = (data.alerts || []).concat(data.blocks || []).sort(function(a, b) {
+    return (Number(a.at) || 0) - (Number(b.at) || 0);
+  });
+  if (allEvents.length) {
+    var et = flowEl("table", "report-table");
+    var eh = document.createElement("tr");
+    ["Time", "Kind", "Detail"].forEach(function(label) {
+      var th = document.createElement("th"); th.textContent = label; eh.appendChild(th);
+    });
+    et.appendChild(eh);
+    allEvents.slice(-50).forEach(function(event) {
+      var tr = document.createElement("tr");
+      [flowClock(event.at, true), event.kind || "",
+       event.kind === "block" ? (event.ip + " · " + (event.reason || "")) :
+         (event.attack + " · " + event.src + " → " + event.dst)].forEach(function(value) {
+        var td = document.createElement("td"); td.textContent = value; tr.appendChild(td);
+      });
+      et.appendChild(tr);
+    });
+    events.appendChild(et);
+  } else {
+    events.appendChild(flowEl("p", "section-note", "No alert/block events in this window."));
+  }
+  reportBody.appendChild(events);
+
+  var ports = flowEl("div", "report-section");
+  ports.appendChild(flowEl("h4", "", "Top destination ports"));
+  if (data.ports && data.ports.length) {
+    var chips = flowEl("div", "investigation-chips");
+    data.ports.forEach(function(item) {
+      chips.appendChild(flowEl("span", "flows-chip", item.port + " · " + item.count));
+    });
+    ports.appendChild(chips);
+  } else {
+    ports.appendChild(flowEl("p", "section-note", "No port samples in this window."));
+  }
+  reportBody.appendChild(ports);
+}
+function downloadText(filename, text, type) {
+  var blob = new Blob([text], { type: type || "text/plain;charset=utf-8" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function() { URL.revokeObjectURL(url); }, 500);
+}
+function csvCell(value) {
+  var text = String(value === undefined || value === null ? "" : value);
+  return '"' + text.replace(/"/g, '""') + '"';
+}
+function reportAlertsCsv() {
+  if (!reportData) return;
+  var rows = [["time", "kind", "ip", "src", "dst", "attack", "severity", "reason"]];
+  (reportData.alerts || []).forEach(function(event) {
+    rows.push([new Date((Number(event.at) || 0) * 1000).toISOString(), "alert",
+      "", event.src, event.dst, event.attack, event.severity, ""]);
+  });
+  (reportData.blocks || []).forEach(function(event) {
+    rows.push([new Date((Number(event.at) || 0) * 1000).toISOString(), "block",
+      event.ip, "", "", "", "", event.reason]);
+  });
+  downloadText("lassinet-alerts.csv", rows.map(function(row) {
+    return row.map(csvCell).join(",");
+  }).join("\n"), "text/csv;charset=utf-8");
+}
+function reportTimelineCsv() {
+  if (!reportData) return;
+  var rows = [["time", "kind", "src", "dst", "ip", "attack", "severity", "reason"]];
+  (reportData.alerts || []).concat(reportData.blocks || []).sort(function(a, b) {
+    return (Number(a.at) || 0) - (Number(b.at) || 0);
+  }).forEach(function(event) {
+    rows.push([new Date((Number(event.at) || 0) * 1000).toISOString(), event.kind,
+      event.src || "", event.dst || "", event.ip || "", event.attack || "",
+      event.severity || "", event.reason || ""]);
+  });
+  downloadText("lassinet-timeline.csv", rows.map(function(row) {
+    return row.map(csvCell).join(",");
+  }).join("\n"), "text/csv;charset=utf-8");
+}
+function reportJson() {
+  if (!reportData) return;
+  downloadText("lassinet-report.json", JSON.stringify(reportData, null, 2),
+    "application/json;charset=utf-8");
 }
 async function fetchTimeline() {
   if (!flowsOverlay || flowsOverlay.hidden || flowsView !== "timeline") return;
@@ -1164,7 +1372,12 @@ async function refreshFlowStats() {
     var retention = data.retention_hours ? data.retention_hours + " h" : "no age limit";
     var cap = data.max_rows ? data.max_rows.toLocaleString() + " rows" : "no row cap";
     flowsStats.textContent = (data.rows || 0).toLocaleString() + " rows · " +
-      flowBytes(data.db_bytes || 0) + " · " + retention + " / " + cap;
+      flowBytes(data.db_bytes || 0) + " · " + retention + " / " + cap +
+      (data.compacting ? " · compacting…" : "");
+    if (flowsCompact) {
+      flowsCompact.disabled = !!data.compacting;
+      flowsCompact.hidden = authRole !== "operator";
+    }
     if (flowsClear) flowsClear.hidden = authRole !== "operator";
   } catch (e) { /* keep the last value */ }
 }
@@ -1172,6 +1385,23 @@ function exportFlows() {
   var params = flowsParams();
   params.delete("limit");
   window.location.href = "/api/flows/export.csv?" + params.toString();
+}
+function compactFlowHistory() {
+  if (authRole !== "operator") { toast("Read-only token: this action needs the operator token", "error"); return; }
+  fetch("/api/flows/compact", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: "{}"
+  }).then(function(res) {
+    if (res.status === 401) { closeFlows(false); showAuth(); return null; }
+    if (res.status === 403) { toast("Operator token required", "error"); return null; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }).then(function(data) {
+    if (!data) return;
+    toast(data.started ? "Compacting flow database…" : "Compaction already running", "ok");
+    refreshFlowStats();
+  }).catch(function() { toast("Could not compact flow history", "error"); });
 }
 function clearFlowHistory() {
   if (authRole !== "operator") { toast("Read-only token: this action needs the operator token", "error"); return; }
@@ -1214,6 +1444,8 @@ function openFlows(opts) {
     if (flowsView === "flows") fetchFlows();
     else if (flowsView === "top") fetchTop();
     else if (flowsView === "timeline") fetchTimeline();
+    else if (flowsView === "inventory") fetchInventory();
+    else if (flowsView === "report") fetchReport();
     refreshFlowStats();
   }, 5000);
   var close = document.getElementById("flows-close");
@@ -1256,10 +1488,44 @@ if (flowsFilter) {
 document.getElementById("flows-refresh").onclick = function() {
   if (flowsView === "flows") fetchFlows();
   else if (flowsView === "top") fetchTop();
+  else if (flowsView === "inventory") fetchInventory();
+  else if (flowsView === "report") fetchReport();
   else fetchTimeline();
   refreshFlowStats();
 };
+if (inventoryFilter) {
+  inventoryFilter.addEventListener("input", function() {
+    if (flowsFilterTimer) clearTimeout(flowsFilterTimer);
+    flowsFilterTimer = setTimeout(fetchInventory, 250);
+  });
+}
+if (document.getElementById("inventory-refresh")) {
+  document.getElementById("inventory-refresh").onclick = fetchInventory;
+}
+var reportHourButtons = flowsOverlay ? flowsOverlay.querySelectorAll("[data-report-hours]") : [];
+for (var rhi = 0; rhi < reportHourButtons.length; rhi++) {
+  reportHourButtons[rhi].addEventListener("click", function() {
+    reportHours = Number(this.dataset.reportHours) || 24;
+    for (var j = 0; j < reportHourButtons.length; j++) {
+      reportHourButtons[j].classList.toggle("active", reportHourButtons[j] === this);
+    }
+    fetchReport();
+  });
+}
+if (document.getElementById("report-print")) {
+  document.getElementById("report-print").onclick = function() { if (reportData) window.print(); };
+}
+if (document.getElementById("report-json")) {
+  document.getElementById("report-json").onclick = reportJson;
+}
+if (document.getElementById("report-alerts-csv")) {
+  document.getElementById("report-alerts-csv").onclick = reportAlertsCsv;
+}
+if (document.getElementById("report-timeline-csv")) {
+  document.getElementById("report-timeline-csv").onclick = reportTimelineCsv;
+}
 if (flowsExport) flowsExport.onclick = exportFlows;
+if (flowsCompact) flowsCompact.onclick = compactFlowHistory;
 if (flowsClear) flowsClear.onclick = clearFlowHistory;
 var flowKindButtons = flowsOverlay ? flowsOverlay.querySelectorAll("[data-flow-kind]") : [];
 for (var fki = 0; fki < flowKindButtons.length; fki++) {
@@ -1296,6 +1562,165 @@ window.addEventListener("resize", function() {
 });
 var selFlowsButton = document.getElementById("sel-flows");
 if (selFlowsButton) selFlowsButton.onclick = function() { if (selectedNodeIp) showFlowsForDevice(selectedNodeIp); };
+var freezeButton = document.getElementById("btn-freeze-layout");
+if (freezeButton) freezeButton.onclick = function() { setFreezeLayout(!freezeLayout); };
+setFreezeLayout(freezeLayout);
+
+// Investigation dialog: one screen for an alert or a device.
+var investigationOverlay = document.getElementById("investigation-overlay");
+var investigationBody = document.getElementById("investigation-body");
+var investigationReturnFocus = null;
+function openInvestigation(opts) {
+  if (!investigationOverlay || !investigationBody) return;
+  opts = opts || {};
+  investigationReturnFocus = document.activeElement;
+  investigationOverlay.hidden = false;
+  document.body.classList.add("modal-open");
+  investigationBody.replaceChildren(flowEl("p", "section-note", "Loading investigation…"));
+  var params = new URLSearchParams();
+  if (opts.ip) params.set("ip", opts.ip);
+  if (opts.src) params.set("src", opts.src);
+  if (opts.dst) params.set("dst", opts.dst);
+  if (opts.at) params.set("at", String(opts.at));
+  fetch("/api/investigation?" + params.toString()).then(function(res) {
+    if (res.status === 401) { closeInvestigation(false); showAuth(); return null; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }).then(function(data) {
+    if (data) renderInvestigation(data);
+  }).catch(function() {
+    if (investigationBody) investigationBody.replaceChildren(flowEl("p", "section-note", "Could not load the investigation."));
+  });
+  var close = document.getElementById("investigation-close");
+  if (close) close.focus();
+}
+function closeInvestigation(restoreFocus) {
+  if (!investigationOverlay || investigationOverlay.hidden) return;
+  investigationOverlay.hidden = true;
+  if (!flowsOverlay || flowsOverlay.hidden) document.body.classList.remove("modal-open");
+  if (restoreFocus !== false && investigationReturnFocus && investigationReturnFocus.focus) investigationReturnFocus.focus();
+  investigationReturnFocus = null;
+}
+function invCard(label, value, sub) {
+  var card = flowEl("div", "investigation-card");
+  card.appendChild(flowEl("span", "investigation-label", label));
+  card.appendChild(flowEl("b", "", value || "—"));
+  if (sub) card.appendChild(flowEl("small", "", sub));
+  return card;
+}
+function renderInvestigation(data) {
+  if (!investigationBody) return;
+  investigationBody.replaceChildren();
+  var device = data.device || {};
+  var ip = device.ip || "";
+  var head = flowEl("div", "investigation-head");
+  var title = flowEl("div", "");
+  title.appendChild(flowEl("h4", "", (device.name || ip || "Investigation")));
+  title.appendChild(flowEl("p", "section-note", [device.role, device.kind, device.mac].filter(Boolean).join(" · ") || "No inventory metadata"));
+  head.appendChild(title);
+  if (ip) {
+    var actions = flowEl("div", "investigation-actions");
+    var flowsBtn = flowEl("button", "sel-btn", "Flows");
+    flowsBtn.type = "button";
+    flowsBtn.onclick = function() { closeInvestigation(false); showFlowsForDevice(ip); };
+    actions.appendChild(flowsBtn);
+    if (authRole === "operator") {
+      var trustBtn = flowEl("button", "sel-btn", data.trusted ? "Untrust" : "Trust");
+      trustBtn.type = "button";
+      trustBtn.onclick = function() { post("/api/devices/trust", { ip: ip, trusted: !data.trusted }); };
+      actions.appendChild(trustBtn);
+      var blockBtn = flowEl("button", "sel-btn " + (data.blocked ? "safe" : "danger"), data.blocked ? "Unblock" : "Block");
+      blockBtn.type = "button";
+      blockBtn.onclick = function() { post(data.blocked ? "/api/firewall/unblock" : "/api/firewall/block", { ip: ip, reason: "investigation" }); };
+      actions.appendChild(blockBtn);
+    }
+    head.appendChild(actions);
+  }
+  investigationBody.appendChild(head);
+
+  var grid = flowEl("div", "investigation-grid");
+  grid.appendChild(invCard("IP", ip));
+  grid.appendChild(invCard("First seen", flowClock(device.first_seen, true)));
+  grid.appendChild(invCard("Last seen", flowClock(device.last_seen, true)));
+  grid.appendChild(invCard("State", data.blocked ? "blocked" : data.trusted ? "trusted" : data.protected ? "protected" : "normal"));
+  grid.appendChild(invCard("Sensitivity", data.sensitivity || "balanced"));
+  grid.appendChild(invCard("Suppression", data.suppress || "none"));
+  investigationBody.appendChild(grid);
+
+  var endpoints = Object.keys(data.geo || {});
+  if (endpoints.length) {
+    var geoBox = flowEl("div", "investigation-section");
+    geoBox.appendChild(flowEl("h4", "", "Country / ASN (local CSV)"));
+    endpoints.forEach(function(endpoint) {
+      var geo = data.geo[endpoint] || {};
+      geoBox.appendChild(flowEl("p", "section-note", endpoint + ": " +
+        [geo.country, geo.asn, geo.org].filter(Boolean).join(" · ") +
+        " (" + (geo.source || "unknown") + ")"));
+    });
+    investigationBody.appendChild(geoBox);
+  }
+
+  if (data.ports && data.ports.length) {
+    var ports = flowEl("div", "investigation-section");
+    ports.appendChild(flowEl("h4", "", "Top destination ports"));
+    var chips = flowEl("div", "investigation-chips");
+    data.ports.forEach(function(item) {
+      chips.appendChild(flowEl("span", "flows-chip", item.port + " · " + item.count));
+    });
+    ports.appendChild(chips);
+    investigationBody.appendChild(ports);
+  }
+
+  if (data.alerts && data.alerts.length) {
+    var alerts = flowEl("div", "investigation-section");
+    alerts.appendChild(flowEl("h4", "", "Related alerts"));
+    data.alerts.slice(0, 5).forEach(function(alert) {
+      var line = flowEl("div", "investigation-line");
+      line.appendChild(flowEl("b", "", flowAttackName(alert.attack) + " · " + (alert.severity || "low")));
+      line.appendChild(flowEl("span", "", alert.time + " · " + alert.src + " → " + alert.dst + " · " + (alert.engine || "")));
+      if (alert.evidence) {
+        line.appendChild(flowEl("small", "", Object.keys(alert.evidence).map(function(key) {
+          return key + "=" + alert.evidence[key];
+        }).join(" · ")));
+      }
+      alerts.appendChild(line);
+    });
+    investigationBody.appendChild(alerts);
+  }
+
+  if (data.flows && data.flows.length) {
+    var flows = flowEl("div", "investigation-section");
+    flows.appendChild(flowEl("h4", "", "Related flows"));
+    data.flows.slice(0, 12).forEach(function(item) {
+      var row = flowEl("button", "investigation-flow");
+      row.type = "button";
+      row.appendChild(flowEl("span", "", flowClock(item.ts) + " · " + item.src + " → " + item.dst));
+      row.appendChild(flowEl("small", "", (item.protocols || "—") + " · " + flowBytes(item.bytes) + " · " +
+        (item.attack || "benign")));
+      row.onclick = function() { closeInvestigation(false); showFlowsForDevice(item.src); };
+      flows.appendChild(row);
+    });
+    investigationBody.appendChild(flows);
+  }
+
+  if (data.history && data.history.length) {
+    var history = flowEl("div", "investigation-section");
+    history.appendChild(flowEl("h4", "", "Inventory history"));
+    data.history.slice(0, 12).forEach(function(event) {
+      history.appendChild(flowEl("p", "section-note",
+        flowClock(event.at, true) + " · " + event.event +
+        (event.detail ? " · " + event.detail : "")));
+    });
+    investigationBody.appendChild(history);
+  }
+}
+document.getElementById("investigation-close").onclick = function() { closeInvestigation(true); };
+if (investigationOverlay) {
+  investigationOverlay.addEventListener("click", function(ev) { if (ev.target === investigationOverlay) closeInvestigation(true); });
+  investigationOverlay.addEventListener("keydown", function(ev) {
+    if (ev.key === "Escape") { ev.preventDefault(); closeInvestigation(true); }
+  });
+}
 
 function toast(msg, kind) {
   var wrap = document.getElementById("toast-container");
@@ -1439,6 +1864,10 @@ window.addEventListener("keydown", function(ev) {
   if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
   var authOverlay = document.getElementById("auth-overlay");
   if (authOverlay && !authOverlay.hidden) return;
+  if (investigationOverlay && !investigationOverlay.hidden) {
+    if (ev.key === "Escape") { ev.preventDefault(); closeInvestigation(true); }
+    return;
+  }
   if (flowsOverlay && !flowsOverlay.hidden) {
     if (ev.key === "Escape") { ev.preventDefault(); closeFlows(true); }
     return;
@@ -1458,6 +1887,7 @@ window.addEventListener("keydown", function(ev) {
   }
   else if (ev.key === "Escape") { selectedNodeIp = null; updateSelectionBar(); network.unselectAll(); closeTrustMenu(); hideAttackBanner(); }
   else if (key === "r") fitMapView(true);
+  else if (key === "k") setFreezeLayout(!freezeLayout);
   else if (key === "/") { ev.preventDefault(); if (pickerInput) { pickerInput.focus(); pickerInput.select(); pickerRender(); } }
   else if (key === "m") toggleMapMinimize();
   else if (key === "l") toggleLegend();
@@ -1540,7 +1970,17 @@ function renderTopology(data) {
   } for (var ni = 0; ni < nodes.get().length; ni++) if (!seen.has(nodes.get()[ni].id)) nodes.remove(nodes.get()[ni].id);
   if (layoutChanged) {
     layoutKey = key;
-    for (var id in pos) if (nodes.get(id)) network.moveNode(id, pos[id].x, pos[id].y);
+    if (!layoutInitialized || !freezeLayout) {
+      for (var id in pos) if (nodes.get(id)) {
+        network.moveNode(id, pos[id].x, pos[id].y);
+        positionedNodes.add(id);
+      }
+    } else {
+      for (var nid in pos) if (nodes.get(nid) && !positionedNodes.has(nid)) {
+        network.moveNode(nid, pos[nid].x, pos[nid].y);
+        positionedNodes.add(nid);
+      }
+    }
     // Fit once, when the first snapshot arrives. Later snapshots add devices
     // and reflow the tree; fitting on every reflow yanked the viewport around
     // while the operator was looking at a node. R still fits on demand.
@@ -1621,12 +2061,15 @@ function fmtAlert(a) {
   var flowAction = '<button type="button" class="act triage" data-alert-flows="1" data-src="' +
     esc(a.src) + '" data-dst="' + esc(a.dst) + '" data-at="' + esc(alertAt) +
     '" title="Show flows between these endpoints around this alert">Flows</button>';
+  var investigateAction = '<button type="button" class="act triage" data-alert-investigate="1" data-src="' +
+    esc(a.src) + '" data-dst="' + esc(a.dst) + '" data-at="' + esc(alertAt) +
+    '" title="Open the device investigation view">Investigate</button>';
   div.className = "alert " + sev;
   div.innerHTML = '<div class="top"><b>' + icon + " " + esc(attackLabel(a.attack)) + '</b><span class="sev-badge">' + sev.toUpperCase() + '</span>' + repeats + dismiss + '</div>' +
     '<div class="meta">' + esc(a.time) + " \u00B7 " + esc(a.src) + " \u2192 " + esc(a.dst) +
     ' \u00B7 engine: <span class="engine-tag ' + engineClass + '">' + engineName + '</span> \u00B7 conf: ' + esc(a.confidence) +
     (a.sensor ? ' \u00B7 <span class="sensor-tag">sensor ' + esc(a.sensor) + '</span>' : '') + '</div>' +
-    action + flowAction + triageMeta + triageActions;
+    action + flowAction + investigateAction + triageMeta + triageActions;
   return div;
 }
 function fmtRule(r) {
@@ -1751,6 +2194,14 @@ function onAction(ev) {
       src: alertFlows.dataset.src, dst: alertFlows.dataset.dst,
       since: at - 300, until: at + 300,
       label: "Alert " + alertFlows.dataset.src + " \u2192 " + alertFlows.dataset.dst + " \u00B1 5 min",
+    });
+    return;
+  }
+  var investigate = ev.target.closest("[data-alert-investigate]");
+  if (investigate) {
+    openInvestigation({
+      src: investigate.dataset.src, dst: investigate.dataset.dst,
+      at: Number(investigate.dataset.at) || (Date.now() / 1000),
     });
     return;
   }
@@ -1988,12 +2439,28 @@ function setFxEnabled(on) {
 }
 function toggleFx() { setFxEnabled(!FX_ENABLED); }
 function fitMap() { fitMapView(true); if (selectedNodeIp) setTimeout(ensureSelectionVisible, 560); }
+function setFreezeLayout(on) {
+  freezeLayout = !!on;
+  try { localStorage.setItem("lassi.freezeLayout", freezeLayout ? "on" : "off"); } catch (e) { /* ignore */ }
+  var btn = document.getElementById("btn-freeze-layout");
+  if (btn) {
+    btn.classList.toggle("off", !freezeLayout);
+    btn.setAttribute("aria-pressed", freezeLayout ? "true" : "false");
+    btn.title = freezeLayout ? "Layout frozen — new nodes appear without moving existing ones (K)"
+      : "Layout follows topology changes (K)";
+  }
+  if (!freezeLayout && lastData) {
+    layoutKey = "";
+    renderTopology(lastData);
+  }
+}
 var pollTimer = null; function startPolling() { if (pollTimer) return; pollTimer = setInterval(refresh, 2000); } function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
 function showAuth(message) {
   var overlay = document.getElementById("auth-overlay");
   if (!overlay) return;
   authBlocked = true;
   stopPolling();
+  if (investigationOverlay && !investigationOverlay.hidden) closeInvestigation(false);
   if (flowsOverlay && !flowsOverlay.hidden) closeFlows(false);
   if (helpOverlay && !helpOverlay.hidden) closeHelp();
   overlay.hidden = false;
