@@ -26,6 +26,8 @@ DEFAULT_DB = "data/flows.db"
 DEFAULT_RETENTION_HOURS = 72.0
 DEFAULT_MAX_ROWS = 1_000_000
 PRUNE_INTERVAL = 60.0
+DEFAULT_INVENTORY_RETENTION_DAYS = 90.0
+DEFAULT_INVENTORY_MAX_ROWS = 10_000
 
 
 def _env_float(name: str, default: float) -> float:
@@ -59,6 +61,22 @@ INSERT INTO flows
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
+_INSERT_PENDING_SQL = _INSERT_FLOW_SQL.replace("INSERT INTO flows", "INSERT INTO flow_pending")
+_FLUSH_PENDING_SQL = """
+INSERT INTO flows
+    (ts, src, dst, src_name, dst_name, pkts, bytes, duration,
+     dst_port_count, protocols, src_ports, dst_ports, direction,
+     initiator, tcp_flags, port_histogram, syn_ratio,
+     mean_pkt_size, pkt_rate, attack, severity, confidence,
+     engine, mode)
+SELECT ts, src, dst, src_name, dst_name, pkts, bytes, duration,
+       dst_port_count, protocols, src_ports, dst_ports, direction,
+       initiator, tcp_flags, port_histogram, syn_ratio,
+       mean_pkt_size, pkt_rate, attack, severity, confidence,
+       engine, mode
+FROM flow_pending ORDER BY id
+"""
+
 
 def _ports_text(value: Any) -> str:
     """Serialize a protocol/port sample without allowing unbounded DB text."""
@@ -86,6 +104,12 @@ class FlowStore:
             DEFAULT_RETENTION_HOURS if retention_hours is None
             else max(0.0, float(retention_hours))
         )
+        self.inventory_retention_days = _env_float(
+            "LASSI_INVENTORY_RETENTION_DAYS", DEFAULT_INVENTORY_RETENTION_DAYS
+        )
+        self.inventory_max_rows = _env_int(
+            "LASSI_INVENTORY_MAX_ROWS", DEFAULT_INVENTORY_MAX_ROWS
+        )
         self.max_rows = (
             DEFAULT_MAX_ROWS if max_rows is None
             else max(0, int(max_rows))
@@ -94,7 +118,6 @@ class FlowStore:
         self._conn: sqlite3.Connection | None = None
         self._last_prune = 0.0
         self._compacting = False
-        self._pending_rows: list[tuple[Any, ...]] = []
         if self.enabled:
             self._open()
 
@@ -143,6 +166,37 @@ class FlowStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flows_src ON flows(src)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flows_dst ON flows(dst)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flows_attack ON flows(attack)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS flow_pending (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts REAL NOT NULL,
+                    src TEXT NOT NULL,
+                    dst TEXT NOT NULL,
+                    src_name TEXT,
+                    dst_name TEXT,
+                    pkts INTEGER NOT NULL DEFAULT 0,
+                    bytes INTEGER NOT NULL DEFAULT 0,
+                    duration REAL NOT NULL DEFAULT 0,
+                    dst_port_count INTEGER NOT NULL DEFAULT 0,
+                    protocols TEXT NOT NULL DEFAULT '',
+                    src_ports TEXT NOT NULL DEFAULT '',
+                    dst_ports TEXT NOT NULL DEFAULT '',
+                    direction TEXT NOT NULL DEFAULT '',
+                    initiator TEXT NOT NULL DEFAULT '',
+                    tcp_flags TEXT NOT NULL DEFAULT '',
+                    port_histogram TEXT NOT NULL DEFAULT '',
+                    syn_ratio REAL NOT NULL DEFAULT 0,
+                    mean_pkt_size REAL NOT NULL DEFAULT 0,
+                    pkt_rate REAL NOT NULL DEFAULT 0,
+                    attack TEXT NOT NULL DEFAULT 'benign',
+                    severity TEXT NOT NULL DEFAULT 'low',
+                    confidence REAL NOT NULL DEFAULT 0,
+                    engine TEXT NOT NULL DEFAULT '',
+                    mode TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS flow_events (
@@ -212,6 +266,7 @@ class FlowStore:
             except OSError:
                 pass
             self._conn = conn
+            self._flush_pending_locked()
             self.prune(force=True)
         except (OSError, sqlite3.Error):
             # Flow history must never stop capture or the dashboard. Keep the
@@ -284,7 +339,16 @@ class FlowStore:
             return 0
         with self._lock:
             if self._compacting:
-                self._pending_rows.extend(rows[:max(0, 5000 - len(self._pending_rows))])
+                pending = self._conn.execute(
+                    "SELECT COUNT(*) FROM flow_pending").fetchone()[0] or 0
+                room = max(0, 50_000 - int(pending))
+                queued = rows[:room]
+                if queued:
+                    self._conn.executemany(_INSERT_PENDING_SQL, queued)
+                    self._conn.commit()
+                if len(queued) < len(rows):
+                    log.warning("flow pending queue full; dropped %d row(s)",
+                                len(rows) - len(queued))
                 return 0
         try:
             with self._lock:
@@ -299,6 +363,24 @@ class FlowStore:
                 pass
             return 0
         return len(rows)
+
+    def _flush_pending_locked(self) -> int:
+        """Move crash-safe compact-queue rows into the main table.
+
+        Caller holds `_lock` (or is in startup with no concurrent writer).
+        """
+        if not self.enabled or self._conn is None:
+            return 0
+        try:
+            cursor = self._conn.execute(_FLUSH_PENDING_SQL)
+            moved = cursor.rowcount if cursor.rowcount > 0 else 0
+            if moved:
+                self._conn.execute("DELETE FROM flow_pending")
+                self._conn.commit()
+            return moved
+        except sqlite3.Error:
+            log.warning("could not flush pending flow rows", exc_info=True)
+            return 0
 
     def compact(self) -> bool:
         """Start a background VACUUM; new rows are queued during it."""
@@ -317,11 +399,7 @@ class FlowStore:
             with self._lock:
                 self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 self._conn.execute("VACUUM")
-                pending = self._pending_rows
-                self._pending_rows = []
-                if pending:
-                    self._conn.executemany(_INSERT_FLOW_SQL, pending)
-                    self._conn.commit()
+                self._flush_pending_locked()
                 self.prune(force=True)
         except sqlite3.Error:
             log.warning("could not compact flow history", exc_info=True)
@@ -363,6 +441,29 @@ class FlowStore:
                         (self.max_rows,),
                     )
                     deleted += cursor.rowcount if cursor.rowcount > 0 else 0
+                if self.inventory_retention_days > 0:
+                    cutoff = now - self.inventory_retention_days * 86400.0
+                    self._conn.execute(
+                        "DELETE FROM device_history WHERE at < ?", (cutoff,)
+                    )
+                    self._conn.execute(
+                        "DELETE FROM devices WHERE last_seen < ?", (cutoff,)
+                    )
+                if self.inventory_max_rows > 0:
+                    self._conn.execute(
+                        """
+                        DELETE FROM devices
+                        WHERE ip NOT IN (
+                            SELECT ip FROM devices
+                            ORDER BY last_seen DESC LIMIT ?
+                        )
+                        """,
+                        (self.inventory_max_rows,),
+                    )
+                    self._conn.execute(
+                        "DELETE FROM device_history WHERE ip NOT IN "
+                        "(SELECT ip FROM devices)"
+                    )
                 self._conn.commit()
                 self._last_prune = now
         except sqlite3.Error:
@@ -418,10 +519,10 @@ class FlowStore:
         return len(rows)
 
     def timeline_events(self, *, since: float = 0.0,
-                        until: float = 0.0, limit: int = 2000) -> list[dict[str, Any]]:
+                        until: float = 0.0, limit: int = 5000) -> list[dict[str, Any]]:
         if not self.enabled or self._conn is None:
             return []
-        limit = min(max(int(limit), 1), 5000)
+        limit = min(max(int(limit), 1), 50_000)
         where = []
         params: list[Any] = []
         if since > 0:
@@ -876,6 +977,8 @@ class FlowStore:
             "retention_hours": self.retention_hours,
             "max_rows": self.max_rows,
             "compacting": bool(self._compacting),
+            "pending_rows": 0,
+            "inventory_rows": 0,
         }
         if not self.enabled or self._conn is None:
             return result
@@ -892,6 +995,14 @@ class FlowStore:
             })
         except sqlite3.Error:
             log.warning("could not read flow history stats", exc_info=True)
+        try:
+            with self._lock:
+                result["pending_rows"] = int(self._conn.execute(
+                    "SELECT COUNT(*) FROM flow_pending").fetchone()[0] or 0)
+                result["inventory_rows"] = int(self._conn.execute(
+                    "SELECT COUNT(*) FROM devices").fetchone()[0] or 0)
+        except sqlite3.Error:
+            pass
         for suffix in ("", "-wal", "-shm"):
             try:
                 result["db_bytes"] += Path(str(self.path) + suffix).stat().st_size
@@ -924,7 +1035,7 @@ class FlowStore:
             totals = {"flows": 0, "bytes": 0, "packets": 0}
             port_rows = []
         top = self.top_talkers(window_seconds=hours * 3600, limit=10, until=until)
-        events = self.timeline_events(since=since, until=until, limit=5000)
+        events = self.timeline_events(since=since, until=until, limit=20_000)
         alerts = [event for event in events if event.get("kind") == "alert"]
         blocks = [event for event in events if event.get("kind") == "block"]
         ports: dict[str, int] = {}
@@ -962,7 +1073,7 @@ class FlowStore:
             return 0
         try:
             with self._lock:
-                self._pending_rows.clear()
+                self._conn.execute("DELETE FROM flow_pending")
                 cursor = self._conn.execute("DELETE FROM flows")
                 deleted = cursor.rowcount if cursor.rowcount > 0 else 0
                 self._conn.execute("DELETE FROM flow_events")

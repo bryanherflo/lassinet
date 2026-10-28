@@ -1181,6 +1181,34 @@ function renderReport(data) {
   summary.appendChild(reportCard("Trusted", String(data.trusted || 0)));
   reportBody.appendChild(summary);
 
+  var noise = flowEl("div", "report-section");
+  noise.appendChild(flowEl("h4", "", "Noise settings"));
+  var noiseRow = flowEl("div", "flows-toolbar");
+  var select = document.createElement("select");
+  select.className = "flows-filter";
+  ["low", "balanced", "high"].forEach(function(value) {
+    var option = document.createElement("option");
+    option.value = value; option.textContent = value;
+    if ((data.sensitivity || "balanced") === value) option.selected = true;
+    select.appendChild(option);
+  });
+  var suppress = document.createElement("input");
+  suppress.className = "flows-filter";
+  suppress.type = "text";
+  suppress.placeholder = "Suppression CIDRs, comma separated";
+  suppress.value = (data.suppress || []).join(",");
+  var save = flowEl("button", "flows-refresh", "Save noise");
+  save.type = "button";
+  if (authRole !== "operator") { select.disabled = true; suppress.disabled = true; save.disabled = true; }
+  save.onclick = function() { saveNoiseSettings(select.value, suppress.value); };
+  noiseRow.appendChild(select);
+  noiseRow.appendChild(suppress);
+  noiseRow.appendChild(save);
+  noise.appendChild(noiseRow);
+  noise.appendChild(flowEl("p", "section-note",
+    "Sensitivity changes the model confidence gate. Suppression stops alerts, not flow recording. Trusted/protected devices are always suppressed from alerts."));
+  reportBody.appendChild(noise);
+
   var top = flowEl("div", "report-section");
   top.appendChild(flowEl("h4", "", "Top devices"));
   if (data.top && data.top.length) {
@@ -1290,6 +1318,21 @@ function reportJson() {
   downloadText("lassinet-report.json", JSON.stringify(reportData, null, 2),
     "application/json;charset=utf-8");
 }
+function saveNoiseSettings(sensitivity, suppress) {
+  fetch("/api/settings/noise", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: JSON.stringify({ sensitivity: sensitivity, suppress: suppress })
+  }).then(function(res) {
+    if (res.status === 401) { closeFlows(false); showAuth(); return null; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }).then(function(data) {
+    if (!data) return;
+    toast("Noise settings saved", "ok");
+    fetchReport();
+  }).catch(function() { toast("Could not save noise settings", "error"); });
+}
 async function fetchTimeline() {
   if (!flowsOverlay || flowsOverlay.hidden || flowsView !== "timeline") return;
   try {
@@ -1373,6 +1416,8 @@ async function refreshFlowStats() {
     var cap = data.max_rows ? data.max_rows.toLocaleString() + " rows" : "no row cap";
     flowsStats.textContent = (data.rows || 0).toLocaleString() + " rows · " +
       flowBytes(data.db_bytes || 0) + " · " + retention + " / " + cap +
+      " · " + (data.inventory_rows || 0) + " devices" +
+      (data.pending_rows ? " · " + data.pending_rows + " queued" : "") +
       (data.compacting ? " · compacting…" : "");
     if (flowsCompact) {
       flowsCompact.disabled = !!data.compacting;
@@ -1445,7 +1490,7 @@ function openFlows(opts) {
     else if (flowsView === "top") fetchTop();
     else if (flowsView === "timeline") fetchTimeline();
     else if (flowsView === "inventory") fetchInventory();
-    else if (flowsView === "report") fetchReport();
+    else if (flowsView === "report") { /* report is not auto-refreshed while editing noise settings */ }
     refreshFlowStats();
   }, 5000);
   var close = document.getElementById("flows-close");

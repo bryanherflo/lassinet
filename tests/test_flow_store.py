@@ -223,6 +223,44 @@ def test_flow_api_shape_and_v1_alias(client: TestClient) -> None:
     assert "flows" in v1.json()
 
 
+def test_flow_store_pending_queue_survives_reopen(tmp_path) -> None:
+    path = tmp_path / "flows.db"
+    store = FlowStore(path)
+    try:
+        store._compacting = True
+        assert store.add_many([_flow(src="192.168.0.40", dst="192.168.0.50")]) == 0
+        assert store.stats()["pending_rows"] == 1
+        store.close()
+        reopened = FlowStore(path)
+        try:
+            assert reopened.stats()["pending_rows"] == 0
+            assert reopened.query()["total"] == 1
+        finally:
+            reopened.close()
+    finally:
+        store.close()
+
+
+def test_flow_store_inventory_retention(tmp_path) -> None:
+    store = FlowStore(tmp_path / "flows.db")
+    try:
+        store.inventory_retention_days = 1
+        store.inventory_max_rows = 100
+        now = time.time()
+        store.sync_devices([
+            {"ip": "192.168.0.60", "hostname": "old", "mac": "aa:01"},
+            {"ip": "192.168.0.61", "hostname": "new", "mac": "aa:02"},
+        ], at=now - 3 * 86400)
+        store.sync_devices([
+            {"ip": "192.168.0.61", "hostname": "new", "mac": "aa:02"},
+        ], at=now)
+        assert store.inventory()["total"] == 2
+        store.prune(force=True)
+        assert store.inventory()["total"] == 1
+    finally:
+        store.close()
+
+
 def test_flow_store_analytics_export_and_clear(tmp_path) -> None:
     store = FlowStore(tmp_path / "flows.db", retention_hours=72, max_rows=100)
     now = time.time()

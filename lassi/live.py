@@ -289,17 +289,32 @@ def _flag_label(flags: int) -> str:
     return "+".join(names) or "none"
 
 
+def _is_lan(address: ipaddress._BaseAddress) -> bool:
+    """RFC1918/ULA/loopback: the operator's own side, not documentation ranges."""
+    if address.is_loopback:
+        return True
+    for network in (ipaddress.ip_network("10.0.0.0/8"),
+                    ipaddress.ip_network("172.16.0.0/12"),
+                    ipaddress.ip_network("192.168.0.0/16"),
+                    ipaddress.ip_network("fc00::/7")):
+        if address.version == network.version and address in network:
+            return True
+    return False
+
+
 def _flow_direction(src: str, dst: str) -> str:
     try:
         source = ipaddress.ip_address(src)
         destination = ipaddress.ip_address(dst)
     except ValueError:
         return "unknown"
-    if source.is_private and not destination.is_private:
+    source_lan = _is_lan(source)
+    destination_lan = _is_lan(destination)
+    if source_lan and not destination_lan:
         return "outbound"
-    if destination.is_private and not source.is_private:
+    if destination_lan and not source_lan:
         return "inbound"
-    if source.is_private and destination.is_private:
+    if source_lan and destination_lan:
         return "internal"
     return "external"
 

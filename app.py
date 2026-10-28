@@ -45,6 +45,7 @@ from lassi.devices import classify
 from lassi.firewall import Firewall
 from lassi.flows import FlowStore, flow_record
 from lassi.ml import Detector, SENSITIVITY
+import lassi.ml as ml_module
 from lassi.scope import allowlist_from_env, check_live_scope
 from lassi.state import (State, add_alert_listener, audit,
                          clear_alert_listeners, create_audit_checkpoint,
@@ -83,6 +84,7 @@ LIVE_ALLOW = allowlist_from_env(LIVE_ALLOW_RAW)
 # flow history; they never triage, webhook or auto-block.
 SUPPRESS_RAW = (os.getenv("LASSI_SUPPRESS") or "").strip()
 SUPPRESS = allowlist_from_env(SUPPRESS_RAW)
+NOISE_PATH = Path(os.getenv("LASSI_NOISE_SETTINGS") or "data/noise_settings.json")
 # Explicit escape hatch for a lab where the operator accepts any LAN. Live
 # mode otherwise requires a scope declaration: a forgotten allowlist is a
 # refusal, not a silent sweep of whatever Wi-Fi the laptop is attached to.
@@ -126,6 +128,7 @@ FORWARDED_ALLOW_IPS = (os.getenv("LASSI_FORWARDED_ALLOW_IPS") or "127.0.0.1").st
 #   LASSI_TOKEN_VIEWER    can only read (dashboard, logs, metrics)
 AUTH_OPERATOR = (os.getenv("LASSI_TOKEN_OPERATOR") or "").strip()
 AUTH_VIEWER = (os.getenv("LASSI_TOKEN_VIEWER") or "").strip()
+REQUIRE_AUTH = _env_flag("LASSI_REQUIRE_AUTH", False)
 # Separate credential for remote sensor alert ingestion; never accepted as an
 # operator/viewer token and never granted write access to blocks/trust.
 SENSOR_TOKEN = (os.getenv("LASSI_SENSOR_TOKEN") or "").strip()
@@ -246,6 +249,26 @@ def _is_suppressed(ip: str) -> bool:
         return False
     return any(address.version == network.version and address in network
                for network in SUPPRESS)
+
+
+def _apply_noise_settings(sensitivity: str, suppress_raw: str) -> None:
+    global SENSITIVITY, SUPPRESS
+    sensitivity = str(sensitivity or "balanced").strip().lower()
+    if sensitivity not in ("low", "balanced", "high"):
+        sensitivity = "balanced"
+    SENSITIVITY = sensitivity
+    SUPPRESS = allowlist_from_env(str(suppress_raw or ""))
+    ml_module.CONFIDENT = {"low": 0.80, "balanced": 0.65, "high": 0.55}[sensitivity]
+
+
+def _load_noise_settings() -> None:
+    try:
+        data = json.loads(NOISE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return
+    if isinstance(data, dict):
+        _apply_noise_settings(data.get("sensitivity", SENSITIVITY),
+                              data.get("suppress", SUPPRESS_RAW))
 
 
 def _seed_demo_router() -> None:
@@ -879,6 +902,11 @@ async def lifespan(app: FastAPI):
         has_scapy = False
 
     prune_logs()          # apply count/age retention at startup, not only on rotation
+    _load_noise_settings()
+    if REQUIRE_AUTH and not _auth_enabled():
+        raise RuntimeError(
+            "LASSI_REQUIRE_AUTH=1 but no operator/viewer token or proxy auth is configured"
+        )
     if MODE == "live" and has_scapy:
         from lassi.live import local_ip
         refusal = _live_scope_refusal(
@@ -990,6 +1018,11 @@ class BlockRequest(BaseModel):
     ip: str
     reason: str = "manual"
     ttl_s: int = 0          # 0 = permanent; auto-block uses LASSI_AUTO_BLOCK_TTL
+
+
+class NoiseSettings(BaseModel):
+    sensitivity: str = "balanced"
+    suppress: str = ""
 
 
 class RenameRequest(BaseModel):
@@ -1108,7 +1141,7 @@ def device_inventory_one(ip: str) -> dict:
         "blocked": state.is_blocked(ip),
         "trusted": state.is_trusted(ip),
         "protected": state.is_protected(ip),
-        "sensitivity": (os.getenv("LASSI_SENSITIVITY") or "balanced").strip().lower(),
+        "sensitivity": SENSITIVITY,
     }
 
 
@@ -1176,8 +1209,8 @@ def investigation(ip: str = "", src: str = "", dst: str = "",
         "blocked": state.is_blocked(device_ip or source or ""),
         "trusted": state.is_trusted(device_ip or source or ""),
         "protected": state.is_protected(device_ip or source or ""),
-        "sensitivity": (os.getenv("LASSI_SENSITIVITY") or "balanced").strip().lower(),
-        "suppress": (os.getenv("LASSI_SUPPRESS") or "").strip(),
+        "sensitivity": SENSITIVITY,
+        "suppress": ",".join(str(network) for network in SUPPRESS),
         "window": {"since": since, "until": until},
     }
 
@@ -1767,6 +1800,48 @@ def report(hours: int = 24) -> dict:
     return {"ok": True, **data}
 
 
+@app.get("/api/settings/noise")
+def get_noise_settings() -> dict:
+    return {
+        "ok": True,
+        "sensitivity": SENSITIVITY,
+        "suppress": [str(network) for network in SUPPRESS],
+        "suppress_raw": ",".join(str(network) for network in SUPPRESS),
+        "file": str(NOISE_PATH),
+    }
+
+
+@app.post("/api/settings/noise", response_model=None)
+def set_noise_settings(req: NoiseSettings, request: Request) -> dict | JSONResponse:
+    if getattr(request.state, "role", "operator") != "operator":
+        return JSONResponse({"ok": False, "error": "operator token required"},
+                            status_code=403)
+    sensitivity = (req.sensitivity or "balanced").strip().lower()
+    if sensitivity not in ("low", "balanced", "high"):
+        return JSONResponse({"ok": False, "error": "sensitivity must be low, balanced or high"},
+                            status_code=400)
+    raw = (req.suppress or "").strip()
+    networks = allowlist_from_env(raw)
+    if raw and not networks:
+        return JSONResponse({"ok": False, "error": "suppress must contain valid IPv4 CIDRs"},
+                            status_code=400)
+    _apply_noise_settings(sensitivity, raw)
+    try:
+        NOISE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        NOISE_PATH.write_text(json.dumps({
+            "sensitivity": sensitivity,
+            "suppress": ",".join(str(network) for network in networks),
+        }, indent=2), encoding="utf-8")
+    except OSError:
+        return JSONResponse({"ok": False, "error": "could not persist noise settings"},
+                            status_code=500)
+    audit({"event": "noise_settings", "sensitivity": sensitivity,
+           "suppress": [str(network) for network in networks],
+           "actor": _actor(request)})
+    return {"ok": True, "sensitivity": sensitivity,
+            "suppress": [str(network) for network in networks]}
+
+
 @app.post("/api/flows/clear", response_model=None)
 def clear_flows(request: Request) -> dict | JSONResponse:
     if getattr(request.state, "role", "operator") != "operator":
@@ -1837,6 +1912,16 @@ def api_v1_flow_stats() -> dict:
 @app.get("/api/v1/report")
 def api_v1_report(hours: int = 24) -> dict:
     return report(hours=hours)
+
+
+@app.get("/api/v1/settings/noise")
+def api_v1_get_noise_settings() -> dict:
+    return get_noise_settings()
+
+
+@app.post("/api/v1/settings/noise", response_model=None)
+def api_v1_set_noise_settings(req: NoiseSettings, request: Request) -> dict | JSONResponse:
+    return set_noise_settings(req, request)
 
 
 @app.post("/api/v1/flows/clear", response_model=None)

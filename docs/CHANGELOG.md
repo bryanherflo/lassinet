@@ -2,6 +2,20 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.22.0] - 2026-10-27
+
+### Added
+- Inventory retention (`LASSI_INVENTORY_RETENTION_DAYS`, `LASSI_INVENTORY_MAX_ROWS`).
+- Crash-safe compact queue in SQLite (`flow_pending`); rows survive a restart/crash.
+- Visual noise editor in Report: sensitivity profile and suppression CIDRs, persisted in `data/noise_settings.json`.
+- `LASSI_REQUIRE_AUTH=1` startup guard.
+- Optional offline GeoIP CSV documentation and example.
+- Release ZIP + SHA-256, SBOM and benchmark scripts.
+- Synthetic pcap integration test (scapy dev dependency).
+
+### Changed
+- UI cache is v=3.67; 270 tests.
+
 ## [0.21.0] - 2026-10-27
 
 ### Added
