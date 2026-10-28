@@ -319,7 +319,8 @@ Los dispositivos que ya no están en el mapa salen como `not on current map`. Re
 
 - **Investigate** en una alerta o en una fila del inventario abre una pantalla con el dispositivo, flows relacionados, puertos, historial, geo/ASN local, evidencia del detector y acciones de trust/block.
 - **Inventory** guarda IP, nombre, MAC, tipo, rol, primera/última vez, tráfico y cambios de IP en SQLite.
-- **Report** ofrece resumen de 24 h / 7 días, top devices, alertas/bloqueos, puertos, JSON/CSV e impresión.
+- **Report** ofrece resumen de 24 h / 7 días, top devices, alertas/bloqueos, puertos, PDF nativo, JSON/CSV e impresión.
+- **Informes programados:** `python scripts/scheduled_report.py --hours 24 --pdf` escribe JSON/PDF en `data/reports/`. Se puede lanzar con el Programador de tareas de Windows, cron o un timer de systemd; no necesita el servidor web ni envía nada fuera. Ver [docs/scheduled-reports.md](docs/scheduled-reports.md).
 - **Compact DB** ejecuta el `VACUUM` en segundo plano; mientras tanto los flows nuevos se encolan para no bloquear la captura.
 - **Freeze layout** (`K`) mantiene quietos los nodos existentes cuando aparece un dispositivo nuevo.
 - **Ruido:**
@@ -327,7 +328,7 @@ Los dispositivos que ya no están en el mapa salen como `not on current map`. Re
   - `LASSI_SUPPRESS=203.0.113.0/24,...` suprime alertas, pero sigue guardando flows.
   - Los dispositivos trusted/protected no generan alertas ni auto-bloqueo.
   - La evidencia (`pkts`, `bytes`, SYN, puertos, dirección) se muestra en la investigación.
-- **Geo/ASN opcional offline:** `LASSI_GEOIP_CSV=data/geoip.csv` con columnas `network,country,asn,org`; no se hace ninguna consulta externa.
+- **Geo/ASN opcional offline:** `LASSI_GEOIP_CSV=data/geoip.csv` con columnas `network,country,asn,org`; no se hace ninguna consulta externa. Para un export licenciado normalizado: `python scripts/import_geoip.py --input export.csv`; para MaxMind GeoLite2 City/ASN CSV, usa las tres opciones `--maxmind-*` de [docs/geoip.md](docs/geoip.md).
 
 Los flows antiguos muestran `not recorded` para los campos que no existían.
 
