@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 INCLUDE = [
     "app.py", "run.py", "requirements.txt", "requirements-dev.txt",
     "README.md", "LICENSE", "GUIA_DE_USO.md", "SUPPORT.md", "SECURITY.md",
-    "CONTRIBUTING.md", "RELEASE_NOTES_0.21.0.md",
+    "CONTRIBUTING.md", ".env.example",
     "dashboard", "docs", "deploy", "install.ps1", "install.bat", "install.sh",
     "lassi", "ml-training", "scripts", "tests", ".github",
 ]
@@ -37,6 +37,7 @@ def _files() -> list[Path]:
         for child in path.rglob("*"):
             if child.is_file() and not any(part in SKIP_PARTS for part in child.parts):
                 result.append(child)
+    result.extend(ROOT.glob("RELEASE_NOTES_*.md"))
     return sorted(set(result))
 
 

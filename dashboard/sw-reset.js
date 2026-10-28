@@ -8,7 +8,7 @@
  * reloads once. The marker makes it a no-op after the first successful load.
  */
 (function () {
-  var VERSION = "3.67";
+  var VERSION = "3.68";
   var MARK = "lassi.cache-reset." + VERSION;
   var RELOADED = "lassi.cache-reload." + VERSION;
   try {

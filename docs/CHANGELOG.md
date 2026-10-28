@@ -2,6 +2,14 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.22.1] - 2026-10-27
+
+### Fixed
+- Read-only viewers can still open Investigate from an alert.
+- GeoIP CSV loader accepts UTF-8 BOM.
+- Release ZIP includes the current release notes and .env.example.
+- UI cache is v=3.68; 270 tests.
+
 ## [0.22.0] - 2026-10-27
 
 ### Added

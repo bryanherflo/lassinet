@@ -31,7 +31,7 @@ def _load() -> list[tuple[ipaddress._BaseNetwork, dict[str, str]]]:
         return _CACHE
     rows: list[tuple[ipaddress._BaseNetwork, dict[str, str]]] = []
     try:
-        with target.open("r", encoding="utf-8", errors="replace", newline="") as fh:
+        with target.open("r", encoding="utf-8-sig", errors="replace", newline="") as fh:
             for record in csv.DictReader(fh):
                 network = (record.get("network") or record.get("cidr") or "").strip()
                 if not network:

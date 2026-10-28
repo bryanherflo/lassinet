@@ -599,6 +599,7 @@ body.modal-open { overflow: hidden; }
 body.read-only #sel-block, body.read-only #sel-actions,
 body.read-only .act, body.read-only .alert-dismiss { display: none !important; }
 body.read-only [data-alert-flows] { display: inline-block !important; }
+body.read-only [data-alert-investigate] { display: inline-block !important; }
 .modal-body { padding: var(--space-lg) var(--space-xl) var(--space-xl); font-size: 13px; line-height: 1.6; color: var(--text-dim); overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
 .modal-body .lead { color: var(--text); margin-bottom: var(--space-lg); }
 .modal-body b { color: var(--text); font-weight: 600; }
