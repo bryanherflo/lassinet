@@ -46,6 +46,7 @@ from lassi.firewall import Firewall
 from lassi.flows import FlowStore, flow_record
 from lassi.ml import Detector, SENSITIVITY
 import lassi.ml as ml_module
+from lassi.pdf_report import PDFReportError, render_report_pdf
 from lassi.scope import allowlist_from_env, check_live_scope
 from lassi.state import (State, add_alert_listener, audit,
                          clear_alert_listeners, create_audit_checkpoint,
@@ -1800,6 +1801,25 @@ def report(hours: int = 24) -> dict:
     return {"ok": True, **data}
 
 
+@app.get("/api/report.pdf", response_model=None)
+def report_pdf(hours: int = 24) -> Response | JSONResponse:
+    """Download a self-contained PDF snapshot of the report window."""
+    try:
+        payload = render_report_pdf(report(hours=hours))
+    except PDFReportError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
+    except Exception as exc:  # keep a broken renderer from taking down the API
+        log.exception("could not render PDF report")
+        return JSONResponse({"ok": False, "error": f"could not render PDF: {exc}"},
+                            status_code=500)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return Response(
+        content=payload,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="lassinet-report-{stamp}.pdf"'},
+    )
+
+
 @app.get("/api/settings/noise")
 def get_noise_settings() -> dict:
     return {
@@ -1912,6 +1932,11 @@ def api_v1_flow_stats() -> dict:
 @app.get("/api/v1/report")
 def api_v1_report(hours: int = 24) -> dict:
     return report(hours=hours)
+
+
+@app.get("/api/v1/report.pdf", response_model=None)
+def api_v1_report_pdf(hours: int = 24) -> Response | JSONResponse:
+    return report_pdf(hours=hours)
 
 
 @app.get("/api/v1/settings/noise")

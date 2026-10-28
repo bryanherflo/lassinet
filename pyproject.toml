@@ -1,0 +1,22 @@
+# Tool configuration only; LassiNet is run from source (no package build).
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["ml-training/data", "dashboard/vendor"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = false
+check_untyped_defs = false
+
+[tool.coverage.run]
+source = ["app", "lassi"]
+branch = false
+
+[tool.coverage.report]
+omit = ["tests/*", "ml-training/*"]

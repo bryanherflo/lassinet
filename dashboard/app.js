@@ -1318,6 +1318,21 @@ function reportJson() {
   downloadText("lassinet-report.json", JSON.stringify(reportData, null, 2),
     "application/json;charset=utf-8");
 }
+async function reportPdf() {
+  try {
+    var res = await fetch("/api/report.pdf?hours=" + reportHours);
+    if (res.status === 401) { closeFlows(false); showAuth(); return; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    var blob = await res.blob();
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = "lassinet-report.pdf";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function() { URL.revokeObjectURL(url); }, 500);
+  } catch (e) {
+    toast("Could not build the PDF report", "error");
+  }
+}
 function saveNoiseSettings(sensitivity, suppress) {
   fetch("/api/settings/noise", {
     method: "POST",
@@ -1556,6 +1571,9 @@ for (var rhi = 0; rhi < reportHourButtons.length; rhi++) {
     }
     fetchReport();
   });
+}
+if (document.getElementById("report-pdf")) {
+  document.getElementById("report-pdf").onclick = reportPdf;
 }
 if (document.getElementById("report-print")) {
   document.getElementById("report-print").onclick = function() { if (reportData) window.print(); };

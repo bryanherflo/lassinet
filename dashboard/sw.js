@@ -2,7 +2,7 @@
  * Only static assets are cached. API/state, logs, metrics and the WebSocket are
  * always network-only: stale security data must never look live/offline.
  */
-const CACHE = "lassinet-shell-3.68";
+const CACHE = "lassinet-shell-3.69";
 const ASSETS = [
   "./",
   "./index.html",

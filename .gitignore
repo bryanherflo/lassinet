@@ -22,6 +22,15 @@ data/
 # --- ML training data (downloaded datasets + feature cache) ---
 ml-training/data/
 
+# --- Test/quality artifacts ---
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+pytest.out
+.ruff_cache/
+.mypy_cache/
+
 # --- Node / frontend ---
 node_modules/
 dist/

@@ -7,6 +7,7 @@ numpy==2.5.4
 scikit-learn==1.9.1
 joblib==1.6.0
 python-dotenv==1.2.4
+fpdf2==2.8.9
 
 # --- Live mode (opcional: captura real de tráfico y descubrimiento) ---
 # scapy>=2.6

@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The current release (`0.22.x` in this tree) receives security fixes.
+The current release (`0.23.x` in this tree) receives security fixes.
 Older releases may not; upgrade and run the test suite/CI before deploying.
 
 ## Reporting a vulnerability
@@ -38,7 +38,8 @@ scans/attacks against third-party networks.
 - Hash-chained audit log + signed checkpoints; triage store; verified backups.
 - Flow history and inventory contain IPs, names, ports and device metadata;
   they are not encrypted at rest. Use OS full-disk encryption, restrictive
-  permissions and encrypted backups. `flows.db` is owner-only on POSIX.
+  permissions and encrypted backups. `flows.db` is owner-only on POSIX. See
+  `docs/encryption.md` for the supported baseline and the SQLCipher limit.
 - Geo/ASN enrichment is offline only via `LASSI_GEOIP_CSV`; no endpoint is
   sent to a third-party lookup service.
 - Firewalls/proxies: never expose the dashboard directly to the internet; use

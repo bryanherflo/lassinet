@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0d1117">
 <meta name="color-scheme" content="dark">
-<link rel="manifest" href="manifest.webmanifest?v=3.68">
+<link rel="manifest" href="manifest.webmanifest?v=3.69">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -17,8 +17,8 @@
 <meta property="og:type" content="website">
 <title>LassiNet — Network Security Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><text y='20' font-size='20'>🛡️</text></svg>">
-<link rel="stylesheet" href="style.css?v=3.68">
-<script src="vendor/vis-network.min.js?v=3.68"></script>
+<link rel="stylesheet" href="style.css?v=3.69">
+<script src="vendor/vis-network.min.js?v=3.69"></script>
 </head>
 <body>
 <header>
@@ -179,6 +179,7 @@
             <button type="button" class="flows-chip active" data-report-hours="24">24 h</button>
             <button type="button" class="flows-chip" data-report-hours="168">7 days</button>
           </div>
+          <button type="button" id="report-pdf" class="flows-refresh">PDF</button>
           <button type="button" id="report-print" class="flows-refresh">Print</button>
           <button type="button" id="report-json" class="flows-refresh">JSON</button>
           <button type="button" id="report-alerts-csv" class="flows-refresh">Alerts CSV</button>
@@ -304,7 +305,7 @@
 
 <div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-<script src="sw-reset.js?v=3.68"></script>
-<script src="app.js?v=3.68"></script>
+<script src="sw-reset.js?v=3.69"></script>
+<script src="app.js?v=3.69"></script>
 </body>
 </html>

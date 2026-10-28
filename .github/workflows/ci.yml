@@ -15,11 +15,13 @@ jobs:
         run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Train model (smoke)
         run: python ml-training/train_model.py
-      - name: Run tests
+      - name: Run tests with coverage
         shell: bash
         run: |
           set +e
-          python -m pytest tests/ -q --tb=short 2>&1 | tee pytest.out
+          python -m pytest tests/ -q --tb=short \
+            --cov=app --cov=lassi \
+            --cov-report=term --cov-report=xml:coverage.xml 2>&1 | tee pytest.out
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             echo "::error::Tests failed; tail follows"
@@ -30,6 +32,13 @@ jobs:
             done
           fi
           exit "$status"
+      - name: Upload coverage XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
 
   # The Windows runner is administrator, so the `windows` firewall provider is
   # exercised against the real Windows Firewall instead of a mock.
@@ -60,3 +69,23 @@ jobs:
             done
           fi
           exit "$status"
+
+  # Advisory only: findings are visible in the log/annotations but never block
+  # a release. Flip the steps to continue-on-error: false once clean.
+  quality:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-quality.txt
+      - name: Ruff (advisory)
+        continue-on-error: true
+        run: python -m ruff check app.py lassi tests scripts
+      - name: Mypy (advisory)
+        continue-on-error: true
+        run: python -m mypy app.py lassi

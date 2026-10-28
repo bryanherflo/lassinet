@@ -2,6 +2,21 @@
 
 All notable changes to LassiNet are documented here (Keep-a-Changelog format).
 
+## [0.23.0] - 2026-10-28
+
+### Added
+- Native PDF report (`/api/report.pdf`) and a PDF button in the Report view.
+- Licensed GeoIP CSV/MaxMind importer (`scripts/import_geoip.py`).
+- Local scheduled JSON/PDF reports (`scripts/scheduled_report.py`) with
+  Task Scheduler, cron and systemd examples.
+- CI coverage XML artifact and an advisory Ruff/mypy job.
+- GPG release signing helper (`scripts/sign_release.py`).
+- Encryption-at-rest and SQLCipher limitation documentation.
+
+### Changed
+- UI cache is v=3.69; `fpdf2` is a runtime dependency and `pytest-cov` is a
+  test dependency.
+
 ## [0.22.1] - 2026-10-27
 
 ### Fixed

@@ -1,0 +1,4 @@
+# Advisory-only quality tools. CI runs them with continue-on-error so they do
+# not block a release while the codebase is being cleaned up.
+ruff==0.17.3
+mypy==2.4.0

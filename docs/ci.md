@@ -2,13 +2,13 @@
 
 This file documents the GitHub side of the project: the Actions workflow that
 runs on every push, exactly what it proves, and the gaps that still exist.
-Last reviewed: **0.4.20** (workflow `ci.yml`, unchanged since 0.4.0).
+Last reviewed: **0.23.0** (workflow `ci.yml`).
 
 ---
 
 ## 1. What GitHub does today
 
-There is **one** automation in this repository: the GitHub Actions workflow
+There is one automation in this repository: the GitHub Actions workflow
 `.github/workflows/ci.yml`, plus the CI badge in the README.
 
 ### Triggers
@@ -20,15 +20,16 @@ There is **one** automation in this repository: the GitHub Actions workflow
 | `workflow_dispatch` (manual button) | **no** |
 | `schedule` (nightly/weekly cron) | **no** |
 
-### The single job `test`
+### The `test` job
 
 | Step | Command | Why it exists |
 |---|---|---|
 | `actions/checkout@v7` | – | gets the commit |
 | `actions/setup-python@v7` | Python **3.12**, `cache: pip` | pinned interpreter, pip cache keyed on `requirements*.txt` |
-| Install dependencies | `pip install -r requirements.txt -r requirements-dev.txt` | runtime + `pytest`/`httpx` |
+| Install dependencies | `pip install -r requirements.txt -r requirements-dev.txt` | runtime + `pytest`/`httpx`/`pytest-cov` |
 | Train model (smoke) | `python ml-training/train_model.py` | proves the training script runs end to end and produces `models/demo_model.pkl` + `models/demo_metrics.json` from scratch (the same path the demo mode uses at startup) |
-| Run tests | `python -m pytest tests/ -q` | the full suite: unit tests, API smoke tests (FastAPI `TestClient`) and static dashboard-asset checks |
+| Run tests with coverage | `python -m pytest tests/ -q --cov=app --cov=lassi --cov-report=term --cov-report=xml:coverage.xml` | the full suite plus a coverage report; the XML is uploaded as the `coverage-xml` artifact |
+| Upload coverage XML | `actions/upload-artifact@v4` | keeps coverage inspectable without making it a blocking threshold |
 
 Runner: `ubuntu-latest`, single Python version, no matrix.
 
@@ -45,28 +46,39 @@ That job is what keeps the Windows provider honest: with mocks alone, a syntax
 error in the `netsh` arguments (or a wrong rule name) would pass CI unnoticed —
 exactly what happened with the nftables chain name in 0.4.21.
 
+### The advisory `quality` job
+
+`ruff==0.17.3` and `mypy==2.4.0` run with `continue-on-error: true` (and the
+job itself is advisory). Findings are visible in the log but do not block a
+push. This is deliberate: the current tree is not lint/type clean, and turning
+the job into a gate without cleaning it would only encourage bypasses. Flip it
+to blocking once the output is clean.
+
 ### What the green badge therefore proves
 
 * The code imports and the FastAPI app boots under Python 3.12 on Linux.
 * The model training pipeline is reproducible enough to run in CI.
-* All **270 tests** pass: state/canonicalisation, ML feature sanitisation and
+* All **275 tests** pass: state/canonicalisation, ML feature sanitisation and
   model profiles, firewall providers (mock / nftables / OPNsense / **windows**),
   trusted/protected devices, live-mode routing and discovery helpers, the REST
   API (block, unblock, trust, logs, health, live→demo fallback) and the
   dashboard assets (JS syntax, cache-busters, no-CDN rule).
 * The dashboard assets are not broken (the `node --check` step is skipped when
-  Node is unavailable, which is the case on the runner — see gaps).
+  Node is unavailable).
+* A coverage XML exists, but **not** that coverage is high enough: there is no
+  `fail_under` threshold.
+* Ruff/mypy findings are advisory; a green test job does not mean the codebase
+  is lint/type clean.
 
 ### What it does **not** prove
 
-* Nothing about the **live mode on a real network** (scapy is not installed
-  in CI, so the live import path is only exercised through the mocked
-  `conf` object in `tests/test_core.py`).
-* Nothing about **real firewall enforcement**: `nft` is not installed, OPNsense
-  is not reachable, and the Windows provider is only unit-tested with a
-  monkeypatched `netsh`. The real Windows path was validated by hand
-  (UAC-elevated run on the developer machine), not by CI.
-* Nothing about the **Windows code path at all**: CI runs on Ubuntu only.
+* Nothing about **live capture on a real interface**. `scapy` is installed and
+  `tests/test_live_pcap.py` exercises flow aggregation from a synthetic pcap,
+  but there is no real NIC, SPAN port or promiscuous capture in CI.
+* Nothing about **nftables/OPNsense enforcement** (`nft` is not installed and
+  OPNsense is not reachable). The Windows Firewall path is real on the Windows
+  runner, but the other providers remain mock/unit-tested.
+* Nothing about the **macOS** code path.
 * Nothing about the **dashboard in a browser** (no Playwright/Selenium run).
 
 ---
@@ -80,16 +92,16 @@ exactly what happened with the nftables chain name in 0.4.21.
 | ~~No **Windows** runner~~ | **closed in 0.4.22**: the `windows` job runs the suite on `windows-latest`, where the runner is administrator and the Windows Firewall provider is tested for real |
 | No **macOS** runner | the BSD/macOS capture path is never executed by CI |
 | Single **Python 3.12** | a syntax/typing regression that only appears on 3.13/3.14 would only be found by users |
-| `scapy` is **not installed** in CI | `HAS_SCAPY` is always `False` there, so the live-mode import fallback and the interface/gateway helpers are only tested through fakes |
+| No **real capture interface** in CI | `scapy` is installed (dev requirements) and the synthetic pcap test runs, but interface/gateway/SPAN behavior is still only tested through fakes |
 
 ### 2.2 Quality gates
 
 | Gap | Impact |
 |---|---|
-| No **lint** (ruff/flake8) | unused imports, long lines and dead code are only noticed by review |
+| Lint/type checks are **advisory** | ruff/mypy findings are visible but do not block; unused imports, type drift and dead code still need review |
 | No **formatter check** (black/ruff format) | diffs stay noisy, style drifts between contributors |
-| No **type check** (mypy/pyright) | the codebase is fully type-hinted but never checked; a wrong annotation in `lassi/state.py` or `lassi/ml.py` stays invisible |
-| No **coverage report** | nothing shows which parts of the code are actually exercised (no `pytest-cov`, no uploaded artifact, no coverage badge) |
+| Type checks are **advisory** | mypy runs but does not block; a wrong annotation in `lassi/state.py` or `lassi/ml.py` can still merge |
+| No **coverage threshold** | `pytest-cov` uploads an XML, but there is no `fail_under` and no coverage badge |
 | No **security scanning** (`pip-audit`, `safety`, CodeQL, Dependabot) | a vulnerable pin in `requirements.txt` is not reported |
 
 ### 2.3 Workflow hygiene
@@ -156,9 +168,9 @@ exactly what happened with the nftables chain name in 0.4.21.
 2. **Pin the toolchain** — a `requirements-lock.txt` (or `pip-tools`),
    `python-version: ["3.12", "3.15"]` in a matrix, plus `timeout-minutes: 15`
    and a `concurrency` group.
-3. **Add the static gates** — `ruff check`, `ruff format --check`, `mypy lassi app.py`
-   and `pytest --cov=lassi --cov=app --cov-report=xml` (upload the XML as an
-   artifact, then wire it into a coverage service).
+3. **Turn the advisory checks into gates** — clean `ruff check` and `mypy`,
+   add `ruff format --check`, then set a realistic `fail_under` coverage
+   threshold. The coverage XML is already uploaded.
 4. **Add `pip-audit`** and a Dependabot config for `pip` + `github-actions`.
 5. **Add the repository metadata** — issue/PR templates that capture
    OS + mode + provider, `SECURITY.md`, `CONTRIBUTING.md`, and branch

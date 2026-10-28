@@ -43,7 +43,7 @@ Think of it as a mini NDR + IDS + SOAR that fits in a single Python app.
 | 📱 **Android PWA** | Install the dashboard from Chrome on Android; the sensor stays on the PC. The full install prompt and offline shell need HTTPS (Tailscale/Cloudflare Tunnel); plain LAN HTTP gives a home-screen shortcut. See [docs/android.md](docs/android.md). |
 | 📊 **Flow analytics** | Top talkers by bytes/flows with out/in direction (15 min / 1 h / 24 h), CSV export, per-flow protocols/ports/flags, alert→flows ±5 min, a durable flows/alerts/blocks timeline, compact/clear and history usage. |
 | 🔎 **Investigation & inventory** | One-screen alert/device investigation with related flows, history, top ports, local-geo/ASN, triage/trust/block actions and detector evidence. Inventory keeps first/last seen, MAC, type, traffic and IP-change events. |
-| 📄 **Reports** | 24 h / 7 day summary, top devices, alerts/blocks, top ports, JSON/CSV export and a printable case-study snapshot. |
+| 📄 **Reports** | 24 h / 7 day summary, top devices, alerts/blocks, top ports, native PDF, JSON/CSV export and a printable case-study snapshot. `scripts/scheduled_report.py` writes local JSON/PDF snapshots from Task Scheduler/cron without running the web server. |
 | 🧾 **Flow history** | Completed flows are stored as metadata in local SQLite (`data/flows.db`). Open **Flows** (`F`) to search, filter, export CSV and select a flow to see source/destination devices, protocols, source/destination ports, packets, bytes, duration, SYN and verdict. Use the **Flows** button on a device or alert; payloads are never stored. |
 | 🎯 **Intuitive UX** | Click a device for the **action bar** (Block/Unblock, Actions…), right-click for the **trust menu**, double-click to rename, and press `?`/`H` for the built-in Help. Confirmed attackers escalate on the map; `B` blocks, `R` refits, `M` minimizes, `L` toggles the legend, `D` hides the traffic dots, `Esc` closes. Responsive layout, live-stream indicator, reduced-motion support. |
 
@@ -80,6 +80,8 @@ Never send tokens, `.env`, real captures or customer data. See
 - [OIDC / trusted proxy](docs/oidc.md)
 - [Android (PWA)](docs/android.md)
 - [GeoIP / ASN (offline)](docs/geoip.md)
+- [Scheduled local reports](docs/scheduled-reports.md)
+- [Encryption at rest](docs/encryption.md)
 - [Quality and release checks](docs/quality.md)
 - [Threat model](docs/threat-model.md)
 - [Deployment (systemd, TLS, OIDC)](docs/deployment.md)
@@ -87,7 +89,7 @@ Never send tokens, `.env`, real captures or customer data. See
 - [Benchmarks and honest limits](docs/benchmarks.md)
 - [Case study template](docs/case-study-template.md)
 - [Roadmap (free/open source)](docs/ROADMAP.md)
-- [Release notes](RELEASE_NOTES_0.22.1.md)
+- [Release notes](RELEASE_NOTES_0.23.0.md)
 - [Support](SUPPORT.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
@@ -98,7 +100,7 @@ LassiNet is built for people who want to see and act on **their own LAN**, not f
 
 - **Students and juniors** in systems, networking or security (ASIR, CFGS, master's, self-taught) who want the full path from discovery to detection to a real block.
 - **Homelabbers and home-network owners** who want visibility of their devices and a safe way to practise OPNsense, nftables or Windows Firewall.
-- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 270 tests plus CI make it easy to use in class.
+- **Trainers and teachers** who need a reproducible lab: demo mode simulates the network, touches nothing, and the 275 tests plus CI make it easy to use in class.
 - **Recruiters and interviewers** reviewing a portfolio project that covers Python, FastAPI, scapy, ML, firewalls, tests, CI and documentation.
 
 ## 🚫 Who it is not for
@@ -150,7 +152,7 @@ python app.py
 
 > The tiny demo model **auto-trains on first run** when missing (a few seconds) — running `python ml-training/train_model.py` manually is equivalent, not required. The rule-based engine still works even then.
 
-**Run the test suite** (270 unit + API smoke + dashboard-asset tests, no network needed):
+**Run the test suite** (275 unit + API smoke + dashboard-asset tests, no network needed):
 
 ```bash
 pip install -r requirements-dev.txt

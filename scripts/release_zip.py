@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import sys
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 INCLUDE = [
     "app.py", "run.py", "requirements.txt", "requirements-dev.txt",
+    "requirements-quality.txt", "pyproject.toml",
     "README.md", "LICENSE", "GUIA_DE_USO.md", "SUPPORT.md", "SECURITY.md",
     "CONTRIBUTING.md", ".env.example",
     "dashboard", "docs", "deploy", "install.ps1", "install.bat", "install.sh",

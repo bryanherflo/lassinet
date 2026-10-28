@@ -31,6 +31,7 @@ All v1 responses carry `X-LassiNet-API: 1`.
 | `GET /api/v1/devices/inventory/{ip}` | Device metadata, changes and local geo |
 | `GET /api/v1/investigation` | Alert/device investigation payload |
 | `GET /api/v1/report` | Daily/weekly summary for the printable report |
+| `GET /api/v1/report.pdf` | Native PDF snapshot of the same report window |
 | `GET /api/v1/flows/{id}` | One flow record (404 when expired/unknown) |
 | `GET /api/v1/rules` | Active firewall blocks |
 | `GET /api/v1/sensors` | Alert counts/last seen per remote sensor |
