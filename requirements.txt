@@ -1,13 +1,13 @@
 # --- Core (obligatorio) ---
 # Exact, tested versions. Upgrade through Dependabot/CI, not by floating ranges.
-fastapi==0.151.0
+fastapi==0.162.0
 uvicorn[standard]==0.54.0
-pydantic==2.14.1
+pydantic==2.14.2
 numpy==2.5.4
 scikit-learn==1.9.1
 joblib==1.6.0
 python-dotenv==1.2.4
-fpdf2==2.8.9
+fpdf2==2.9.0
 
 # --- Live mode (opcional: captura real de tráfico y descubrimiento) ---
 # scapy>=2.6
